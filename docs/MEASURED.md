@@ -163,6 +163,98 @@ This is strictly safer than the Giga arrangement: sector 0 is never written, so
 the Arduino bootloader cannot be damaged by anything done here and double-tap
 RESET always reaches it again.
 
+## 2026-11-15 — The I2C expanders are on i2c3, not i2c1
+
+The addresses inferred from the mbed library were right. The bus was a guess,
+and it was wrong.
+
+```
+i2c scan i2c@40005400          (i2c1, PB6/PB7 - "I2C1 in datasheet")
+00:             -- -- -- -- 08 -- -- -- -- -- -- --
+30: -- -- -- -- -- -- 36 -- -- -- -- -- -- -- -- --
+50: -- 51 -- -- -- -- -- -- -- -- -- -- -- -- -- --
+3 devices found
+```
+
+```
+i2c scan i2c@40005c00          (i2c3, PH7/PH8 - "I2C3 in datasheet")
+20: -- -- 22 23 -- -- -- -- -- -- -- -- -- -- -- --
+2 devices found
+```
+
+```
+i2c scan i2c@58001c00          (i2c4, PH11/PH12 - "I2C2 in datasheet")
+0 devices found
+```
+
+So:
+
+| bus | devices | what |
+|---|---|---|
+| i2c1 | 0x08, 0x36, 0x51 | the Portenta's internal bus |
+| **i2c3** | **0x22, 0x23** | **the carrier's two TCA6424A expanders** |
+| i2c4 | none | nothing on it; disabled again |
+
+0x08 is the PF1550 PMIC, which the board's own devicetree declares at
+`pmic@8`. 0x51 is almost certainly the PCF8563 RTC - that is its standard
+address and the carrier has an RTC with its interrupt on `MC_RTC_INT_PIN PB_9`.
+**0x36 is unidentified** and is an open question; it is on the Portenta module's
+internal bus, not the carrier's, so it is more likely part of the H7 than part
+of the Machine Control.
+
+Before the move, both expander nodes reported `DISABLED` in `device list` -
+which is what a driver whose init ran and got no answer looks like. That is the
+useful negative signal, and it is worth knowing that it is NOT the same as a
+node that was never instantiated: a disabled-status node would not appear in
+the list at all.
+
+## 2026-11-15 — The SYSCFG analog switches, measured both ways
+
+The trap, quantified. `pmca syscfg close` returns the switches to their silicon
+reset state; `pmca syscfg open` is what the shield does at PRE_KERNEL_1.
+
+Switches OPEN, which is the shield's default:
+
+```
+SYSCFG_PMCR analog-switch bits: 0x0e000000 of 0x0e000000
+
+chan  pad     switch        raw        mV  twin pad if closed
+AI0   PC_3C   open          767        38  PC3 / spi2_mosi (temperature bus)
+AI1   PC_2C   open          522        26  PC2 / spi2_miso (temperature bus)
+AI2   PA_1C   open          750        37  PA1 / eth_ref_clk (50 MHz RMII)
+```
+
+Switches CLOSED, which is what the silicon does at reset and what every
+default Zephyr build on this board therefore has:
+
+```
+SYSCFG_PMCR analog-switch bits: 0x00000000 of 0x0e000000
+
+chan  pad     switch        raw        mV  twin pad if closed
+AI0   PC_3C   CLOSED        396        19  PC3 / spi2_mosi (temperature bus)
+AI1   PC_2C   CLOSED        435        21  PC2 / spi2_miso (temperature bus)
+AI2   PA_1C   CLOSED      31631      1592  PA1 / eth_ref_clk (50 MHz RMII)
+```
+
+**AI2 goes from 37 mV to 1592 mV, a factor of 43.** 1592 mV is almost exactly
+half of 3.3 V, which is what an ADC reports when it samples a square wave much
+faster than its sample-and-hold: the 50 MHz RMII reference clock. With the
+switch closed, AI2 reads about 1.6 V regardless of what is connected to the
+terminal block.
+
+**AI0 and AI1 move much less** - 767 to 396 and 522 to 435 - and that is the
+more dangerous half of the finding. SPI2 is idle while nothing is reading a
+temperature, so the error is small enough to pass casual inspection. It would
+change whenever the thermocouple or RTD front end is actually used, which makes
+it an intermittent fault correlated with an unrelated subsystem.
+
+Both directions were run because an experiment that can only be run in the good
+direction proves nothing. Note the readings are raw pad voltages: the 0-10 V /
+4-20 mA / NTC mode is a 4-bit GPIO switch network that nothing drives yet, so
+the front end is in an undefined mode and none of these numbers mean anything
+about a signal on the connector. What they establish is the coupling, not a
+measurement.
+
 ### Toolchain this was measured with
 
 ```

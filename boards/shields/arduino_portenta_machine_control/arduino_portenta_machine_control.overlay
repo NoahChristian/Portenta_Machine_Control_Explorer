@@ -205,36 +205,47 @@
  * which devicetree reported as a parse error at the closing brace.)
  */
 /*
- * ALL THREE I2C BUSES ARE ENABLED, because which one carries the expanders is
- * not yet known.
+ * THE EXPANDERS ARE ON i2c3, MEASURED 2026-11-15.
  *
- * Measured 2026-11-15: a scan of i2c1 found exactly three devices - 0x08 (the
- * PF1550 PMIC), 0x36 (unidentified) and 0x51 (almost certainly the PCF8563
- * RTC, which is its standard address). NOT 0x22 or 0x23, and both TCA6424A
- * nodes reported DISABLED in `device list`, meaning their driver init ran and
- * got no answer.
+ * The addresses inferred from the mbed library were right; the bus was a guess
+ * and it was wrong. Scans of all three:
  *
- * So i2c1 is the Portenta's internal bus and the carrier's expanders are
- * elsewhere. The board file names the other two from the datasheet's point of
- * view rather than the MCU's, which is its own small trap:
+ *     i2c1  PB6/PB7    0x08, 0x36, 0x51   the Portenta's internal bus
+ *     i2c3  PH7/PH8    0x22, 0x23         <- the carrier's two expanders
+ *     i2c4  PH11/PH12  nothing
  *
- *     i2c1  = "I2C1 in datasheet", PB6/PB7   - internal, has the PMIC
- *     i2c4  = "I2C2 in datasheet", PH11/PH12
- *     i2c3  = "I2C3 in datasheet", PH7/PH8
+ * 0x08 is the PF1550 PMIC the board declares at pmic@8; 0x51 is almost
+ * certainly the PCF8563 RTC, which is its standard address and matches the
+ * carrier having an RTC with its interrupt on MC_RTC_INT_PIN PB_9. 0x36 is
+ * unidentified and is on the module's internal bus rather than the carrier's,
+ * so it is more likely part of the H7 than of the Machine Control.
  *
- * Both are enabled so one reflash can scan all three. Once the expanders are
- * found, their nodes move to that bus and the unused ones go back off - an
- * enabled bus that nothing uses is a pin assignment nobody asked for.
+ * Note the board file names these buses from the DATASHEET's point of view
+ * rather than the MCU's, which is its own small trap:
+ * i2c1 = "I2C1 in datasheet", i2c4 = "I2C2", i2c3 = "I2C3".
+ *
+ * i2c4 is deliberately left disabled: nothing answered on it, and an enabled
+ * bus that nothing uses is a pin assignment nobody asked for. i2c1 stays
+ * enabled because the PMIC is on it and the board's regulator drivers need it.
+ *
+ * TWO TCA6424A DEVICES, NOT ONE, distinguished by their ADDR pin:
+ *
+ *     0x22 (ADDR low)   the 12 programmable digital channels
+ *     0x23 (ADDR high)  the 8 digital inputs
+ *
+ * Both 7-bit. TI's datasheet quotes 0x22/0x23 as 8-bit forms including the R/W
+ * bit, so a reader comparing against the datasheet should expect the shift.
+ * Which of the two carries which function is still [LIB] - inferred from
+ * ArduinoIOExpander.h naming IO_ADD as ADDR_LOW and DIN_ADD as ADDR_HIGH - and
+ * is not yet confirmed here.
+ *
+ * The channel-to-port-bit maps are scrambled three different ways and are
+ * deliberately NOT encoded here: devicetree cannot express them, and
+ * open-coding them at a call site is how a panel ends up confidently driving
+ * the wrong channel. They belong in tools/channels.csv. See
+ * docs/INFERRED_FROM_MBED.md.
  */
 &i2c3 {
-	status = "okay";
-};
-
-&i2c4 {
-	status = "okay";
-};
-
-&i2c1 {
 	status = "okay";
 
 	pmc_pdio_expander: tca6424a@22 {
