@@ -271,9 +271,9 @@
 		 *
 		 * It is a separate partition so that a ~400 KB raster of the
 		 * board never enters slot0 and therefore never inflates an OTA
-		 * image. It also buys the edit-without-recompiling loop the
-		 * PowerMonitor panel has, where the page is served from the
-		 * filesystem first and from flash only as a fallback.
+		 * image. It also buys the edit-without-recompiling loop a
+		 * sibling panel on this bench has, where the page is served
+		 * from the filesystem first and from flash only as a fallback.
 		 *
 		 * LittleFS is affordable here precisely because these sectors
 		 * are 4 KB; in internal flash they would be 128 KB.

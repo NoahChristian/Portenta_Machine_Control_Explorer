@@ -38,10 +38,10 @@ target_sources(app PRIVATE
 # A DEPENDENCY BY PATH, DELIBERATELY, AND NOT A VENDORED COPY. The library is
 # a sibling sketchbook project with its own golden test suite, its own
 # versioning and its own history, and the Zephyr port of it lives THERE - which
-# is the whole point: the engine is shared with a sibling project on this bench, and a copy
-# taken into this repository would be a second engine that drifts from the one
-# whose tests run. It is a hard requirement for a build, the same way
-# ZEPHYR_BASE is; see README.md.
+# is the whole point: the engine is shared with a sibling project on this
+# bench, and a copy taken into this repository would be a second engine that
+# drifts from the one whose tests run. It is a hard requirement for a build,
+# the same way ZEPHYR_BASE is; see README.md.
 set(HTMLTPL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Arduino_HTTP_HTML"
     CACHE PATH "Path to the Arduino_HTTP_HTML checkout")
 if(NOT EXISTS "${HTMLTPL_DIR}/src/HtmlTplEngine.cpp")

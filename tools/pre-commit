@@ -7,10 +7,11 @@
 # into a file that is already tracked. This hook reads what is actually staged.
 #
 # THIS FILE IS THE SOURCE. .git/hooks/pre-commit is a COPY, installed by
-# tools/installhook.sh. On the a sibling project on this bench bench the two drifted, the
-# hook was run, it passed, and the evidence quoted was a `diff -q` from minutes
-# earlier - the installed copy still had the old patterns. If you edit this
-# file, reinstall it, and prove the new check fires by planting a violation.
+# tools/installhook.sh. On a sibling project on this bench the two drifted,
+# the hook was run, it passed, and the evidence quoted was a `diff -q` from
+# minutes earlier - the installed copy still had the old patterns. If you edit
+# this file, reinstall it, and prove the new check fires by planting a
+# violation.
 #
 # Bypass (only when you are certain):  git commit --no-verify
 #
@@ -100,10 +101,10 @@ if [ -n "$pw" ]; then
 fi
 
 # --- 6. Device-specific values: addresses, MACs, ports, machine paths --------
-# NOT credentials, and that is exactly why this exists. On the PowerMonitor
-# bench every credential check passed for three weeks while a real MAC sat in
-# a tool and a LAN address sat two lines above it. Neither is a password, and
-# neither is inert.
+# NOT credentials, and that is exactly why this exists. On a sibling project
+# on this bench every credential check passed for three weeks while a real MAC
+# sat in a tool and a LAN address sat two lines above it. Neither is a
+# password, and neither is inert.
 # 224.0.0.0/24 is the IANA Local Network Control Block - well-known protocol
 # constants rather than the address of anything: 224.0.0.1 all-hosts,
 # 224.0.0.251 mDNS, 224.0.0.252 LLMNR. They are no more identifying than
@@ -273,11 +274,11 @@ fi
 
 # --- The global gate, called ABOVE the exit ----------------------------------
 #
-# installhooks.py APPENDS its call to .git/hooks/pre-commit, and on the
-# PowerMonitor bench it appended below the `exit 0` that ended the file - so
-# the one check that catches the class of leak pattern scanning misses never
-# ran once, from the day it was installed. Called here so that ordering cannot
-# repeat. A missing script is not a pass: it says so and fails.
+# installhooks.py APPENDS its call to .git/hooks/pre-commit, and in a sibling
+# project on this bench it appended below the `exit 0` that ended the file -
+# so the one check that catches the class of leak pattern scanning misses
+# never ran once, from the day it was installed. Called here so that ordering
+# cannot repeat. A missing script is not a pass: it says so and fails.
 GLOBAL_GATE="$HOME/.claude/scripts/security/precommit_secrets.py"
 if [ -f "$GLOBAL_GATE" ]; then
   python "$GLOBAL_GATE" || fail=1
