@@ -22,58 +22,44 @@
 
 / {
 	/*
-	 * Aliases, so application code and the shell never spell out a pad.
-	 * The channel table in app/src/chan.c is generated from
-	 * tools/channels.csv and is the single place a name maps to hardware.
-	 */
-	aliases {
-		pmc-ai0 = &pmc_ai0;
-		pmc-ai1 = &pmc_ai1;
-		pmc-ai2 = &pmc_ai2;
-	};
-
-	/*
 	 * The three analog inputs, as ADC channels.
 	 *
-	 * Each is ALSO a 4-bit mode selector in hardware - 0-10 V, 4-20 mA or
-	 * NTC is chosen by four GPIOs per channel, not by a register - so a
-	 * channel is not fully described by its ADC node. The mode pins are in
-	 * the channel table rather than here, because devicetree has no way to
-	 * say "these four pins together mean 4-20 mA on this channel".
+	 * ONE zephyr,user NODE, NOT ONE PER CHANNEL. The obvious-looking
+	 * structure - a parent with an ai0/ai1/ai2 child each carrying its own
+	 * io-channels and label - does not compile. A child node with no
+	 * compatible has no binding, so devicetree never names the phandle
+	 * cells, and ADC_DT_SPEC_GET then fails on a missing
+	 * ..._io_channels_IDX_0_VAL_input macro - an error that mentions
+	 * neither bindings nor the real cause. Channel and pad names live in C
+	 * instead, in app/src/shell_analog.c.
 	 *
-	 * CHANNEL NUMBERS, and why they are what they are. The carrier wires
-	 * its inputs to the H7's dual "_C" analog pads, which have their own
-	 * dedicated ADC inputs:
+	 * ORDER IS THE CONTRACT: index 0 = AI0, 1 = AI1, 2 = AI2.
 	 *
-	 *     AI0 = PC_3C -> ADC3_INP1
-	 *     AI1 = PC_2C -> ADC3_INP0
-	 *     AI2 = PA_1C -> ADC1_INP1
+	 * CHANNEL NUMBERS, confirmed from the vendor HAL rather than inferred.
+	 * stm32h747xihx-pinctrl.dtsi defines exactly these nodes for the three
+	 * pads this carrier uses:
 	 *
-	 * PC2_C/ADC3_INP0 and PC3_C/ADC3_INP1 are confirmed by ST's UM2411 for
-	 * the STM32H747XI Discovery kit, which brings both out on CN9. AI2 is
-	 * the PA0_C/PA1_C pattern and is the least certain of the three.
+	 *     adc1_inp1_pa1_c   adc2_inp1_pa1_c      -> PA1_C is ADC1/2 INP1
+	 *     adc3_inp0_pc2_c   adc3_inn1_pc2_c      -> PC2_C is ADC3 INP0
+	 *     adc3_inp1_pc3_c                        -> PC3_C is ADC3 INP1
 	 *
-	 * None of these reads anything meaningful until the SYSCFG analog
+	 * so AI0=PC_3C is adc3 channel 1, AI1=PC_2C is adc3 channel 0, and
+	 * AI2=PA_1C is adc1 channel 1. ADC2 could serve AI2 equally; ADC1 is
+	 * chosen because ADC3 already has both other channels, so splitting
+	 * them means one conversion does not wait on the other.
+	 *
+	 * Each channel is ALSO a 4-bit mode selector in hardware - 0-10 V,
+	 * 4-20 mA or NTC is chosen by four GPIOs per channel, not by a
+	 * register - so a channel is not fully described by its ADC node. The
+	 * mode pins belong in the channel table, because devicetree has no way
+	 * to say "these four pins together mean 4-20 mA on this channel".
+	 *
+	 * None of this reads anything meaningful until the SYSCFG analog
 	 * switches are open - see pmc_syscfg.c, which is the whole reason this
 	 * shield carries source.
 	 */
-	pmc_analog_in {
-		compatible = "zephyr,user";
-
-		pmc_ai0: ai0 {
-			io-channels = <&adc3 1>;
-			label = "AI0";
-		};
-
-		pmc_ai1: ai1 {
-			io-channels = <&adc3 0>;
-			label = "AI1";
-		};
-
-		pmc_ai2: ai2 {
-			io-channels = <&adc1 1>;
-			label = "AI2";
-		};
+	zephyr,user {
+		io-channels = <&adc3 1>, <&adc3 0>, <&adc1 1>;
 	};
 };
 
@@ -218,6 +204,36 @@
  * block comment inside a block comment and ended this one 40 lines early,
  * which devicetree reported as a parse error at the closing brace.)
  */
+/*
+ * ALL THREE I2C BUSES ARE ENABLED, because which one carries the expanders is
+ * not yet known.
+ *
+ * Measured 2026-11-15: a scan of i2c1 found exactly three devices - 0x08 (the
+ * PF1550 PMIC), 0x36 (unidentified) and 0x51 (almost certainly the PCF8563
+ * RTC, which is its standard address). NOT 0x22 or 0x23, and both TCA6424A
+ * nodes reported DISABLED in `device list`, meaning their driver init ran and
+ * got no answer.
+ *
+ * So i2c1 is the Portenta's internal bus and the carrier's expanders are
+ * elsewhere. The board file names the other two from the datasheet's point of
+ * view rather than the MCU's, which is its own small trap:
+ *
+ *     i2c1  = "I2C1 in datasheet", PB6/PB7   - internal, has the PMIC
+ *     i2c4  = "I2C2 in datasheet", PH11/PH12
+ *     i2c3  = "I2C3 in datasheet", PH7/PH8
+ *
+ * Both are enabled so one reflash can scan all three. Once the expanders are
+ * found, their nodes move to that bus and the unused ones go back off - an
+ * enabled bus that nothing uses is a pin assignment nobody asked for.
+ */
+&i2c3 {
+	status = "okay";
+};
+
+&i2c4 {
+	status = "okay";
+};
+
 &i2c1 {
 	status = "okay";
 

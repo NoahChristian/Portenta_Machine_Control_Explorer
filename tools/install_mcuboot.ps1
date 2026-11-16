@@ -151,15 +151,88 @@ $alts | ForEach-Object { Write-Host "  $($_.Trim())" -ForegroundColor DarkGray }
 # addresses we are about to write fall in a WRITABLE region rather than
 # assuming it.
 $internal = $alts | Where-Object { $_ -match 'Internal Flash' } | Select-Object -First 1
-if ($internal) {
-    if ($internal -match '/0x08000000/([0-9A-Za-z\*]+)') {
-        Write-Host ""
-        Write-Host "  internal flash layout: $($Matches[1])" -ForegroundColor DarkGray
-        Write-Host "  (a = readable only, g = readable/writable/erasable;" -ForegroundColor DarkGray
-        Write-Host "   sector 0 being 'a' is why MCUboot is chainloaded, not installed at 0)" -ForegroundColor DarkGray
-    }
+if (-not $internal) {
+    throw "no 'Internal Flash' alt setting was advertised - check the listing above"
+}
+if ($internal -notmatch '/0x([0-9A-Fa-f]+)/([0-9A-Za-z\*,]+)') {
+    throw "could not parse the internal-flash sector layout from: $internal"
+}
+
+# PARSE THE LAYOUT AND CHECK OUR TARGETS AGAINST IT.
+#
+# The descriptor is the board stating which sectors it will accept, in DfuSe
+# form: 01*128Ka,15*128Kg means one 128 KB sector that is readable only
+# followed by fifteen that are readable, writable and erasable. Sector 0 being
+# 'a' is precisely why MCUboot is chainloaded rather than installed at
+# 0x08000000.
+#
+# Checked rather than assumed, because the failure it guards against is a
+# future edit to pmc-partitions.dtsi that moves a partition down into sector 0.
+# dfu-util would then refuse mid-write, after MCUboot had already been written
+# somewhere - and a half-installed chain is the one state with no obvious way
+# back short of the ROM bootloader this board cannot reach.
+# IDENTIFY THE DEVICE EXACTLY, and write only to that one.
+#
+# dfu-util refuses to act when it can see more than one DFU-capable device,
+# and this board alone advertises four alt settings - plus whatever else on the
+# machine happens to expose a DFU interface (a webcam did, here). Passing
+# -d vid:pid and -S serial means the writes land on the device whose descriptor
+# was just inspected, rather than on whichever one dfu-util would have picked.
+if ($internal -match '\[([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})\]') {
+    $devId = "$($Matches[1]):$($Matches[2])"
 } else {
-    Write-Warning "no 'Internal Flash' alt setting was advertised - check the listing above"
+    throw "could not read vid:pid from: $internal"
+}
+if ($internal -match 'serial="([^"]+)"') {
+    $devSerial = $Matches[1]
+} else {
+    throw "could not read the serial number from: $internal"
+}
+
+if ($internal -notmatch '/0x([0-9A-Fa-f]+)/([0-9A-Za-z\*,]+)') {
+    throw "could not re-parse the internal-flash sector layout"
+}
+$base = [Convert]::ToUInt32($Matches[1], 16)
+$regions = @()
+$cursor = $base
+foreach ($seg in $Matches[2] -split ',') {
+    if ($seg -notmatch '^(\d+)\*(\d+)([KMB])([a-g])$') {
+        throw "unrecognized sector segment '$seg' in layout $($Matches[2])"
+    }
+    $count = [int]$Matches[1]
+    $unit = switch ($Matches[3]) { 'K' { 1KB } 'M' { 1MB } default { 1 } }
+    $size = [int]$Matches[2] * $unit
+    # DfuSe attribute letters: a=readable, b/c/d add erase/write bits, e/f/g
+    # are the writable combinations. Anything other than 'a' can be written.
+    $writable = ($Matches[4] -ne 'a')
+    $regions += [pscustomobject]@{
+        Start = $cursor; End = $cursor + ($count * $size); Writable = $writable; Spec = $seg
+    }
+    $cursor += $count * $size
+}
+
+Write-Host ""
+Write-Host "  internal flash, as the board describes it:" -ForegroundColor DarkGray
+foreach ($r in $regions) {
+    $w = if ($r.Writable) { 'writable' } else { 'READ-ONLY' }
+    Write-Host ("    0x{0:x8} .. 0x{1:x8}  {2,-9}  {3}" -f $r.Start, $r.End, $w, $r.Spec) -ForegroundColor DarkGray
+}
+
+foreach ($t in @(@{N='MCUboot'; A=[Convert]::ToUInt32($bootAddr,16); S=(Get-Item $boot).Length},
+                 @{N='application'; A=[Convert]::ToUInt32($appAddr,16); S=$appSize})) {
+    $first = $regions | Where-Object { $t.A -ge $_.Start -and $t.A -lt $_.End } | Select-Object -First 1
+    $last  = $regions | Where-Object { ($t.A + $t.S - 1) -ge $_.Start -and ($t.A + $t.S - 1) -lt $_.End } | Select-Object -First 1
+    if (-not $first -or -not $last) {
+        throw ("{0} at 0x{1:x8} for {2} bytes falls outside the flash this board advertises" -f $t.N, $t.A, $t.S)
+    }
+    $spanned = $regions | Where-Object { $_.End -gt $t.A -and $_.Start -lt ($t.A + $t.S) }
+    $ro = $spanned | Where-Object { -not $_.Writable }
+    if ($ro) {
+        throw ("{0} at 0x{1:x8} for {2} bytes would write the READ-ONLY region " +
+               "0x{3:x8}..0x{4:x8}. The board will refuse it. Check the flash map." -f `
+               $t.N, $t.A, $t.S, $ro[0].Start, $ro[0].End)
+    }
+    Write-Host ("  {0,-12} 0x{1:x8} + {2,9:N0} bytes: all in writable flash" -f $t.N, $t.A, $t.S) -ForegroundColor DarkGray
 }
 
 if (-not $PSCmdlet.ShouldProcess("the board over Arduino DFU", "write MCUboot and the application")) {
@@ -174,13 +247,15 @@ if (-not $PSCmdlet.ShouldProcess("the board over Arduino DFU", "write MCUboot an
 # the destination in -s. Only the LAST write takes :leave, so the board stays
 # in DFU between the two.
 Write-Host ""
+Write-Host "  writing to $devId serial $devSerial" -ForegroundColor DarkGray
+Write-Host ""
 Write-Host "==> MCUboot -> $bootAddr" -ForegroundColor Cyan
-& $dfu -a 0 -s "$bootAddr" -D $boot
+& $dfu -d $devId -S $devSerial -a 0 -s "$bootAddr" -D $boot
 if ($LASTEXITCODE -ne 0) { throw "writing MCUboot failed" }
 
 Write-Host ""
 Write-Host "==> application -> $appAddr" -ForegroundColor Cyan
-& $dfu -a 0 -s "${appAddr}:leave" -D $app
+& $dfu -d $devId -S $devSerial -a 0 -s "${appAddr}:leave" -D $app
 if ($LASTEXITCODE -ne 0) { throw "writing the application failed" }
 
 Write-Host ""
