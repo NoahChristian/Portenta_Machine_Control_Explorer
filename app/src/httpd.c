@@ -1,233 +1,52 @@
 /*
- * The web panel's server.
+ * The web panel's server: the route table, and nothing else.
  *
  * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
- * TWO ROUTES, AND THE SPLIT IS DELIBERATE.
+ * TWO ROUTES, AND THE PAGE IS RENDERED, NOT ASSEMBLED.
  *
- *   /            the page, a static byte array generated from web/index.html
- *   /state.json  everything that changes, as JSON
+ *   /            the panel, rendered server-side from web/index.html by the
+ *                HtmlTpl SSI engine through page_vars.cpp
+ *   /state.json  the same snapshot as JSON, for scripts
  *
- * No markup is assembled in C. The page is authored as HTML, opens in a
- * browser as a file, and is embedded verbatim by tools/gen_page.py. A page
- * built by concatenating strings in a handler cannot be previewed, diffs
- * badly, and grows escaping bugs that appear in one branch only.
+ * THIS USED TO SERVE A C BYTE ARRAY AND LET JAVASCRIPT FILL IT IN. The page
+ * was authored as HTML, which was right, and then embedded verbatim as
+ * `static const uint8_t page_index[]` and animated by a script polling
+ * /state.json every two seconds. Three things were wrong with that:
  *
- * This is the read-only half. Writing to channels will not be bolted onto
- * these handlers: it needs the request to post to the owning thread and read
- * back a verified result, and it needs the route table to carry the method and
- * the auth gate in the same row. That shape is why this file registers routes
- * from a table rather than scattering HTTP_RESOURCE_DEFINE calls - the
- * PowerMonitor bench shipped two unauthenticated write routes precisely
- * because the registrations were individually written and individually
- * forgotten.
+ *   - It was still markup living in C. The rule this repository carries from
+ *     a sibling project on this bench is that a page is a TEMPLATE the device renders, with
+ *     every substitution checked at build time against a registry. A byte
+ *     array is not checked against anything: a typo in a JavaScript field name
+ *     produced an empty cell and no error anywhere.
+ *   - Every reading on screen came from a different instant, and nothing said
+ *     so. The panel now takes one snapshot per render, and says in its own
+ *     heading that it does.
+ *   - A page that polls against a server with a small fixed number of client
+ *     slots wedges itself. That cost a debugging session and a
+ *     `Connection: close` header; with nothing polling, neither is needed.
+ *
+ * WHY A TABLE AND NOT SCATTERED REGISTRATIONS. A resource declares
+ * bitmask_of_supported_http_methods in the same place as its path, which is
+ * the structural answer to the bug a sibling project on this bench shipped twice:
+ * server.on() lets a mutating route be registered with no method restriction
+ * and no auth, and the registration written individually is the one forgotten
+ * individually. Both routes below are GET only and say so where they live.
  */
 
 #include <zephyr/kernel.h>
-#include <zephyr/device.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
-#include <zephyr/net/net_if.h>
-#include <zephyr/net/hostname.h>
-#include <zephyr/drivers/adc.h>
-#include <zephyr/dfu/mcuboot.h>
-#include <zephyr/storage/flash_map.h>
-
-#include <stm32_ll_system.h>
 
 #include "health.h"
-#include "web_gen/page_index.h"
+#include "httpd.h"
+#include "page_vars.h"
 
 LOG_MODULE_REGISTER(pmc_httpd, LOG_LEVEL_INF);
 
 static uint16_t http_port = 80;
-
-/*
- * One buffer, reused, and the handler is re-entered until it says it is done.
- *
- * Zephyr's dynamic resource is a GENERATOR, not a sink: the handler is called
- * repeatedly and each call returns a pointer and a length, setting final_chunk
- * when there is no more. So the JSON is rendered once into this buffer on the
- * first call of a request and then handed out in one piece.
- *
- * Sized for the whole document rather than streamed, because at this size the
- * complexity of a resumable renderer buys nothing. When the channel table
- * arrives - 45 channels rather than 3 - this is the thing that has to change,
- * and it will want the chunked HtmlTpl path instead of a bigger buffer.
- */
-static char json_buf[2048];
-
-#define AI_SWITCHES (LL_SYSCFG_ANALOG_SWITCH_PA1 | \
-		     LL_SYSCFG_ANALOG_SWITCH_PC2 | \
-		     LL_SYSCFG_ANALOG_SWITCH_PC3)
-
-static const struct adc_dt_spec ai[] = {
-	ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0),
-	ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 1),
-	ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 2),
-};
-static const char *const ai_name[] = { "AI0", "AI1", "AI2" };
-static const char *const ai_pad[]  = { "PC_3C", "PC_2C", "PA_1C" };
-static const uint32_t ai_switch[] = {
-	LL_SYSCFG_ANALOG_SWITCH_PC3,
-	LL_SYSCFG_ANALOG_SWITCH_PC2,
-	LL_SYSCFG_ANALOG_SWITCH_PA1,
-};
-
-static int read_ai(size_t i, int16_t *raw, int32_t *mv)
-{
-	struct adc_sequence seq = { .buffer = raw, .buffer_size = sizeof(*raw) };
-
-	if (!adc_is_ready_dt(&ai[i])) {
-		return -ENODEV;
-	}
-	if (adc_channel_setup_dt(&ai[i]) != 0) {
-		return -EIO;
-	}
-	if (adc_sequence_init_dt(&ai[i], &seq) != 0) {
-		return -EIO;
-	}
-	if (adc_read_dt(&ai[i], &seq) != 0) {
-		return -EIO;
-	}
-	*mv = *raw;
-	(void)adc_raw_to_millivolts_dt(&ai[i], mv);
-	return 0;
-}
-
-static size_t render_state(char *out, size_t cap)
-{
-	const uint32_t pmcr = SYSCFG->PMCR & AI_SWITCHES;
-	size_t n = 0;
-
-	n += snprintk(out + n, cap - n,
-		      "{\"host\":\"%s\",\"fw\":\"%s\",\"uptime\":%lld,",
-		      net_hostname_get(), CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION,
-		      (long long)(k_uptime_get() / 1000));
-
-	/* Health, from the same evaluator the shell and the gate use. */
-	n += snprintk(out + n, cap - n, "\"health\":[");
-	for (size_t i = 0; i < pmc_health_check_count(); i++) {
-		const char *detail = "";
-		const bool ok = pmc_health_check(i, &detail);
-
-		n += snprintk(out + n, cap - n,
-			      "%s{\"name\":\"%s\",\"ok\":%s,\"detail\":\"%s\"}",
-			      i ? "," : "", pmc_health_check_name(i),
-			      ok ? "true" : "false", detail);
-	}
-	n += snprintk(out + n, cap - n, "],");
-
-	/* Slots, read from the image headers rather than from a build string. */
-	n += snprintk(out + n, cap - n, "\"slots\":[");
-	static const uint8_t slot_id[] = {
-#if PARTITION_EXISTS(slot0_partition)
-		PARTITION_ID(slot0_partition),
-#endif
-#if PARTITION_EXISTS(slot1_partition)
-		PARTITION_ID(slot1_partition),
-#endif
-	};
-	for (size_t i = 0; i < ARRAY_SIZE(slot_id); i++) {
-		struct mcuboot_img_header hdr;
-		char ver[24] = "-";
-
-		if (boot_read_bank_header(slot_id[i], &hdr, sizeof(hdr)) == 0) {
-			snprintk(ver, sizeof(ver), "%u.%u.%u",
-				 hdr.h.v1.sem_ver.major, hdr.h.v1.sem_ver.minor,
-				 hdr.h.v1.sem_ver.revision);
-		}
-		n += snprintk(out + n, cap - n,
-			      "%s{\"slot\":%u,\"version\":\"%s\",\"active\":%s,"
-			      "\"confirmed\":%s}",
-			      i ? "," : "", (unsigned)i, ver,
-			      i == 0 ? "true" : "false",
-			      (i == 0 && boot_is_img_confirmed()) ? "true" : "false");
-	}
-	n += snprintk(out + n, cap - n, "],");
-
-	/* Analog inputs, with the switch state beside each reading, because a
-	 * value from a channel whose switch is closed is not a measurement of
-	 * anything on the terminal block. */
-	n += snprintk(out + n, cap - n, "\"ai\":[");
-	for (size_t i = 0; i < ARRAY_SIZE(ai); i++) {
-		int16_t raw = 0;
-		int32_t mv = 0;
-		const int rc = read_ai(i, &raw, &mv);
-
-		n += snprintk(out + n, cap - n,
-			      "%s{\"name\":\"%s\",\"pad\":\"%s\",\"raw\":%d,"
-			      "\"mv\":%d,\"open\":%s}",
-			      i ? "," : "", ai_name[i], ai_pad[i],
-			      rc == 0 ? raw : -1, rc == 0 ? mv : -1,
-			      (pmcr & ai_switch[i]) ? "true" : "false");
-	}
-	n += snprintk(out + n, cap - n, "]}");
-
-	return n < cap ? n : cap - 1;
-}
-
-static int state_handler(struct http_client_ctx *client,
-			 enum http_transaction_status status,
-			 const struct http_request_ctx *request_ctx,
-			 struct http_response_ctx *response_ctx,
-			 void *user_data)
-{
-	ARG_UNUSED(client);
-	ARG_UNUSED(request_ctx);
-	ARG_UNUSED(user_data);
-
-	/*
-	 * The handler is called for every stage of a transaction, including
-	 * the terminal notifications. A GET has no body, so the first call is
-	 * already FINAL; answering on anything else would emit the document
-	 * twice.
-	 */
-	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
-		return 0;
-	}
-
-	static const struct http_header hdrs[] = {
-		{ .name = "Content-Type", .value = "application/json" },
-		/* The page polls; a cached snapshot is worse than none. */
-		{ .name = "Cache-Control", .value = "no-store" },
-		/*
-		 * CONNECTION: CLOSE, AND IT IS NOT AN OPTIMIZATION.
-		 *
-		 * Browsers and most HTTP clients keep a connection alive after
-		 * a response, and this server has a small fixed number of
-		 * client slots. Two idle keep-alive clients therefore occupy
-		 * it permanently: further connections are accepted at the TCP
-		 * level and then never serviced, so the symptom changes from
-		 * "refused" to "hangs", which looks like a slow handler rather
-		 * than a full table.
-		 *
-		 * Observed on this board with `net conn`: four connections
-		 * from one PC, two ESTABLISHED, one TIME_WAIT, one CLOSED,
-		 * none released - against MAX_CLIENTS=2. A page that polls
-		 * every two seconds wedges its own server within a minute.
-		 *
-		 * Closing after each response is the right trade for a panel:
-		 * a poll is a fresh connection, no slot is held between them,
-		 * and the cost is one handshake per poll on a LAN.
-		 */
-		{ .name = "Connection", .value = "close" },
-	};
-
-	const size_t n = render_state(json_buf, sizeof(json_buf));
-
-	response_ctx->status = 200;
-	response_ctx->headers = hdrs;
-	response_ctx->header_count = ARRAY_SIZE(hdrs);
-	response_ctx->body = (const uint8_t *)json_buf;
-	response_ctx->body_len = n;
-	response_ctx->final_chunk = true;
-
-	pmc_health_note_http_200();
-	return 0;
-}
 
 /*
  * HOST IS NULL, NOT "0.0.0.0".
@@ -241,32 +60,110 @@ static int state_handler(struct http_client_ctx *client,
  */
 HTTP_SERVICE_DEFINE(pmc_service, NULL, &http_port, 4, 4, NULL, NULL, NULL);
 
-static struct http_resource_detail_static index_detail = {
+/* ------------------------------------------------------------------ / ---- */
+
+static int index_handler(struct http_client_ctx *client,
+			 enum http_transaction_status status,
+			 const struct http_request_ctx *request_ctx,
+			 struct http_response_ctx *response_ctx, void *user_data)
+{
+	const char *query = NULL;
+	size_t qlen = 0;
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+
+	/*
+	 * Whatever follows the '?' in the URL. Zephyr hands it over on the
+	 * FIRST callback of a request and zeroes the length thereafter, which
+	 * is documented on struct http_request_ctx and is easy to be caught by:
+	 * reading it on a later call gets an empty string, so a feature built
+	 * on it works for a one-chunk page and stops working when the page
+	 * grows. The page uses it for ?ch=<channel>, the clicked terminal;
+	 * page_vars decides which call is the first and ignores the rest.
+	 */
+	if (request_ctx != NULL && request_ctx->data_len > 0U) {
+		query = (const char *)request_ctx->data;
+		qlen = request_ctx->data_len;
+	}
+
+	if (status == HTTP_SERVER_REQUEST_DATA_FINAL) {
+		pmc_health_note_http_200();
+	}
+
+	return pmc_page_step(status, response_ctx, query, qlen);
+}
+
+static struct http_resource_detail_dynamic index_detail = {
 	.common = {
-		.type = HTTP_RESOURCE_TYPE_STATIC,
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
 		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
-		.content_type = "text/html; charset=utf-8",
 	},
-	.static_data = page_index,
-	.static_data_len = PAGE_INDEX_LEN,
+	.cb = index_handler,
+	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(index_resource, pmc_service, "/", &index_detail);
+
+/* --------------------------------------------------------- /state.json --- */
+
+/*
+ * One buffer, filled on the first callback and handed out whole.
+ *
+ * Not streamed: at this size a resumable renderer buys nothing, and unlike the
+ * page there is no template to walk. If this ever needs to grow past the
+ * buffer it should become a second HtmlTpl page rather than a bigger buffer -
+ * the engine already streams, and a JSON template would be checked against the
+ * same registry the HTML one is.
+ */
+static char json_buf[2048];
+
+static int state_handler(struct http_client_ctx *client,
+			 enum http_transaction_status status,
+			 const struct http_request_ctx *request_ctx,
+			 struct http_response_ctx *response_ctx, void *user_data)
+{
+	static const struct http_header hdrs[] = {
+		{ .name = "Content-Type", .value = "application/json" },
+		{ .name = "Cache-Control", .value = "no-store" },
+	};
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(request_ctx);
+	ARG_UNUSED(user_data);
+
+	/*
+	 * The handler is called for every stage of a transaction, including the
+	 * terminal notification. A GET has no body, so the first call is
+	 * already FINAL; answering on anything else would emit the document
+	 * twice.
+	 */
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	response_ctx->status = HTTP_200_OK;
+	response_ctx->headers = hdrs;
+	response_ctx->header_count = ARRAY_SIZE(hdrs);
+	response_ctx->body = (const uint8_t *)json_buf;
+	response_ctx->body_len = pmc_page_state_json(json_buf,
+						     sizeof(json_buf));
+	response_ctx->final_chunk = true;
+
+	pmc_health_note_http_200();
+	return 0;
+}
 
 static struct http_resource_detail_dynamic state_detail = {
 	.common = {
 		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
-		/*
-		 * GET ONLY, and stated here rather than checked in the
-		 * handler. A resource's bitmask puts the method in the same
-		 * place as the route, so a method cannot be forgotten the way
-		 * it can when each handler polices itself.
-		 */
 		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
 	},
 	.cb = state_handler,
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
+
+/* --------------------------------------------------------------- start --- */
 
 /*
  * THE SERVER DOES NOT START ITSELF, AND IT IS STARTED FROM main().
@@ -288,17 +185,28 @@ HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
  */
 void pmc_httpd_init(void)
 {
+	/*
+	 * THE PAGE SELF-TEST IS NOT CALLED FROM HERE, and the reason is the
+	 * stack. This function runs on the system workqueue - net.c schedules
+	 * it as a k_work from the L4_CONNECTED event - and a self-test RENDERS
+	 * the page, which puts HtmlTpl's 1460-byte output buffer on whatever
+	 * stack calls it. CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE is 2048. It
+	 * overflowed on the first boot after the change, the MPU caught it
+	 * honestly, and the board halted with no console and no network.
+	 *
+	 * main() runs it instead, on a stack sized for it. See prj.conf.
+	 */
 	const int rc = http_server_start();
-
 	if (rc != 0) {
 		/*
-		 * Worth a loud message: the usual cause is running out of
-		 * file descriptors or poll slots, and the errno alone names
-		 * neither. See the ZVFS_POLL_MAX and ZVFS_EVENTFD_MAX notes in
+		 * Worth a loud message: the usual cause is running out of file
+		 * descriptors or poll slots, and the errno alone names neither.
+		 * See the ZVFS_POLL_MAX and ZVFS_EVENTFD_MAX notes in
 		 * prj.conf - the HTTP server contributes nothing to the
 		 * automatic sizing of the latter.
 		 */
-		LOG_ERR("http_server_start failed (%d); the panel will not answer", rc);
+		LOG_ERR("http_server_start failed (%d); the panel will not answer",
+			rc);
 		return;
 	}
 

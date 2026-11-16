@@ -34,10 +34,33 @@ Working on hardware:
 | OTA | Upload, swap and boot over WiFi, proven end to end |
 | Discovery | `portentaexplorer.local` |
 | I/O | Both I2C expanders enumerate; the three analog inputs read |
+| Panel | Rendered on the board from `web/index.html`, with a drawing of the carrier whose terminals carry live state |
 
-Not built yet: the web panel itself, the channel table, the board image with
-hotspots, and every output driver beyond the boot indicator. The current
-interface is the USB shell.
+Not built yet: the channel table, every output driver beyond the boot
+indicator, and the write path. Nothing on the board drawing has been confirmed
+at the connector yet, so every channel renders dashed.
+
+### The panel is a template the board renders, not a page a script assembles
+
+It is server-side includes, through the [HtmlTpl][lib] engine shared with
+a sibling project on this bench, and it runs **no JavaScript at all**. The page is authored
+as `web/index.html` and opens in a browser as a file; `tools/gen_page.py`
+checks every `<!--#v name-->` in it against the registry in
+`app/src/page_vars.cpp` and emits the committed header the firmware serves. A
+name the registry does not have is a build error naming the line.
+
+Two consequences worth stating, because each replaced something worse:
+
+- **Every reading on the page comes from one instant.** The renderer takes a
+  single snapshot before the first row is asked for, which is what makes the
+  sentence in the page's own heading true. Nothing polls; reload to take a
+  fresh set.
+- **The board drawing is one terminal, written once.** All 79 are the same
+  markup inside an `each` block, and `tools/gen_board.py` solves where each one
+  sits from `tools/terminals.csv`. That is also the only way the hover tips can
+  be live: 79 terminals cannot be 79 registry variables.
+
+[lib]: https://github.com/NoahChristian/Arduino_HTTP_HTML
 
 ## Hardware
 
@@ -113,14 +136,26 @@ in both directions. See [docs/OTA.md](docs/OTA.md).
 
 ## Building
 
-Needs a Zephyr west workspace and the Zephyr SDK. Every argument in the build
-script was arrived at by a build failing in a way that did not name the cause,
-which is why there is a script rather than a command to copy:
+Needs a Zephyr west workspace, the Zephyr SDK, and a checkout of
+**Arduino_HTTP_HTML** beside this repository — the panel is a template the
+board renders, so the engine is a build dependency, not an optional extra.
+Override its location with `-DHTMLTPL_DIR=<path>` or `$env:HTMLTPL_DIR`.
+
+Every argument in the build script was arrived at by a build failing in a way
+that did not name the cause, which is why there is a script rather than a
+command to copy:
 
 ```powershell
+python tools/gen_board.py       # only after editing tools/terminals.csv
+python tools/gen_page.py        # only after editing web/ or the registry
 pwsh tools/build.ps1            # application only
-pwsh tools/build.ps1 -Mcuboot   # bootloader too; needs the signing key
+pwsh tools/build.ps1 -Mcuboot   # bootloader too; needs its own signing key
 ```
+
+Both generated files are **committed**, so the firmware builds without Python;
+the pre-commit hook runs each generator with `--check` so a stale one cannot
+reach a commit. A stale generated page compiles clean, flashes clean, and
+serves the previous page.
 
 Pinned toolchain, because the HTTP server is marked experimental upstream and
 several Kconfig symbols moved recently: Zephyr 4.5.99, SDK 1.0.1,

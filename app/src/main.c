@@ -33,6 +33,8 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/drivers/flash.h>
 
+#include "page_vars.h"
+
 
 LOG_MODULE_REGISTER(pmc, LOG_LEVEL_INF);
 
@@ -161,7 +163,22 @@ int main(void)
 	 * interface has an address, so a server started from main() binds
 	 * nothing and never retries - see the L4_CONNECTED handler in net.c,
 	 * which starts it when there is actually something to bind to.
+	 *
+	 * Its SELF-TEST is here, though, and that split is deliberate twice
+	 * over. It renders the whole page to a counting sink and logs every
+	 * tag that does not resolve against the registry in page_vars.cpp, so a
+	 * generated header that no longer matches the registry is a line in the
+	 * boot log rather than a hole somebody notices in a browser an hour
+	 * later - and it runs now rather than on first request, because the
+	 * point of a self-test is to have already run.
+	 *
+	 * AND IT HAS TO BE ON THIS STACK. HtmlTpl::render() puts its
+	 * HTMLTPL_OUTBUF coalescing buffer on the caller's stack, which is 1460
+	 * bytes; CONFIG_MAIN_STACK_SIZE is raised to 8192 to hold it. Calling
+	 * it from the L4 handler instead put it on the 2048-byte system
+	 * workqueue stack and faulted the board on its first boot.
 	 */
+	pmc_page_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

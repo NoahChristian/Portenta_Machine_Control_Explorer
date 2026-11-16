@@ -224,6 +224,43 @@ else
   fail=1
 fi
 
+# --- 10. The generated page, against the registry ---------------------------
+#
+# app/src/web_gen/page_index.h is generated from web/index.html and is
+# COMMITTED, so the firmware builds without Python. A committed generated file
+# can go stale, and a stale one here compiles clean, flashes clean and serves
+# the PREVIOUS page - which is the failure this check exists for and the one
+# that wastes an afternoon.
+#
+# The same run validates every <!--#v name--> against the registry in
+# app/src/page_vars.cpp, so a renamed variable is refused here rather than
+# rendering as an empty cell on the board. Proved by planting 'tTipp' for
+# 'tTip': refused, naming the line and suggesting the right name.
+#
+# A MISSING GENERATOR IS A FAILURE, NOT A PASS. gen_page.py wraps mkhtml.py
+# from the Arduino_HTTP_HTML checkout and exits non-zero when it cannot find
+# it, which is the behavior this block wants - see the note on the global gate
+# below for what happens when a check is allowed to skip quietly.
+if git diff --cached --name-only | grep -qE '^(web/|app/src/page_vars\.cpp|app/src/web_gen/)'; then
+  if ! python tools/gen_page.py --check; then
+    say ""
+    say "The generated page is stale or names a variable the registry does not"
+    say "have. Run:  python tools/gen_page.py"
+    fail=1
+  fi
+fi
+
+# --- 11. The board geometry table, against terminals.csv --------------------
+#
+# Same class, different file. app/src/board_table.inc holds where all 79
+# terminals sit, solved from tools/terminals.csv; a stale table draws a board
+# that is subtly not this board, and nothing about it looks wrong.
+if git diff --cached --name-only | grep -qE '^(tools/terminals\.csv|tools/gen_board\.py|app/src/board_table\.inc)'; then
+  if ! python tools/gen_board.py --check; then
+    fail=1
+  fi
+fi
+
 # --- Checks not yet registered ----------------------------------------------
 #
 # Each is added HERE, as a fail-if-missing block, on the same commit that first
@@ -233,7 +270,6 @@ fi
 #
 #   gen_channels.py --check                once tools/channels.csv exists (M2)
 #   the two-way hotspot/channel assertion  once web/ exists (M8)
-#   mkhtml.py --check                      once web/*.html exists (M3)
 
 # --- The global gate, called ABOVE the exit ----------------------------------
 #
