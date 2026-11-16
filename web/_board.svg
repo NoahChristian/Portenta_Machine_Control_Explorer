@@ -1,0 +1,529 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 700" class="board" role="img" aria-label="Portenta Machine Control, top view, live">
+<title>Portenta Machine Control - top view, live</title>
+<rect class="rail" x="0" y="6" width="1300" height="26" rx="8"/>
+<rect class="rail" x="0" y="668" width="1300" height="26" rx="8"/>
+<rect class="pcb" x="8" y="30" width="1284" height="638" rx="4"/>
+<rect class="conn" x="34.0" y="92.0" width="92.0" height="60.0" rx="3"/>
+<g class="term k-supply_in nochan" data-kind="supply_in" data-conf="pinout">
+<rect class="tbody" x="40.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="48.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="45.1" y1="122.0" x2="51.9" y2="122.0"/>
+</g>
+<text class="silk" x="48.5" y="160.0" text-anchor="start" transform="rotate(-90 48.5 160.0)">24V IN</text>
+<g class="term k-supply_in nochan" data-kind="supply_in" data-conf="pinout">
+<rect class="tbody" x="61.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="69.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="66.1" y1="122.0" x2="72.9" y2="122.0"/>
+</g>
+<text class="silk" x="69.5" y="160.0" text-anchor="start" transform="rotate(-90 69.5 160.0)">24V IN</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="82.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="90.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="87.1" y1="122.0" x2="93.9" y2="122.0"/>
+</g>
+<text class="silk" x="90.5" y="160.0" text-anchor="start" transform="rotate(-90 90.5 160.0)">GND</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="103.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="111.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="108.1" y1="122.0" x2="114.9" y2="122.0"/>
+</g>
+<text class="silk" x="111.5" y="160.0" text-anchor="start" transform="rotate(-90 111.5 160.0)">GND</text>
+<text class="blocktitle" x="36.0" y="248.0">PWR SUPPLY</text>
+<rect class="conn" x="152.0" y="92.0" width="218.0" height="60.0" rx="3"/>
+<g class="term k-supply_out nochan" data-kind="supply_out" data-conf="pinout">
+<rect class="tbody" x="158.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="166.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="163.1" y1="122.0" x2="169.9" y2="122.0"/>
+</g>
+<text class="silk" x="166.5" y="160.0" text-anchor="start" transform="rotate(-90 166.5 160.0)">24V OUT</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="179.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="187.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="184.1" y1="122.0" x2="190.9" y2="122.0"/>
+</g>
+<text class="silk" x="187.5" y="160.0" text-anchor="start" transform="rotate(-90 187.5 160.0)">GND</text>
+<g class="term k-rs485 unverified" data-kind="rs485" data-conf="pinout" data-ch="RS485_TXP" tabindex="0" role="button" aria-label="RS485_TXP, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="200.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="208.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="205.1" y1="122.0" x2="211.9" y2="122.0"/>
+</g>
+<text class="silk" x="208.5" y="160.0" text-anchor="start" transform="rotate(-90 208.5 160.0)">TXP485</text>
+<g class="term k-rs485 unverified" data-kind="rs485" data-conf="pinout" data-ch="RS485_TXN" tabindex="0" role="button" aria-label="RS485_TXN, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="221.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="229.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="226.1" y1="122.0" x2="232.9" y2="122.0"/>
+</g>
+<text class="silk" x="229.5" y="160.0" text-anchor="start" transform="rotate(-90 229.5 160.0)">TXN485</text>
+<g class="term k-rs485 unverified" data-kind="rs485" data-conf="pinout" data-ch="RS485_RXP" tabindex="0" role="button" aria-label="RS485_RXP, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="242.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="250.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="247.1" y1="122.0" x2="253.9" y2="122.0"/>
+</g>
+<text class="silk" x="250.5" y="160.0" text-anchor="start" transform="rotate(-90 250.5 160.0)">RXP485</text>
+<g class="term k-rs485 unverified" data-kind="rs485" data-conf="pinout" data-ch="RS485_RXN" tabindex="0" role="button" aria-label="RS485_RXN, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="263.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="271.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="268.1" y1="122.0" x2="274.9" y2="122.0"/>
+</g>
+<text class="silk" x="271.5" y="160.0" text-anchor="start" transform="rotate(-90 271.5 160.0)">RXN485</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="284.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="292.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="289.1" y1="122.0" x2="295.9" y2="122.0"/>
+</g>
+<text class="silk" x="292.5" y="160.0" text-anchor="start" transform="rotate(-90 292.5 160.0)">GND</text>
+<g class="term k-can unverified" data-kind="can" data-conf="pinout" data-ch="CAN_H" tabindex="0" role="button" aria-label="CAN_H, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="305.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="313.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="310.1" y1="122.0" x2="316.9" y2="122.0"/>
+</g>
+<text class="silk" x="313.5" y="160.0" text-anchor="start" transform="rotate(-90 313.5 160.0)">CANH</text>
+<g class="term k-can unverified" data-kind="can" data-conf="pinout" data-ch="CAN_L" tabindex="0" role="button" aria-label="CAN_L, HMI - COMM PROTOCOLS">
+<rect class="tbody" x="326.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="334.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="331.1" y1="122.0" x2="337.9" y2="122.0"/>
+</g>
+<text class="silk" x="334.5" y="160.0" text-anchor="start" transform="rotate(-90 334.5 160.0)">CANL</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="347.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="355.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="352.1" y1="122.0" x2="358.9" y2="122.0"/>
+</g>
+<text class="silk" x="355.5" y="160.0" text-anchor="start" transform="rotate(-90 355.5 160.0)">GND</text>
+<text class="blocktitle" x="154.0" y="248.0">HMI - COMM PROTOCOLS</text>
+<rect class="conn" x="396.0" y="92.0" width="197.0" height="60.0" rx="3"/>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP0_TP" tabindex="0" role="button" aria-label="TEMP0_TP, TEMP PROBES">
+<rect class="tbody" x="402.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="410.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="407.1" y1="122.0" x2="413.9" y2="122.0"/>
+</g>
+<text class="silk" x="410.5" y="160.0" text-anchor="start" transform="rotate(-90 410.5 160.0)">TP0</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP0_TN" tabindex="0" role="button" aria-label="TEMP0_TN, TEMP PROBES">
+<rect class="tbody" x="423.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="431.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="428.1" y1="122.0" x2="434.9" y2="122.0"/>
+</g>
+<text class="silk" x="431.5" y="160.0" text-anchor="start" transform="rotate(-90 431.5 160.0)">TN0</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP0_RTD" tabindex="0" role="button" aria-label="TEMP0_RTD, TEMP PROBES">
+<rect class="tbody" x="444.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="452.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="449.1" y1="122.0" x2="455.9" y2="122.0"/>
+</g>
+<text class="silk" x="452.5" y="160.0" text-anchor="start" transform="rotate(-90 452.5 160.0)">RTD0</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP1_TP" tabindex="0" role="button" aria-label="TEMP1_TP, TEMP PROBES">
+<rect class="tbody" x="465.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="473.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="470.1" y1="122.0" x2="476.9" y2="122.0"/>
+</g>
+<text class="silk" x="473.5" y="160.0" text-anchor="start" transform="rotate(-90 473.5 160.0)">TP1</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP1_TN" tabindex="0" role="button" aria-label="TEMP1_TN, TEMP PROBES">
+<rect class="tbody" x="486.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="494.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="491.1" y1="122.0" x2="497.9" y2="122.0"/>
+</g>
+<text class="silk" x="494.5" y="160.0" text-anchor="start" transform="rotate(-90 494.5 160.0)">TN1</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP1_RTD" tabindex="0" role="button" aria-label="TEMP1_RTD, TEMP PROBES">
+<rect class="tbody" x="507.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="515.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="512.1" y1="122.0" x2="518.9" y2="122.0"/>
+</g>
+<text class="silk" x="515.5" y="160.0" text-anchor="start" transform="rotate(-90 515.5 160.0)">RTD1</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP2_TP" tabindex="0" role="button" aria-label="TEMP2_TP, TEMP PROBES">
+<rect class="tbody" x="528.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="536.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="533.1" y1="122.0" x2="539.9" y2="122.0"/>
+</g>
+<text class="silk" x="536.5" y="160.0" text-anchor="start" transform="rotate(-90 536.5 160.0)">TP2</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP2_TN" tabindex="0" role="button" aria-label="TEMP2_TN, TEMP PROBES">
+<rect class="tbody" x="549.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="557.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="554.1" y1="122.0" x2="560.9" y2="122.0"/>
+</g>
+<text class="silk" x="557.5" y="160.0" text-anchor="start" transform="rotate(-90 557.5 160.0)">TN2</text>
+<g class="term k-temp unverified" data-kind="temp" data-conf="pinout" data-ch="TEMP2_RTD" tabindex="0" role="button" aria-label="TEMP2_RTD, TEMP PROBES">
+<rect class="tbody" x="570.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="578.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="575.1" y1="122.0" x2="581.9" y2="122.0"/>
+</g>
+<text class="silk" x="578.5" y="160.0" text-anchor="start" transform="rotate(-90 578.5 160.0)">RTD2</text>
+<text class="blocktitle" x="398.0" y="248.0">TEMP PROBES</text>
+<rect class="conn" x="619.0" y="92.0" width="155.0" height="60.0" rx="3"/>
+<g class="term k-supply_out nochan" data-kind="supply_out" data-conf="photo">
+<rect class="tbody" x="625.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="633.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="630.1" y1="122.0" x2="636.9" y2="122.0"/>
+</g>
+<text class="silk" x="633.5" y="160.0" text-anchor="start" transform="rotate(-90 633.5 160.0)">24V OUT</text>
+<g class="term k-ai unverified" data-kind="ai" data-conf="pinout" data-ch="AI0" tabindex="0" role="button" aria-label="AI0, ANALOG IN">
+<rect class="tbody" x="646.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="654.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="651.1" y1="122.0" x2="657.9" y2="122.0"/>
+</g>
+<text class="silk" x="654.5" y="160.0" text-anchor="start" transform="rotate(-90 654.5 160.0)">AI0</text>
+<g class="term k-supply_out nochan" data-kind="supply_out" data-conf="photo">
+<rect class="tbody" x="667.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="675.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="672.1" y1="122.0" x2="678.9" y2="122.0"/>
+</g>
+<text class="silk" x="675.5" y="160.0" text-anchor="start" transform="rotate(-90 675.5 160.0)">24V OUT</text>
+<g class="term k-ai unverified" data-kind="ai" data-conf="pinout" data-ch="AI1" tabindex="0" role="button" aria-label="AI1, ANALOG IN">
+<rect class="tbody" x="688.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="696.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="693.1" y1="122.0" x2="699.9" y2="122.0"/>
+</g>
+<text class="silk" x="696.5" y="160.0" text-anchor="start" transform="rotate(-90 696.5 160.0)">AI1</text>
+<g class="term k-supply_out nochan" data-kind="supply_out" data-conf="photo">
+<rect class="tbody" x="709.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="717.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="714.1" y1="122.0" x2="720.9" y2="122.0"/>
+</g>
+<text class="silk" x="717.5" y="160.0" text-anchor="start" transform="rotate(-90 717.5 160.0)">24V OUT</text>
+<g class="term k-ai unverified" data-kind="ai" data-conf="pinout" data-ch="AI2" tabindex="0" role="button" aria-label="AI2, ANALOG IN">
+<rect class="tbody" x="730.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="738.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="735.1" y1="122.0" x2="741.9" y2="122.0"/>
+</g>
+<text class="silk" x="738.5" y="160.0" text-anchor="start" transform="rotate(-90 738.5 160.0)">AI2</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="751.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="759.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="756.1" y1="122.0" x2="762.9" y2="122.0"/>
+</g>
+<text class="silk" x="759.5" y="160.0" text-anchor="start" transform="rotate(-90 759.5 160.0)">GND</text>
+<text class="blocktitle" x="621.0" y="248.0">ANALOG IN</text>
+<rect class="conn" x="800.0" y="92.0" width="176.0" height="60.0" rx="3"/>
+<g class="term k-ao unverified" data-kind="ao" data-conf="pinout" data-ch="AO0" tabindex="0" role="button" aria-label="AO0, ANALOG OUT">
+<rect class="tbody" x="806.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="814.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="811.1" y1="122.0" x2="817.9" y2="122.0"/>
+</g>
+<text class="silk" x="814.5" y="160.0" text-anchor="start" transform="rotate(-90 814.5 160.0)">AO0</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="827.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="835.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="832.1" y1="122.0" x2="838.9" y2="122.0"/>
+</g>
+<text class="silk" x="835.5" y="160.0" text-anchor="start" transform="rotate(-90 835.5 160.0)">GND</text>
+<g class="term k-ao unverified" data-kind="ao" data-conf="pinout" data-ch="AO1" tabindex="0" role="button" aria-label="AO1, ANALOG OUT">
+<rect class="tbody" x="848.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="856.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="853.1" y1="122.0" x2="859.9" y2="122.0"/>
+</g>
+<text class="silk" x="856.5" y="160.0" text-anchor="start" transform="rotate(-90 856.5 160.0)">AO1</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="869.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="877.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="874.1" y1="122.0" x2="880.9" y2="122.0"/>
+</g>
+<text class="silk" x="877.5" y="160.0" text-anchor="start" transform="rotate(-90 877.5 160.0)">GND</text>
+<g class="term k-ao unverified" data-kind="ao" data-conf="pinout" data-ch="AO2" tabindex="0" role="button" aria-label="AO2, ANALOG OUT">
+<rect class="tbody" x="890.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="898.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="895.1" y1="122.0" x2="901.9" y2="122.0"/>
+</g>
+<text class="silk" x="898.5" y="160.0" text-anchor="start" transform="rotate(-90 898.5 160.0)">AO2</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="911.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="919.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="916.1" y1="122.0" x2="922.9" y2="122.0"/>
+</g>
+<text class="silk" x="919.5" y="160.0" text-anchor="start" transform="rotate(-90 919.5 160.0)">GND</text>
+<g class="term k-ao unverified" data-kind="ao" data-conf="pinout" data-ch="AO3" tabindex="0" role="button" aria-label="AO3, ANALOG OUT">
+<rect class="tbody" x="932.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="940.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="937.1" y1="122.0" x2="943.9" y2="122.0"/>
+</g>
+<text class="silk" x="940.5" y="160.0" text-anchor="start" transform="rotate(-90 940.5 160.0)">AO3</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="953.0" y="102.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="961.5" cy="122.0" r="5.2"/>
+<line class="slot" x1="958.1" y1="122.0" x2="964.9" y2="122.0"/>
+</g>
+<text class="silk" x="961.5" y="160.0" text-anchor="start" transform="rotate(-90 961.5 160.0)">GND</text>
+<text class="blocktitle" x="802.0" y="248.0">ANALOG OUT</text>
+<rect class="conn" x="34.0" y="560.0" width="197.0" height="60.0" rx="3"/>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN0" tabindex="0" role="button" aria-label="DIN0, DIGITAL INPUTS">
+<rect class="tbody" x="40.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="48.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="45.1" y1="590.0" x2="51.9" y2="590.0"/>
+</g>
+<text class="silk" x="48.5" y="552.0" text-anchor="end" transform="rotate(-90 48.5 552.0)">00</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN1" tabindex="0" role="button" aria-label="DIN1, DIGITAL INPUTS">
+<rect class="tbody" x="61.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="69.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="66.1" y1="590.0" x2="72.9" y2="590.0"/>
+</g>
+<text class="silk" x="69.5" y="552.0" text-anchor="end" transform="rotate(-90 69.5 552.0)">01</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN2" tabindex="0" role="button" aria-label="DIN2, DIGITAL INPUTS">
+<rect class="tbody" x="82.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="90.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="87.1" y1="590.0" x2="93.9" y2="590.0"/>
+</g>
+<text class="silk" x="90.5" y="552.0" text-anchor="end" transform="rotate(-90 90.5 552.0)">02</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN3" tabindex="0" role="button" aria-label="DIN3, DIGITAL INPUTS">
+<rect class="tbody" x="103.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="111.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="108.1" y1="590.0" x2="114.9" y2="590.0"/>
+</g>
+<text class="silk" x="111.5" y="552.0" text-anchor="end" transform="rotate(-90 111.5 552.0)">03</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN4" tabindex="0" role="button" aria-label="DIN4, DIGITAL INPUTS">
+<rect class="tbody" x="124.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="132.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="129.1" y1="590.0" x2="135.9" y2="590.0"/>
+</g>
+<text class="silk" x="132.5" y="552.0" text-anchor="end" transform="rotate(-90 132.5 552.0)">04</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN5" tabindex="0" role="button" aria-label="DIN5, DIGITAL INPUTS">
+<rect class="tbody" x="145.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="153.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="150.1" y1="590.0" x2="156.9" y2="590.0"/>
+</g>
+<text class="silk" x="153.5" y="552.0" text-anchor="end" transform="rotate(-90 153.5 552.0)">05</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN6" tabindex="0" role="button" aria-label="DIN6, DIGITAL INPUTS">
+<rect class="tbody" x="166.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="174.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="171.1" y1="590.0" x2="177.9" y2="590.0"/>
+</g>
+<text class="silk" x="174.5" y="552.0" text-anchor="end" transform="rotate(-90 174.5 552.0)">06</text>
+<g class="term k-din unverified" data-kind="din" data-conf="pinout" data-ch="DIN7" tabindex="0" role="button" aria-label="DIN7, DIGITAL INPUTS">
+<rect class="tbody" x="187.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="195.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="192.1" y1="590.0" x2="198.9" y2="590.0"/>
+</g>
+<text class="silk" x="195.5" y="552.0" text-anchor="end" transform="rotate(-90 195.5 552.0)">07</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="208.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="216.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="213.1" y1="590.0" x2="219.9" y2="590.0"/>
+</g>
+<text class="silk" x="216.5" y="552.0" text-anchor="end" transform="rotate(-90 216.5 552.0)">GND</text>
+<text class="blocktitle" x="36.0" y="464.0">DIGITAL INPUTS</text>
+<rect class="conn" x="257.0" y="560.0" width="218.0" height="60.0" rx="3"/>
+<g class="term k-supply_in nochan" data-kind="supply_in" data-conf="pinout">
+<rect class="tbody" x="263.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="271.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="268.1" y1="590.0" x2="274.9" y2="590.0"/>
+</g>
+<text class="silk" x="271.5" y="552.0" text-anchor="end" transform="rotate(-90 271.5 552.0)">24V IN</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO0" tabindex="0" role="button" aria-label="DO0, DIGITAL OUTPUTS">
+<rect class="tbody" x="284.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="292.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="289.1" y1="590.0" x2="295.9" y2="590.0"/>
+</g>
+<text class="silk" x="292.5" y="552.0" text-anchor="end" transform="rotate(-90 292.5 552.0)">00</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO1" tabindex="0" role="button" aria-label="DO1, DIGITAL OUTPUTS">
+<rect class="tbody" x="305.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="313.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="310.1" y1="590.0" x2="316.9" y2="590.0"/>
+</g>
+<text class="silk" x="313.5" y="552.0" text-anchor="end" transform="rotate(-90 313.5 552.0)">01</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO2" tabindex="0" role="button" aria-label="DO2, DIGITAL OUTPUTS">
+<rect class="tbody" x="326.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="334.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="331.1" y1="590.0" x2="337.9" y2="590.0"/>
+</g>
+<text class="silk" x="334.5" y="552.0" text-anchor="end" transform="rotate(-90 334.5 552.0)">02</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO3" tabindex="0" role="button" aria-label="DO3, DIGITAL OUTPUTS">
+<rect class="tbody" x="347.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="355.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="352.1" y1="590.0" x2="358.9" y2="590.0"/>
+</g>
+<text class="silk" x="355.5" y="552.0" text-anchor="end" transform="rotate(-90 355.5 552.0)">03</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO4" tabindex="0" role="button" aria-label="DO4, DIGITAL OUTPUTS">
+<rect class="tbody" x="368.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="376.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="373.1" y1="590.0" x2="379.9" y2="590.0"/>
+</g>
+<text class="silk" x="376.5" y="552.0" text-anchor="end" transform="rotate(-90 376.5 552.0)">04</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO5" tabindex="0" role="button" aria-label="DO5, DIGITAL OUTPUTS">
+<rect class="tbody" x="389.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="397.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="394.1" y1="590.0" x2="400.9" y2="590.0"/>
+</g>
+<text class="silk" x="397.5" y="552.0" text-anchor="end" transform="rotate(-90 397.5 552.0)">05</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO6" tabindex="0" role="button" aria-label="DO6, DIGITAL OUTPUTS">
+<rect class="tbody" x="410.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="418.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="415.1" y1="590.0" x2="421.9" y2="590.0"/>
+</g>
+<text class="silk" x="418.5" y="552.0" text-anchor="end" transform="rotate(-90 418.5 552.0)">06</text>
+<g class="term k-do unverified" data-kind="do" data-conf="pinout" data-ch="DO7" tabindex="0" role="button" aria-label="DO7, DIGITAL OUTPUTS">
+<rect class="tbody" x="431.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="439.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="436.1" y1="590.0" x2="442.9" y2="590.0"/>
+</g>
+<text class="silk" x="439.5" y="552.0" text-anchor="end" transform="rotate(-90 439.5 552.0)">07</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="452.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="460.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="457.1" y1="590.0" x2="463.9" y2="590.0"/>
+</g>
+<text class="silk" x="460.5" y="552.0" text-anchor="end" transform="rotate(-90 460.5 552.0)">GND</text>
+<text class="blocktitle" x="259.0" y="464.0">DIGITAL OUTPUTS</text>
+<rect class="conn" x="501.0" y="560.0" width="302.0" height="60.0" rx="3"/>
+<g class="term k-supply_in nochan" data-kind="supply_in" data-conf="pinout">
+<rect class="tbody" x="507.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="515.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="512.1" y1="590.0" x2="518.9" y2="590.0"/>
+</g>
+<text class="silk" x="515.5" y="552.0" text-anchor="end" transform="rotate(-90 515.5 552.0)">24V IN</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO0" tabindex="0" role="button" aria-label="PDIO0, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="528.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="536.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="533.1" y1="590.0" x2="539.9" y2="590.0"/>
+</g>
+<text class="silk" x="536.5" y="552.0" text-anchor="end" transform="rotate(-90 536.5 552.0)">00</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO1" tabindex="0" role="button" aria-label="PDIO1, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="549.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="557.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="554.1" y1="590.0" x2="560.9" y2="590.0"/>
+</g>
+<text class="silk" x="557.5" y="552.0" text-anchor="end" transform="rotate(-90 557.5 552.0)">01</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO2" tabindex="0" role="button" aria-label="PDIO2, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="570.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="578.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="575.1" y1="590.0" x2="581.9" y2="590.0"/>
+</g>
+<text class="silk" x="578.5" y="552.0" text-anchor="end" transform="rotate(-90 578.5 552.0)">02</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO3" tabindex="0" role="button" aria-label="PDIO3, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="591.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="599.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="596.1" y1="590.0" x2="602.9" y2="590.0"/>
+</g>
+<text class="silk" x="599.5" y="552.0" text-anchor="end" transform="rotate(-90 599.5 552.0)">03</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO4" tabindex="0" role="button" aria-label="PDIO4, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="612.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="620.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="617.1" y1="590.0" x2="623.9" y2="590.0"/>
+</g>
+<text class="silk" x="620.5" y="552.0" text-anchor="end" transform="rotate(-90 620.5 552.0)">04</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO5" tabindex="0" role="button" aria-label="PDIO5, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="633.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="641.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="638.1" y1="590.0" x2="644.9" y2="590.0"/>
+</g>
+<text class="silk" x="641.5" y="552.0" text-anchor="end" transform="rotate(-90 641.5 552.0)">05</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO6" tabindex="0" role="button" aria-label="PDIO6, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="654.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="662.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="659.1" y1="590.0" x2="665.9" y2="590.0"/>
+</g>
+<text class="silk" x="662.5" y="552.0" text-anchor="end" transform="rotate(-90 662.5 552.0)">06</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO7" tabindex="0" role="button" aria-label="PDIO7, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="675.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="683.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="680.1" y1="590.0" x2="686.9" y2="590.0"/>
+</g>
+<text class="silk" x="683.5" y="552.0" text-anchor="end" transform="rotate(-90 683.5 552.0)">07</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO8" tabindex="0" role="button" aria-label="PDIO8, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="696.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="704.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="701.1" y1="590.0" x2="707.9" y2="590.0"/>
+</g>
+<text class="silk" x="704.5" y="552.0" text-anchor="end" transform="rotate(-90 704.5 552.0)">08</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO9" tabindex="0" role="button" aria-label="PDIO9, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="717.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="725.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="722.1" y1="590.0" x2="728.9" y2="590.0"/>
+</g>
+<text class="silk" x="725.5" y="552.0" text-anchor="end" transform="rotate(-90 725.5 552.0)">09</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO10" tabindex="0" role="button" aria-label="PDIO10, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="738.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="746.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="743.1" y1="590.0" x2="749.9" y2="590.0"/>
+</g>
+<text class="silk" x="746.5" y="552.0" text-anchor="end" transform="rotate(-90 746.5 552.0)">10</text>
+<g class="term k-pdio unverified" data-kind="pdio" data-conf="pinout" data-ch="PDIO11" tabindex="0" role="button" aria-label="PDIO11, PROGRAMMABLE DIGITAL I/O">
+<rect class="tbody" x="759.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="767.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="764.1" y1="590.0" x2="770.9" y2="590.0"/>
+</g>
+<text class="silk" x="767.5" y="552.0" text-anchor="end" transform="rotate(-90 767.5 552.0)">11</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="780.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="788.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="785.1" y1="590.0" x2="791.9" y2="590.0"/>
+</g>
+<text class="silk" x="788.5" y="552.0" text-anchor="end" transform="rotate(-90 788.5 552.0)">GND</text>
+<text class="blocktitle" x="503.0" y="464.0">PROGRAMMABLE DIGITAL I/O</text>
+<rect class="conn" x="829.0" y="560.0" width="176.0" height="60.0" rx="3"/>
+<g class="term k-supply_out nochan" data-kind="supply_out" data-conf="photo">
+<rect class="tbody" x="835.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="843.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="840.1" y1="590.0" x2="846.9" y2="590.0"/>
+</g>
+<text class="silk" x="843.5" y="552.0" text-anchor="end" transform="rotate(-90 843.5 552.0)">24V OUT</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC0_A" tabindex="0" role="button" aria-label="ENC0_A, ENCODERS">
+<rect class="tbody" x="856.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="864.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="861.1" y1="590.0" x2="867.9" y2="590.0"/>
+</g>
+<text class="silk" x="864.5" y="552.0" text-anchor="end" transform="rotate(-90 864.5 552.0)">A0</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC0_B" tabindex="0" role="button" aria-label="ENC0_B, ENCODERS">
+<rect class="tbody" x="877.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="885.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="882.1" y1="590.0" x2="888.9" y2="590.0"/>
+</g>
+<text class="silk" x="885.5" y="552.0" text-anchor="end" transform="rotate(-90 885.5 552.0)">B0</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC0_Z" tabindex="0" role="button" aria-label="ENC0_Z, ENCODERS">
+<rect class="tbody" x="898.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="906.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="903.1" y1="590.0" x2="909.9" y2="590.0"/>
+</g>
+<text class="silk" x="906.5" y="552.0" text-anchor="end" transform="rotate(-90 906.5 552.0)">Z0</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC1_A" tabindex="0" role="button" aria-label="ENC1_A, ENCODERS">
+<rect class="tbody" x="919.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="927.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="924.1" y1="590.0" x2="930.9" y2="590.0"/>
+</g>
+<text class="silk" x="927.5" y="552.0" text-anchor="end" transform="rotate(-90 927.5 552.0)">A1</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC1_B" tabindex="0" role="button" aria-label="ENC1_B, ENCODERS">
+<rect class="tbody" x="940.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="948.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="945.1" y1="590.0" x2="951.9" y2="590.0"/>
+</g>
+<text class="silk" x="948.5" y="552.0" text-anchor="end" transform="rotate(-90 948.5 552.0)">B1</text>
+<g class="term k-enc unverified" data-kind="enc" data-conf="pinout" data-ch="ENC1_Z" tabindex="0" role="button" aria-label="ENC1_Z, ENCODERS">
+<rect class="tbody" x="961.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="969.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="966.1" y1="590.0" x2="972.9" y2="590.0"/>
+</g>
+<text class="silk" x="969.5" y="552.0" text-anchor="end" transform="rotate(-90 969.5 552.0)">Z1</text>
+<g class="term k-gnd nochan" data-kind="gnd" data-conf="pinout">
+<rect class="tbody" x="982.0" y="570.0" width="17.0" height="40.0" rx="2"/>
+<circle class="screw" cx="990.5" cy="590.0" r="5.2"/>
+<line class="slot" x1="987.1" y1="590.0" x2="993.9" y2="590.0"/>
+</g>
+<text class="silk" x="990.5" y="552.0" text-anchor="end" transform="rotate(-90 990.5 552.0)">GND</text>
+<text class="blocktitle" x="831.0" y="464.0">ENCODERS</text>
+<g class="feat">
+<rect class="usba" x="150" y="284" width="74" height="52" rx="3"/>
+<text class="featlbl" x="187" y="354">USB A  J15</text>
+<rect class="rj45" x="300" y="276" width="92" height="74" rx="4"/>
+<text class="featlbl" x="346" y="368">RJ45  J13</text>
+<rect class="usbm" x="470" y="298" width="34" height="24" rx="3"/>
+<text class="featlbl" x="487" y="342">micro  J16</text>
+<circle class="btn" cx="560" cy="310" r="13"/>
+<text class="featlbl" x="560" y="342">RST</text>
+<rect class="hdr" x="880" y="288" width="24" height="56" rx="2"/>
+<text class="featlbl" x="892" y="360">I2C</text>
+<circle class="sma" cx="1120" cy="310" r="19"/>
+<circle class="smai" cx="1120" cy="310" r="7"/>
+<text class="featlbl" x="1120" y="352">WiFi / BLE</text>
+<text class="brand" x="700" y="304">PORTENTA MACHINE CONTROL</text>
+<text class="brand2" x="700" y="328">ARDUINO PRO</text>
+</g>
+<circle class="led ro" cx="40" cy="196" r="4.6"/>
+<text class="ledlbl" x="52" y="199.6">RS485 TX</text>
+<circle class="led ro" cx="40" cy="217" r="4.6"/>
+<text class="ledlbl" x="52" y="220.6">RS485 RX</text>
+<circle class="led ro" cx="40" cy="238" r="4.6"/>
+<text class="ledlbl" x="52" y="241.6">CAN TX</text>
+<circle class="led ro" cx="40" cy="259" r="4.6"/>
+<text class="ledlbl" x="52" y="262.6">CAN RX</text>
+<circle class="led ro" cx="40" cy="280" r="4.6"/>
+<text class="ledlbl" x="52" y="283.6">3V3</text>
+<circle class="led ro" cx="40" cy="301" r="4.6"/>
+<text class="ledlbl" x="52" y="304.6">12V</text>
+<circle class="led ro" cx="40" cy="322" r="4.6"/>
+<text class="ledlbl" x="52" y="325.6">24V</text>
+</svg>

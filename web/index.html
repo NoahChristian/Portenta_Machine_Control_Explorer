@@ -3,11 +3,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portenta Machine Control Explorer</title>
 <style>
-  :root { color-scheme: light dark; --ok:#1a7f37; --bad:#b3261e; --dim:#6b7280; }
-  body { font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:1.5rem;
-         max-width:52rem; }
+  :root {
+    color-scheme: light dark;
+    --ok:#1a7f37; --bad:#b3261e; --dim:#6b7280; --warn:#9a6700;
+    /* The board, drawn to look like the board. */
+    --pcb:#15181d; --rail:#3b4149; --conn:#4e9c5f; --conn-lip:#6fbd80;
+    --screw:#c9a227; --silk:#e8eaed; --feat:#9aa3ad;
+    --live-hi:#38d16a;   /* a channel that is HIGH / energized */
+    --live-lo:#2a3340;   /* a channel that is LOW / off       */
+    --live-unk:#6b7280;  /* no reading yet                    */
+  }
+  body { font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0;
+         padding:1.25rem; max-width:84rem; }
   h1 { font-size:1.1rem; margin:0 0 .25rem; }
-  .sub { color:var(--dim); margin:0 0 1.5rem; font-size:.85rem; }
+  .sub { color:var(--dim); margin:0 0 1rem; font-size:.85rem; }
   table { border-collapse:collapse; width:100%; margin-bottom:1.5rem; }
   caption { text-align:left; font-weight:600; padding:.4rem 0; }
   th,td { text-align:left; padding:.3rem .6rem .3rem 0; border-bottom:1px solid #8883; }
@@ -15,8 +24,57 @@
        letter-spacing:.04em; }
   .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
   .note { color:var(--dim); font-size:.85rem; border-left:2px solid #8884;
-          padding-left:.8rem; margin:1.5rem 0; }
+          padding-left:.8rem; margin:1.25rem 0; }
   #err { color:var(--bad); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(22rem,1fr));
+          gap:0 2rem; }
+
+  /* ---- the board ------------------------------------------------------ */
+  .boardwrap { background:#0b0d10; border-radius:10px; padding:.6rem;
+               margin:0 0 .6rem; overflow-x:auto; }
+  svg.board { width:100%; min-width:46rem; height:auto; display:block; }
+  .rail { fill:var(--rail); }
+  .pcb  { fill:var(--pcb); }
+  .conn { fill:var(--conn); stroke:var(--conn-lip); stroke-width:1.5; }
+  .tbody { fill:#2f2a1a; }
+  .screw { fill:var(--screw); }
+  .slot  { stroke:#6b5a14; stroke-width:1.6; }
+  .silk  { fill:var(--silk); font:9px ui-monospace,monospace; letter-spacing:.02em; }
+  .blocktitle { fill:var(--silk); font:11px ui-monospace,monospace;
+                letter-spacing:.09em; }
+  .featlbl { fill:var(--feat); font:9px ui-monospace,monospace; text-anchor:middle; }
+  .ledlbl  { fill:var(--feat); font:9px ui-monospace,monospace; }
+  .usba,.rj45,.usbm,.hdr { fill:#aab2bb; }
+  .btn { fill:#55606c; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
+  .led { fill:#333b45; }
+  .brand  { fill:#cfd4da; font:13px ui-monospace,monospace; text-anchor:middle;
+            letter-spacing:.14em; }
+  .brand2 { fill:#8d959e; font:10px ui-monospace,monospace; text-anchor:middle;
+            letter-spacing:.2em; }
+
+  /* A terminal the panel can read or drive. */
+  .term { cursor:pointer; }
+  .term.nochan { cursor:default; }
+  .term .screw { transition:fill .12s; }
+  .term.live-hi  .screw { fill:var(--live-hi); }
+  .term.live-lo  .screw { fill:var(--live-lo); }
+  .term.live-unk .screw { fill:var(--live-unk); }
+  .term:focus { outline:none; }
+  .term:hover .tbody, .term:focus .tbody { fill:#5a4a1e; }
+  .term.sel .tbody { fill:#7a6526; }
+  /* An UNVERIFIED mapping gets a dashed body. The panel must not render a
+     guess and a measurement identically - see tools/terminals.csv. */
+  .term.unverified .tbody { stroke:#b08900; stroke-width:1; stroke-dasharray:2 2; }
+
+  .legend { color:var(--dim); font-size:.8rem; margin:0 0 1.25rem;
+            display:flex; gap:1.25rem; flex-wrap:wrap; }
+  .legend b { font-weight:500; color:inherit; }
+  .sw { display:inline-block; width:.7rem; height:.7rem; border-radius:50%;
+        vertical-align:-1px; margin-right:.3rem; }
+
+  #pick { border:1px solid #8884; border-radius:6px; padding:.6rem .8rem;
+          margin:0 0 1.25rem; font-size:.9rem; }
+  #pick .ch { font-weight:600; } #pick .meta { color:var(--dim); font-size:.85rem; }
 </style>
 
 <h1>Portenta Machine Control Explorer</h1>
@@ -27,6 +85,22 @@
   <span id="err"></span>
 </p>
 
+<div class="boardwrap">
+<!--BOARD-->
+</div>
+
+<p class="legend">
+  <span><b>Terminals</b></span>
+  <span><i class="sw" style="background:var(--live-hi)"></i>high / energized</span>
+  <span><i class="sw" style="background:var(--live-lo)"></i>low / off</span>
+  <span><i class="sw" style="background:var(--live-unk)"></i>not read yet</span>
+  <span><i class="sw" style="background:var(--screw)"></i>not a channel</span>
+  <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
+</p>
+
+<div id="pick"><span class="dim">Click a terminal on the board.</span></div>
+
+<div class="grid">
 <table>
   <caption>Health</caption>
   <thead><tr><th>check</th><th>state</th><th>detail</th></tr></thead>
@@ -38,6 +112,7 @@
   <thead><tr><th>slot</th><th>version</th><th>state</th></tr></thead>
   <tbody id="slots"><tr><td colspan="3" class="dim">loading&hellip;</td></tr></tbody>
 </table>
+</div>
 
 <table>
   <caption>Analog inputs</caption>
@@ -46,12 +121,16 @@
 </table>
 
 <p class="note">
-  Readings are raw ADC counts at the MCU pad, not engineering units. Each
-  channel's 0&ndash;10&nbsp;V / 4&ndash;20&nbsp;mA / NTC mode is a four-bit GPIO
-  switch network that nothing drives yet, so the front end is in an undefined
-  mode and these numbers say nothing about any signal on the terminal block.
-  What they do show is that the ADC path works and that the SYSCFG analog
-  switches are open.
+  The board above is drawn from <code>tools/terminals.csv</code>, not traced
+  from a photograph, so it carries no license obligation and every terminal is
+  a live element rather than a picture of one. Terminal <em>order</em> comes
+  from Arduino's published pinout; nothing on it has been confirmed at the
+  connector yet, which is why every channel is dashed. Readings are raw ADC
+  counts at the MCU pad, not engineering units: each channel's
+  0&ndash;10&nbsp;V / 4&ndash;20&nbsp;mA / NTC mode is a four-bit GPIO switch
+  network that nothing drives yet, so the front end is in an undefined mode.
+  What the numbers do show is that the ADC path works and that the SYSCFG
+  analog switches are open.
 </p>
 
 <script>
@@ -59,32 +138,77 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const row = cells => '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
 
+let sel = null;
+const terms = {};
+for (const g of document.querySelectorAll('.term[data-ch]')) {
+  const ch = g.getAttribute('data-ch');
+  (terms[ch] = terms[ch] || []).push(g);
+  g.classList.add('live-unk');
+  const show = () => pick(ch, g);
+  g.addEventListener('click', show);
+  g.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(); }
+  });
+}
+
+function pick(ch, g) {
+  if (sel) sel.classList.remove('sel');
+  sel = g; g.classList.add('sel');
+  const kind = g.getAttribute('data-kind');
+  const conf = g.getAttribute('data-conf');
+  const v = last[ch];
+  const note = conf === 'measured'
+    ? 'confirmed at the connector'
+    : 'mapping from the published pinout, NOT yet confirmed at the connector';
+  $('pick').innerHTML =
+    `<span class="ch">${esc(ch)}</span> &middot; <span class="meta">${esc(kind)}</span>` +
+    (v === undefined ? ' &middot; <span class="dim">no reading</span>'
+                     : ` &middot; ${esc(v)}`) +
+    `<br><span class="meta">${esc(note)}</span>`;
+}
+
+let last = {};
+
+function paint(s) {
+  last = {};
+  for (const a of (s.ai || [])) last[a.name] = `${a.raw} raw, ${a.mv} mV`;
+  for (const ch in terms) {
+    const known = last[ch] !== undefined;
+    for (const g of terms[ch]) {
+      g.classList.toggle('live-unk', !known);
+      g.classList.remove('live-hi', 'live-lo');
+    }
+  }
+  if (sel) pick(sel.getAttribute('data-ch'), sel);
+}
+
 async function tick() {
   try {
     const r = await fetch('/state.json', {cache:'no-store'});
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const s = await r.json();
     $('err').textContent = '';
-    $('fw').textContent = esc(s.fw);
+    $('host').textContent = s.host;
+    $('fw').textContent = s.fw;
     $('up').textContent = s.uptime + ' s';
-    $('host').textContent = esc(s.host) + '.local';
-
-    $('health').innerHTML = s.health.map(h =>
-      row([esc(h.name),
-           h.ok ? '<span class="ok">ok</span>' : '<span class="bad">FAIL</span>',
-           `<span class="dim">${esc(h.detail || '')}</span>`])).join('');
-
-    $('slots').innerHTML = s.slots.map(sl =>
-      row([sl.slot, esc(sl.version),
-           `<span class="dim">${sl.active ? 'running, ' : ''}${sl.confirmed ? 'confirmed' : 'not confirmed'}</span>`])).join('');
-
-    $('ai').innerHTML = s.ai.map(a =>
-      row([esc(a.name), `<span class="dim">${esc(a.pad)}</span>`, a.raw, a.mv,
-           a.open ? '<span class="ok">open</span>' : '<span class="bad">CLOSED</span>'])).join('');
+    $('health').innerHTML = (s.health || []).map(h => row([
+      esc(h.name),
+      h.ok ? '<span class="ok">ok</span>' : '<span class="bad">FAIL</span>',
+      `<span class="dim">${esc(h.detail || '')}</span>`])).join('');
+    $('slots').innerHTML = (s.slots || []).map(x => row([
+      x.slot,
+      esc(x.version || '<span class="dim">empty</span>'),
+      (x.active ? 'running' : 'standby') +
+        (x.confirmed ? ', confirmed' : '<span class="dim">, unconfirmed</span>')
+    ])).join('');
+    $('ai').innerHTML = (s.ai || []).map(a => row([
+      esc(a.name), `<span class="dim">${esc(a.pad)}</span>`, a.raw, a.mv,
+      a.open ? '<span class="ok">open</span>' : '<span class="bad">CLOSED</span>'
+    ])).join('');
+    paint(s);
   } catch (e) {
-    $('err').textContent = ' \u2014 ' + e.message;
+    $('err').textContent = ' — ' + e.message;
   }
 }
-tick();
-setInterval(tick, 2000);
+tick(); setInterval(tick, 2000);
 </script>

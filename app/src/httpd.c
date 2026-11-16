@@ -193,6 +193,27 @@ static int state_handler(struct http_client_ctx *client,
 		{ .name = "Content-Type", .value = "application/json" },
 		/* The page polls; a cached snapshot is worse than none. */
 		{ .name = "Cache-Control", .value = "no-store" },
+		/*
+		 * CONNECTION: CLOSE, AND IT IS NOT AN OPTIMIZATION.
+		 *
+		 * Browsers and most HTTP clients keep a connection alive after
+		 * a response, and this server has a small fixed number of
+		 * client slots. Two idle keep-alive clients therefore occupy
+		 * it permanently: further connections are accepted at the TCP
+		 * level and then never serviced, so the symptom changes from
+		 * "refused" to "hangs", which looks like a slow handler rather
+		 * than a full table.
+		 *
+		 * Observed on this board with `net conn`: four connections
+		 * from one PC, two ESTABLISHED, one TIME_WAIT, one CLOSED,
+		 * none released - against MAX_CLIENTS=2. A page that polls
+		 * every two seconds wedges its own server within a minute.
+		 *
+		 * Closing after each response is the right trade for a panel:
+		 * a poll is a fresh connection, no slot is held between them,
+		 * and the cost is one handshake per poll on a LAN.
+		 */
+		{ .name = "Connection", .value = "close" },
 	};
 
 	const size_t n = render_state(json_buf, sizeof(json_buf));
@@ -218,7 +239,7 @@ static int state_handler(struct http_client_ctx *client,
  * address. No error anywhere; the only symptom was a refused connection, which
  * reads like a firewall or a wrong address rather than a host string.
  */
-HTTP_SERVICE_DEFINE(pmc_service, NULL, &http_port, 2, 2, NULL, NULL, NULL);
+HTTP_SERVICE_DEFINE(pmc_service, NULL, &http_port, 4, 4, NULL, NULL, NULL);
 
 static struct http_resource_detail_static index_detail = {
 	.common = {

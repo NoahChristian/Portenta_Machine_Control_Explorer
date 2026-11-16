@@ -27,8 +27,32 @@ WEB = ROOT / "web"
 OUT = ROOT / "app" / "src" / "web_gen"
 
 
+BOARD_MARK = b"<!--BOARD-->"
+
+
+def splice_board(raw: bytes) -> bytes:
+    """Inline web/_board.svg wherever the page says <!--BOARD-->.
+
+    The board is GENERATED (tools/gen_board.py, from tools/terminals.csv) and
+    inlined rather than fetched, for three reasons that all point one way: an
+    inline <svg> can be styled and have its terminals colored by the page's own
+    CSS, which an <img> cannot; it costs no second request on a board whose
+    HTTP server has a small fixed number of client slots; and it cannot go
+    stale in a cache separately from the page that interprets it.
+    """
+    if BOARD_MARK not in raw:
+        return raw
+    svg = WEB / "_board.svg"
+    if not svg.exists():
+        raise SystemExit(
+            "web/_board.svg is missing - run: python tools/gen_board.py\n"
+            "Refusing to emit a page whose board is a comment, because that "
+            "builds clean, flashes clean, and serves an empty panel.")
+    return raw.replace(BOARD_MARK, svg.read_bytes().replace(b"\r\n", b"\n"))
+
+
 def emit(src: pathlib.Path) -> tuple[str, str]:
-    raw = src.read_bytes().replace(b"\r\n", b"\n")
+    raw = splice_board(src.read_bytes().replace(b"\r\n", b"\n"))
     stem = src.stem.replace("-", "_")
     guard = f"PMC_PAGE_{stem.upper()}_H"
     sym = f"page_{stem}"

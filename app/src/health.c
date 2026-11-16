@@ -347,7 +347,8 @@ static int cmd_pmc_health(const struct shell *sh, size_t argc, char **argv)
 		    "NOT confirmed - reverts on next reset");
 	shell_print(sh, "  %-17s %s", "confirmed by us", s_confirmed_by_us ? "yes" : "no");
 	shell_print(sh, "  %-17s %s", "DO1 indicator",
-		    s_healthy ? "low - healthy" : "HIGH - not yet healthy");
+		    s_healthy ? "blinking - healthy"
+			      : "steady on - running, not yet healthy");
 
 	shell_print(sh, "");
 	shell_print(sh, "NOT YET CHECKED, and listed so the gap is visible:");
