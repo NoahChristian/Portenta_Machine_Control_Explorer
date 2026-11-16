@@ -98,6 +98,29 @@ actually fitted changes the answer.
 
 ---
 
+## The panel, now that it renders
+
+- **Nothing on the board drawing is `measured`.** All 56 channels in
+  `tools/terminals.csv` say `pinout` or `photo`, so every one renders with a
+  dashed screw block. Confirming a mapping at the connector with a meter and
+  flipping that column is the single highest-value piece of bench work here,
+  and it is what the dashes exist to keep anyone from forgetting.
+- **The 28 channel LEDs never light**, because DIN, DO and PDIO live on the
+  two TCA6424A expanders and nothing in the image reads them (M2). The
+  snapshot reports "no reader in this image yet" rather than LOW, deliberately:
+  an absent reader and a reading of zero must not render the same.
+- **No write path yet.** `HTMLTPL_FORMS=0`, so the form binder and the CSRF
+  token are not compiled in at all. M4 flips it to 1, adds
+  `HtmlTplEntropyZephyr.cpp` upstream to seed the token from
+  `sys_csrand_get()`, and adds `htmlTplFeedFromZephyr()` — which has to
+  accumulate a POST body across several callbacks into a buffer that outlives
+  the render, because the binder NUL-terminates decoded values in place.
+- **The rendered page is 72 KB on the wire against a 12 KB template**, and
+  about a sixth of that is the design-time sample attributes that
+  `data-tpl-attr` leaves in place so the file still previews in a browser.
+  That is the right trade today — nothing polls, so a page load is a rare
+  event — but it is the first thing to look at if the panel ever feels slow.
+
 ## Known-wrong or unverified, carried from the code
 
 - **AO2 on `PG_7` cannot be right.** That pin has no timer channel on this
@@ -117,6 +140,25 @@ actually fitted changes the answer.
 ---
 
 ## Lessons to fold into the tooling
+
+- **A fatal error must reset, not halt.** Zephyr's default fatal handler calls
+  `arch_system_halt()`, which spins with interrupts off. On this board that
+  kills the USB console and the network at once, so the only remaining recovery
+  is a hand on RST — and it defeats the dual-slot design outright, because a
+  RESET is exactly what makes MCUboot revert an image that has not confirmed.
+  `CONFIG_RESET_ON_FATAL_ERROR=y` is set now. It was learned by halting the
+  board with a stack overflow and having to ask for a physical reset.
+- **`render()` puts its output buffer on the caller's stack**, 1460 bytes of
+  it, so nothing on the system workqueue may render a template. The page
+  self-test ran there once and overflowed a 2048-byte stack. Both the page
+  engine and this repository say so now; the general form is that "internal
+  buffer" in a library comment is worth reading as "on your stack" until
+  proven otherwise.
+- **A build that cannot be installed should fail, not warn.** `build.ps1`
+  passed the application's signing key only with `-Mcuboot`, which is the flag
+  you are told to omit, so the ordinary build produced an unsigned image and
+  the NEXT command blamed the bootloader. The misattribution was the expensive
+  part, not the missing flag.
 
 - **A health check must be satisfiable by the image that contains it.** Adding
   the "panel answered a request" condition in the same image whose server was
