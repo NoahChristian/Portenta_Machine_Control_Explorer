@@ -7,6 +7,11 @@ the command that produced it, and captured output pasted verbatim.
 composed, and the whole value of captured output is that nobody did. If a
 figure here looks tidier than the tool that produced it, distrust it.
 
+The one edit made to captured output is that absolute paths under this
+machine's account are replaced with `<sdk>` and `<workspace>`. Committed files
+are read on another machine, where that prefix is useless, and the account name
+is not what any of these captures are evidence of. Elisions are always marked.
+
 This page is one of three, split by kind of confidence, and a fact has exactly
 one home. Moving something up the ladder means **deleting** it from the page
 below, not copying it:
@@ -33,8 +38,8 @@ west build -p always -b arduino_portenta_h7/stm32h747xx/m7 app -d build/app
 ```
 
 ```
-C:/Users/noah/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi/bin/../lib/gcc/arm-zephyr-eabi/14.3.0/../../../../arm-zephyr-eabi/bin/ld.bfd.exe: zephyr\zephyr_pre0.elf section `rodata' will not fit in region `FLASH'
-C:/Users/noah/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi/bin/../lib/gcc/arm-zephyr-eabi/14.3.0/../../../../arm-zephyr-eabi/bin/ld.bfd.exe: region `FLASH' overflowed by 422828 bytes
+<sdk>/gnu/arm-zephyr-eabi/.../bin/ld.bfd.exe: zephyr\zephyr_pre0.elf section `rodata' will not fit in region `FLASH'
+<sdk>/gnu/arm-zephyr-eabi/.../bin/ld.bfd.exe: region `FLASH' overflowed by 422828 bytes
 ```
 
 The overflow, 422,828 bytes, is within 1,407 bytes of **421,421** — the size of
@@ -96,7 +101,7 @@ here rather than merely dropped. See [FLASH.md](FLASH.md).
 ### Toolchain this was measured with
 
 ```
-Zephyr version: 4.5.99 (C:/Users/noah/zephyrproject/zephyr)
+Zephyr version: 4.5.99 (<workspace>/zephyr)
 west 1.5.0, Zephyr SDK 1.0.1, arm-zephyr-eabi gcc 14.3.0
 cmake 4.4.5, ninja 1.13.2, dtc 1.6.1
 Board: arduino_portenta_h7, Revision: 1.0.0, qualifiers: stm32h747xx/m7
