@@ -51,11 +51,17 @@ still open.
 AO0  PJ_11      AO1  PK_1       AO2  PG_7       AO3  PC_7
 ```
 
-**AO2 cannot be right as stated.** `PG_7` has no timer channel on this package
-— `stm32h747xihx-pinctrl.dtsi` offers only `analog`, `dcmi_d13`, `fmc_int`,
-`ltdc_clk` and `sai1_mclk_a` — and it is not a DAC pin either. Either the
-mapping is wrong or AO2 is driven some other way. Resolve before writing any
-AO code.
+**AO2 is confirmed, and this entry used to say the opposite.** `PG_7` carries
+no `tim*_ch*` function in `stm32h747xihx-pinctrl.dtsi` — only `analog`,
+`dcmi_d13`, `fmc_int`, `ltdc_clk` and `sai1_mclk_a` — which read as proof that
+the mapping had to be wrong. It is not. AO2 is driven by **HRTIM**, a
+peripheral Zephyr's pinctrl does not model at all, and the datasheet says so
+directly: see [HARDWARE_FROM_MANUAL.md](HARDWARE_FROM_MANUAL.md), section 3-7.
+
+So the mbed library was right about this pin and the inference against it was
+the error — which is worth leaving on the page about inference. An absent
+alternate function in a devicetree means the binding does not exist, not that
+the silicon does not.
 
 ### Digital outputs
 

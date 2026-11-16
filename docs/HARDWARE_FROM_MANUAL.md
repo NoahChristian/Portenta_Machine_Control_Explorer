@@ -91,7 +91,35 @@ is four GPIOs per channel, not a register.
 
 ## Analog output, section 3-7
 
-4 channels on J11, DC voltage, configurable 0-10 V, max 20 mA per channel.
+4 channels on J11, DC voltage, software-configurable 0-10 V, max 20 mA per
+channel.
+
+**It is not a DAC.** Each channel takes a PWM from the Portenta, filters it
+through a double low-pass into a DC level with "a small AC ripple", and feeds
+that to a non-inverting amplifier of gain 3.3. The output is a DC whose
+amplitude is a function of duty cycle — so resolution and settling time are
+questions about the filter, not about a converter.
+
+**AO2 is driven by HRTIM, not a general-purpose timer.** This is the answer to
+what looked like a wrong pin mapping. Section 3-7, verbatim:
+
+> Analog Out Channel 2 (AO2) is connected to pin PG7 on the Portenta H7 and
+> features an HRTIM (High-Resolution Timer) function. The HRTIM configuration
+> includes a frequency of 200 MHz (tick time = 5 ns), a clock prescaler of 4,
+> and a maximum period of 65533 ticks (1.31 ms).
+
+The feature list says it in one line too: AO2 "with maximum period of ~1.3 ms
+(Recommended for high-frequency PWM signals)", against AO0, AO1 and AO3 "with
+standard timers". For anything slower than 1.3 ms the datasheet's own advice
+is to use one of the other three.
+
+It arrived in **revision 8, 03/09/2024, "Updated analog output channel
+details"**. The pin was always right; the explanation was added three years
+after first release, which is why reading the pinctrl file alone made the
+mapping look impossible.
+
+What this costs in a Zephyr build is a fact about Zephyr, not about the
+manual, so it lives in [todo.md](todo.md) rather than here.
 
 ## Temperature, sections 3-8 to 3-12
 

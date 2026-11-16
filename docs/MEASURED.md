@@ -163,7 +163,7 @@ This is strictly safer than the Giga arrangement: sector 0 is never written, so
 the Arduino bootloader cannot be damaged by anything done here and double-tap
 RESET always reaches it again.
 
-## 2026-11-15 � The I2C expanders are on i2c3, not i2c1
+## 2026-11-15 — The I2C expanders are on i2c3, not i2c1
 
 The addresses inferred from the mbed library were right. The bus was a guess,
 and it was wrong.
@@ -208,7 +208,7 @@ useful negative signal, and it is worth knowing that it is NOT the same as a
 node that was never instantiated: a disabled-status node would not appear in
 the list at all.
 
-## 2026-11-15 � The SYSCFG analog switches, measured both ways
+## 2026-11-15 — The SYSCFG analog switches, measured both ways
 
 The trap, quantified. `pmca syscfg close` returns the switches to their silicon
 reset state; `pmca syscfg open` is what the shield does at PRE_KERNEL_1.
@@ -286,9 +286,10 @@ decision currently resting on something other than observation.
 - **All 20 expander channel mappings**, one channel at a time, confirmed at the
   connector with a meter. The maps inferred from the mbed library are scrambled
   three different ways; see [INFERRED_FROM_MBED.md](INFERRED_FROM_MBED.md).
-- **Which pin actually drives AO2.** `PG_7` has no timer channel on this
-  package and is not a DAC pin, so the inferred mapping cannot be right as
-  stated.
+- **Whether AO2 produces a voltage at the terminal at all.** The pin is
+  settled — `PG_7` driven by HRTIM, per the datasheet — but Zephyr has
+  no HRTIM driver, so nothing in this image can drive it yet. AO0, AO1 and
+  AO3 are ordinary PWM and come first.
 - **The USB CDC-ACM VID/PID this board enumerates as.** `tools/shell_cmd.py`
   inherits `2FE3:0004` from the Giga and that is almost certainly wrong here.
 - **Whether a full scratch swap completes**, and how long 1280 KB through the

@@ -49,8 +49,10 @@ is still unestablished:
   library calls `analogReadResolution()` with whatever the caller passed and
   **no range check**. So "what do the raw counts mean" depends on a setting no
   document states.
-- **Analog output range and resolution.** Nothing measured at all yet, and the
-  pin mapping for AO2 is known to be wrong (see below).
+- **Analog output range and resolution.** Nothing measured at all yet, and
+  the output is a filtered PWM into a gain-of-3.3 amplifier rather than a DAC,
+  so resolution and settling are properties of the filter. AO2 is further
+  limited to a ~1.3 ms period by HRTIM (see below).
 
 *Waiting on:* a bench supply and a meter at the terminals.
 
@@ -70,18 +72,109 @@ with their source, in HARDWARE_FROM_MANUAL.md.
 
 ### Would a Portenta X8 drop into this carrier?
 
-The X8 appears to share the High-Density footprint, which would make the
-Machine Control a far more interesting board — Linux on the carrier, with the
-same I/O. Open questions:
+**Answered 2026-11-16, and the answer is no.** From the two datasheets and
+Zephyr's own pinctrl files.
 
-- Are both HD connectors pin-compatible for the signals this carrier uses?
-- The reset arrangement differs, and the carrier has exactly one button wired
-  to the module's reset.
-- The X8 has no STM32H7, so every pin assignment in
-  INFERRED_FROM_MBED.md is void — the expanders and the SPI temperature bus
-  would be reachable, but the 45 direct GPIO assignments would not.
+An earlier version of this entry said the X8 has no STM32H7. That was wrong.
+It has one — `STM32H747AII6` (U20) — but in the **AI package, where this
+carrier is wired for the XI**, and that is the whole story. Zephyr's pinctrl
+files describe 112 pins for the AI package against 168 for the XI, and six of
+the pins this carrier names are absent from the smaller part outright:
 
-*Waiting on:* an X8, and a careful read of both HD pinouts side by side.
+| pin | what it does here |
+|---|---|
+| `PJ_11` | AO0 |
+| `PK_1` | AO1 |
+| `PI_0` | thermocouple chip select, `MC_TC_CS` |
+| `PI_4` | temperature mux `SEL1` |
+| `PH_14` | PDIO latch |
+| `PH_13` | CAN |
+
+Ports J and K do not exist on the AI package at all. So two of four analog
+outputs, half the temperature front end, the PDIO latch and CAN are gone
+before any software question is asked. Checked by grepping
+`stm32h747a(g-i)ix-pinctrl.dtsi` against `stm32h747xihx-pinctrl.dtsi`.
+
+**The software side is a design change, not a port** — and not the flat "no"
+an earlier draft of this entry claimed. The X8 datasheet, section 5-2, says
+its H7 is "used as an I/O expander for the NXP i.MX 8M Mini": the M7 runs
+Arduino's own firmware (`arduino/portentax8-stm32h7-fw`) mapping peripherals
+as Linux devices, and sketches are expected on the M4. But that firmware is
+**open and replaceable**, and the same section says so outright — "advanced
+users can customize the M7 firmware to fit their needs but this could break
+the seamless Linux integration". So the M7 is available to anyone willing to
+give up the Linux device mapping, and the earlier wording here, that there was
+"no seat" for a native Zephyr application, was wrong.
+
+What is genuinely unavailable is **the network**. On the X8 the Murata radio
+(U9) "interfaces with i.MX 8M Mini (U2) via a 4bit SDIO and UART interface",
+and the 10/100/1000 Ethernet controller belongs to the i.MX as well — which is
+what the datasheet means by the STM32H7 being "not exposed to networking". The
+H7 has no interface of its own to serve from. This project is a Zephyr
+application that owns the M7 and answers HTTP on its own IP address; on an X8
+that panel has to be tunnelled through Linux, which is a different program
+with a different failure surface. Combined with six pins that do not exist,
+the honest summary is: portable in spirit, not by recompiling.
+
+#### Is the X8's Linux side open source, or a binary drop?
+
+A split, which is why it is worth writing down rather than answering yes or
+no: **the operating system is source; the silicon-enablement layer under it is
+binary.**
+
+Source, on GitHub, GPL-2.0: `nxp-imx/linux-imx` (kernel, GPL-2.0 WITH
+Linux-syscall-note), `nxp-imx/uboot-imx`, `nxp-imx/meta-imx` (the Yocto
+layers, carrying a per-release Software Content Register that names every
+package's license), and `imx-atf`. Arduino's layer on top is source too —
+`arduino/lmp-manifest` and `arduino/meta-partner-arduino`, with a documented
+bitbake build.
+
+Binary only, under `LA_OPT_NXP_Software_License`:
+
+- `firmware-imx-*.bin` — DDR PHY training (`lpddr4_pmu_train_*`), plus VPU and
+  HDMI firmware. The `nxp-imx/imx-firmware` repository contains **only a
+  LICENSE.txt**: the repo is the license, not the code.
+- `imx-gpu-viv` — the Vivante GPU userspace. Its Yocto recipe states
+  `LICENSE = "Proprietary"` and ships a self-extracting `.bin`.
+
+The mechanism is visible in the build itself: NXP's Yocto guide requires
+accepting the license during setup so the proprietary packages can be
+extracted at build time. You bitbake real sources, and partway through, the
+build fetches binaries you agreed to.
+
+**Why a RAM controller needs firmware at all**, since it reads like something
+that ought to be a register write. LPDDR4 runs at gigabits per second per pin,
+where usable margin is tens of picoseconds and depends on trace length, the
+DRAM die, temperature and voltage. The controller therefore cannot be
+*configured*, it has to be *measured* at every boot: write leveling, read gate
+training, per-bit deskew, then eye centering across both voltage and timing —
+which is the `1d` and `2d` in the filenames. That measurement loop does not
+run on the A-cores. The DDR PHY is a licensed Synopsys macro with **its own
+small embedded processor inside it**, and the blobs are that processor's
+instruction and data memory images, which is exactly why they are named
+`..._imem.bin` and `..._dmem.bin`. NXP ships them compiled because NXP does
+not own the source.
+
+Structurally that is the same arrangement as the 421 KB `4343WA1.bin` already
+compiled into this project's image: firmware for somebody else's embedded
+core. The difference is consequence. The WiFi blob costs you WiFi; the DDR
+blob is required to bring up RAM at all, so there is no degraded mode without
+it.
+
+Purism's workaround, which comes up whenever this is discussed, does **not**
+liberate the code. They kept the blobs and changed which processor handles
+them: the i.MX's own Cortex-M4 loads them into the PHY, and U-Boot on the A53
+then runs the training, so U-Boot and the kernel stay blob-free. The FSF
+accepted that under the "secondary processor" exception to Respects Your
+Freedom, with the blobs intended to live in read-only SPI flash so they cannot
+be changed without the user knowing. A certification boundary was moved, not a
+reimplementation written.
+
+*Waiting on:* nothing. Reopen only if Arduino ships an X8 in the XI package,
+which would change the first half and none of the second. Whether the
+Machine Control's own H7 can be removed at all is still unstated: its
+datasheet never presents the H7 as a module, mentions no high-density
+connector anywhere, and lists `STM32H747XI` as a part of the product.
 
 ### RTC drift against NTP
 
@@ -123,9 +216,16 @@ actually fitted changes the answer.
 
 ## Known-wrong or unverified, carried from the code
 
-- **AO2 on `PG_7` cannot be right.** That pin has no timer channel on this
-  package and is not a DAC pin. Either the mapping is wrong or AO2 is driven
-  some other way. Blocks any analog-output work.
+- **AO2 on `PG_7` is correct after all, and Zephyr cannot express it.**
+  Resolved 2026-11-16 from the datasheet: AO2 is driven by **HRTIM**, not a
+  general-purpose timer, which is exactly why that pin carries no `tim*_ch*`
+  function — see HARDWARE_FROM_MANUAL.md, section 3-7. Zephyr has no HRTIM
+  driver and no binding, and `PG7` appears in `stm32h747xihx-pinctrl.dtsi`
+  with only `analog`, `dcmi_d13`, `fmc_int`, `ltdc_clk` and `sai1_mclk_a`, so
+  the alternate function cannot even be named in a devicetree. AO0, AO1 and
+  AO3 are ordinary `pwm`; AO2 needs hand-written LL or HAL code, or the panel
+  renders it unavailable and says why. A Zephyr HRTIM driver would be a real
+  upstream contribution and is the larger version of this task.
 - **Which expander is which.** 0x22 and 0x23 are measured; that ADDR-low is
   the programmable channels and ADDR-high the digital inputs is inferred from
   naming in the mbed library and nothing else.
