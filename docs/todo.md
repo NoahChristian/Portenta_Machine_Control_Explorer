@@ -178,14 +178,52 @@ connector anywhere, and lists `STM32H747XI` as a part of the product.
 
 ### RTC drift against NTP
 
-Worth doing the way a sibling project on this bench does it: discipline or at
-least *measure* the RTC against NTP, and report the drift. A PCF8563 at 0x51
-has an ordinary 32.768 kHz crystal and will drift; knowing by how much turns
-a timestamp from a claim into a measurement.
+Discipline, or at least *measure*, the RTC against NTP and report the drift. A
+PCF8563 at 0x51 has an ordinary 32.768 kHz crystal and will drift; knowing by
+how much turns a timestamp from a claim into a measurement.
 
-Note the board revision matters here: `board.yml` declares revisions 1.0.0 and
-4.10.0 with different RTC clock sources (LSI against LSE), so which crystal is
-actually fitted changes the answer.
+**The method, written down because the obvious version of it is wrong.** You
+cannot measure the system clock's rate with the system clock: an NTP sync
+*steps* it, so the interval it reports between two syncs is the interval NTP
+just imposed. The monotonic timer is never stepped, which makes it the only
+usable ruler. Record a pair at every successful sync — the UTC epoch that sync
+set, and the monotonic timer at that instant — and two pairs give:
+
+```
+ppm = ((delta_epoch - delta_monotonic) / delta_monotonic) * 1e6
+```
+
+That is the **SoC's** time base against UTC, which is one of three numbers
+worth keeping apart rather than collapsing into one:
+
+| number | what it compares | measured from |
+|---|---|---|
+| part against SoC | the RTC chip against this MCU's time base | timestamped edges of the RTC's 1 Hz output |
+| SoC against UTC | the MCU's time base against real time | two NTP syncs, the formula above |
+| part against UTC | their sum — the number a datasheet's ±ppm claim is about | both rows above |
+
+Each is NaN until it can be computed, and each carries the span it was
+measured over, because a ppm figure without a window is not a measurement.
+The sum is the whole point: an edge comparison on its own can never give
+absolute accuracy, because it is measured against the same time base it is
+trying to qualify.
+
+Two things to settle here specifically:
+
+- **A set clock is not evidence of an RTC.** Whatever backup domain survives
+  a reset on this part will make a clock read correctly after a reflash with
+  no battery and no sync this boot, which looks exactly like success. The
+  validity test should be an epoch floor — a clock reading 1970 is not a
+  clock — and the panel should name which source set it.
+- **Is the PCF8563's CLKOUT wired on this carrier at all?** The first row of
+  that table needs an edge to timestamp. If the pin goes nowhere, only the
+  second and third rows are available and the part can only be qualified
+  through NTP, over hours rather than minutes.
+
+And the board revision matters more than anywhere else in this file:
+`board.yml` declares revisions 1.0.0 and 4.10.0 with different RTC clock
+sources, LSI against LSE. An RC oscillator and a crystal differ by orders of
+magnitude, so which is fitted changes what counts as a normal reading.
 
 *Waiting on:* the RTC driver being enabled at all, and SNTP in the build.
 

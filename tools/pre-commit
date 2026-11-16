@@ -262,6 +262,50 @@ if git diff --cached --name-only | grep -qE '^(tools/terminals\.csv|tools/gen_bo
   fi
 fi
 
+# --- 12. Every staged text file is valid UTF-8 ------------------------------
+#
+# docs/MEASURED.md was published carrying two cp1252 em dashes (0x97) in its
+# headings. The file was not valid UTF-8: those headings rendered as a
+# replacement character, and every tool that read the file as text raised
+# instead of reading it. Nothing noticed, because nothing looks at encoding and
+# a one-byte diff that is "a dash either way" reads as correct in review.
+#
+# It will happen again, because the page it happened to is made of captured
+# console output and a console that emits cp1252 produces exactly this. Reads
+# the STAGED blob rather than the working tree, like every check here, and
+# skips whatever git would call binary.
+notutf8=$(python - <<'PY'
+import subprocess
+import sys
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True).stdout
+
+
+names = git("diff", "--cached", "--name-only", "--diff-filter=ACMR")
+for name in filter(None, names.decode("utf-8", "surrogateescape").split("\n")):
+    blob = git("show", ":" + name)
+    if b"\x00" in blob:
+        continue  # git's own binary heuristic
+    try:
+        blob.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        line = blob[: exc.start].count(b"\n") + 1
+        sys.stdout.write("%s: byte 0x%02x at offset %d, line %d\n"
+                         % (name, blob[exc.start], exc.start, line))
+PY
+)
+if [ -n "$notutf8" ]; then
+  say "BLOCKED: a staged file is not valid UTF-8:"
+  printf '%s\n' "$notutf8" | sed 's/^/  /' >&2
+  say "  Usually a cp1252 byte pasted into a UTF-8 file: 0x97 is an em dash,"
+  say "  0x92 an apostrophe, 0xa0 a non-breaking space. Re-save as UTF-8."
+  say "  If it is genuinely captured bytes, transcode at the point of capture"
+  say "  rather than committing a file no UTF-8 reader can open."
+  fail=1
+fi
+
 # --- Checks not yet registered ----------------------------------------------
 #
 # Each is added HERE, as a fail-if-missing block, on the same commit that first
