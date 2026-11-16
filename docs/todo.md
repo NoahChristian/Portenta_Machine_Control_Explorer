@@ -85,10 +85,10 @@ same I/O. Open questions:
 
 ### RTC drift against NTP
 
-Worth doing the way a sibling project on this bench does it: discipline or at least
-*measure* the RTC against NTP, and report the drift. A PCF8563 at 0x51 has an
-ordinary 32.768 kHz crystal and will drift; knowing by how much turns a
-timestamp from a claim into a measurement.
+Worth doing the way a sibling project on this bench does it: discipline or at
+least *measure* the RTC against NTP, and report the drift. A PCF8563 at 0x51
+has an ordinary 32.768 kHz crystal and will drift; knowing by how much turns
+a timestamp from a claim into a measurement.
 
 Note the board revision matters here: `board.yml` declares revisions 1.0.0 and
 4.10.0 with different RTC clock sources (LSI against LSE), so which crystal is

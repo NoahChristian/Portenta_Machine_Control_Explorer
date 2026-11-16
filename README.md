@@ -42,12 +42,12 @@ at the connector yet, so every channel renders dashed.
 
 ### The panel is a template the board renders, not a page a script assembles
 
-It is server-side includes, through the [HtmlTpl][lib] engine shared with
-a sibling project on this bench, and it runs **no JavaScript at all**. The page is authored
-as `web/index.html` and opens in a browser as a file; `tools/gen_page.py`
-checks every `<!--#v name-->` in it against the registry in
-`app/src/page_vars.cpp` and emits the committed header the firmware serves. A
-name the registry does not have is a build error naming the line.
+It is server-side includes, through the [HtmlTpl][lib] engine shared with a
+sibling project on this bench, and it runs **no JavaScript at all**. The page
+is authored as `web/index.html` and opens in a browser as a file;
+`tools/gen_page.py` checks every `<!--#v name-->` in it against the registry
+in `app/src/page_vars.cpp` and emits the committed header the firmware
+serves. A name the registry does not have is a build error naming the line.
 
 Two consequences worth stating, because each replaced something worse:
 

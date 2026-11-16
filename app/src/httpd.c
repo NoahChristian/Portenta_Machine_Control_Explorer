@@ -16,10 +16,10 @@
  * /state.json every two seconds. Three things were wrong with that:
  *
  *   - It was still markup living in C. The rule this repository carries from
- *     a sibling project on this bench is that a page is a TEMPLATE the device renders, with
- *     every substitution checked at build time against a registry. A byte
- *     array is not checked against anything: a typo in a JavaScript field name
- *     produced an empty cell and no error anywhere.
+ *     a sibling project on this bench is that a page is a TEMPLATE the device
+ *     renders, with every substitution checked at build time against a
+ *     registry. A byte array is not checked against anything: a typo in a
+ *     JavaScript field name produced an empty cell and no error anywhere.
  *   - Every reading on screen came from a different instant, and nothing said
  *     so. The panel now takes one snapshot per render, and says in its own
  *     heading that it does.
@@ -29,10 +29,11 @@
  *
  * WHY A TABLE AND NOT SCATTERED REGISTRATIONS. A resource declares
  * bitmask_of_supported_http_methods in the same place as its path, which is
- * the structural answer to the bug a sibling project on this bench shipped twice:
- * server.on() lets a mutating route be registered with no method restriction
- * and no auth, and the registration written individually is the one forgotten
- * individually. Both routes below are GET only and say so where they live.
+ * the structural answer to a bug a sibling project on this bench shipped
+ * twice: server.on() lets a mutating route be registered with no method
+ * restriction and no auth, and the registration written individually is the
+ * one forgotten individually. Both routes below are GET only and say so
+ * where they live.
  */
 
 #include <zephyr/kernel.h>

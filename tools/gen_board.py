@@ -9,9 +9,9 @@ LED - which was then spliced into the page and embedded in a C byte array.
 Two things were wrong with that.
 
 It was markup assembled by a program, which is the rule this repository
-carries from a sibling project on this bench: THE PAGE IS AUTHORED AS HTML. A generated
-62 KB SVG cannot be opened in a browser and nudged; it can only be
-regenerated, which means the drawing's appearance lived in Python string
+carries from a sibling project on this bench: THE PAGE IS AUTHORED AS HTML.
+A generated 62 KB SVG cannot be opened in a browser and nudged; it can only
+be regenerated, which means the drawing's appearance lived in Python string
 concatenation rather than in a file a person can read.
 
 And it could not carry live state at all. A terminal's hover tip has to say
