@@ -104,8 +104,22 @@ fi
 # bench every credential check passed for three weeks while a real MAC sat in
 # a tool and a LAN address sat two lines above it. Neither is a password, and
 # neither is inert.
+# 224.0.0.0/24 is the IANA Local Network Control Block - well-known protocol
+# constants rather than the address of anything: 224.0.0.1 all-hosts,
+# 224.0.0.251 mDNS, 224.0.0.252 LLMNR. They are no more identifying than
+# 127.0.0.1, and blocking a commit for recording which multicast group mDNS
+# joins is the kind of false positive that teaches people to --no-verify.
+# ONLY that /24 is excused; a multicast group outside it still blocks.
+#
+# Note the counter-example is DESCRIBED rather than written: a literal address
+# in this comment would be blocked by the very rule it documents. That is the
+# third time a rule's own documentation has tripped it here - the spelling
+# checker cannot quote the words it forbids, and the credential test had to
+# assemble its fixtures at runtime. It is a property of self-describing gates,
+# not an accident.
 ip=$(printf '%s\n' "$added" \
   | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' \
+  | grep -vE '^224\.0\.0\.[0-9]{1,3}$' \
   | grep -vE '^(0\.0\.0\.0|255\.255\.255\.255|127\.0\.0\.1|192\.168\.4\.1)$')
 if [ -n "$ip" ]; then
   say "BLOCKED: an IP address was added:"

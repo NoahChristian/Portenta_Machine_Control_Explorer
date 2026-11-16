@@ -266,3 +266,26 @@
 		status = "okay";
 	};
 };
+
+/*
+ * ETHERNET IS OFF, DELIBERATELY AND TEMPORARILY.
+ *
+ * The carrier has an RJ45 on J13 and the plan is to use it. But with no cable
+ * in it, eth0 has been actively harmful rather than merely idle: it is
+ * interface 1 and therefore the default, and in that role it took the single
+ * IPv4 config struct, made a health check report "down" for a board that was
+ * online, and - the costly one - broke every socket bind, because binding to
+ * INADDR_ANY resolves through an interface and the default one had no address.
+ *
+ * CONFIG_NET_DEFAULT_IF_WIFI addresses the default-interface half. This
+ * removes the rest of the surface until there is a cable to test against,
+ * which is the honest state: an interface nothing has ever exercised is not a
+ * feature, it is an untested code path that currently costs more than it
+ * returns.
+ *
+ * To bring it back: delete this block, plug in a cable, and check `net iface`
+ * shows eth0 with an address BEFORE assuming anything else works.
+ */
+&mac {
+	status = "disabled";
+};

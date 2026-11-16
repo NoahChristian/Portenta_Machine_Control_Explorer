@@ -143,7 +143,11 @@ Write-Host ("mode         {0}" -f $(if ($Confirm) { 'CONFIRM - no revert if it m
 Write-Host ""
 
 function Get-State {
-    $raw = & $smpmgr --ip $Ip --timeout 20 image state-read 2>&1 | Out-String
+    param([int]$TimeoutSec = 20)
+    # A short timeout in the poll loop: a board that is still rebooting will
+    # not answer no matter how long one waits, and waiting 20 s per attempt
+    # turns a handful of retries into minutes.
+    $raw = & $smpmgr --ip $Ip --timeout $TimeoutSec image state-read 2>&1 | Out-String
     return $raw
 }
 
@@ -243,12 +247,14 @@ Write-Host "==> 5/5 resetting" -ForegroundColor Cyan
 
 Write-Host ""
 Write-Host "==> waiting for the swap and the rejoin" -ForegroundColor Cyan
-# The swap moves 1536 KB through a 4 KB-sector QSPI scratch, then the board
-# reboots, re-associates and takes a DHCP lease before it answers again.
-Start-Sleep -Seconds 45
+# POLL, DO NOT SLEEP BLIND. The swap itself takes seconds; what varies is the
+# re-association and the DHCP lease. A fixed wait long enough for the worst
+# case makes every GOOD run pay the worst case too, which is how a 20-second
+# operation turned into minutes.
+Start-Sleep -Seconds 12
 
-for ($i = 1; $i -le 8; $i++) {
-    $after = Get-State
+for ($i = 1; $i -le 10; $i++) {
+    $after = Get-State -TimeoutSec 5
     if ($after -match 'slot=') {
         $v0 = Get-SlotField $after 0 'version'
         Write-Host "==> after" -ForegroundColor Cyan
@@ -264,8 +270,8 @@ for ($i = 1; $i -le 8; $i++) {
         Write-Host "reverts on the next reset and D1 stays high. `health` says which." -ForegroundColor DarkGray
         exit 0
     }
-    Write-Host "  no answer yet (attempt $i of 8)" -ForegroundColor DarkGray
-    Start-Sleep -Seconds 15
+    Write-Host "  no answer yet (attempt $i of 10)" -ForegroundColor DarkGray
+    Start-Sleep -Seconds 6
 }
 
 throw @"

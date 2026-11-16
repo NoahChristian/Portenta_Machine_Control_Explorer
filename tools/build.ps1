@@ -31,6 +31,11 @@
     Build MCUboot as well as the application. Requires mcuboot/pmc-key.conf,
     which is gitignored and names the real signing key.
 
+    ONLY NEEDED WHEN MCUBOOT OR THE FLASH MAP CHANGES, which is rare. The
+    bootloader is already on the board and an OTA never replaces it, so
+    rebuilding it on every iteration is pure waiting - it roughly doubles the
+    turnaround for a one-line application change.
+
 .PARAMETER Pristine
     Delete the build directory first (west build -p always).
 
