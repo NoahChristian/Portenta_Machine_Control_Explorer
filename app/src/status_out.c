@@ -1,7 +1,7 @@
 /*
  * The one piece of user feedback this board has.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * The Portenta Machine Control has NO display and no software-controllable

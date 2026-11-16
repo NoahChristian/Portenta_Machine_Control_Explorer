@@ -1,7 +1,7 @@
 /*
  * Bringing the network up, so that the board can be updated over it.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * CREDENTIALS ARE NOT IN THIS REPOSITORY, AND NOT IN THE IMAGE EITHER.

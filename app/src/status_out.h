@@ -1,7 +1,7 @@
 /*
  * The boot indicator on digital output 1.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  */
 

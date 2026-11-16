@@ -1,7 +1,7 @@
 /*
  * Devicetree overlay for MCUboot on the Portenta Machine Control.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  *
  * It does one thing: include the SAME flash map the application includes.
  * That is the entire point - a bootloader and an application that disagree

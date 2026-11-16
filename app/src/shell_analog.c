@@ -2,7 +2,7 @@
  * Shell commands for the three analog inputs, and for the SYSCFG analog
  * switches that decide whether they mean anything.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * `pmc syscfg` can OPEN or CLOSE the switches at runtime, which exists for one

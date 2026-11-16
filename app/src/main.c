@@ -1,7 +1,7 @@
 /*
  * Portenta Machine Control Explorer.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * M0 STATE. This does nothing with the carrier's I/O yet, on purpose. M0

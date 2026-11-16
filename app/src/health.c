@@ -1,7 +1,7 @@
 /*
  * The health gate: the conditions under which this image confirms itself.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * WHAT THIS IS FOR. MCUboot boots a freshly uploaded image in TEST mode. If

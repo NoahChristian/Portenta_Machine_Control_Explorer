@@ -1,7 +1,7 @@
 /*
  * Shell commands for seeing, and undoing, what MCUboot decided.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * SPDX-License-Identifier: MIT
  * Written by Noah Christian (C) 2026
  *
  * WHY THESE EXIST AT ALL. The shipping bootloader is built with no console
