@@ -1,0 +1,234 @@
+/*
+ * Arduino Portenta Machine Control (AKX00032) carrier.
+ *
+ * Copyright (c) 2026 Noah Christian
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * NAMES ARE THE POINT. Every nodelabel and alias here is the name an Arduino
+ * user already knows, taken from the Arduino_PortentaMachineControl library's
+ * pins_mc.h and from the product datasheet: DIN0..7, DO0..7, AI0..2, AO0..3,
+ * ENC0..1. Someone arriving from the Arduino documentation should recognize
+ * every identifier, because this carrier is otherwise undocumented and that
+ * recognition is the only foothold they have.
+ *
+ * PROVENANCE. Nothing in this file has been confirmed on hardware yet. Pin
+ * assignments are read out of pins_mc.h at the upstream repository's main
+ * branch - which is what another program believes, not what the silicon says -
+ * and the analog channel mapping is from ST's documentation. Both are recorded
+ * with their sources in docs/INFERRED_FROM_MBED.md and
+ * docs/HARDWARE_FROM_MANUAL.md, and each fact moves to docs/MEASURED.md only
+ * when it has been observed here. Treat every number below as a hypothesis.
+ */
+
+/ {
+	/*
+	 * Aliases, so application code and the shell never spell out a pad.
+	 * The channel table in app/src/chan.c is generated from
+	 * tools/channels.csv and is the single place a name maps to hardware.
+	 */
+	aliases {
+		pmc-ai0 = &pmc_ai0;
+		pmc-ai1 = &pmc_ai1;
+		pmc-ai2 = &pmc_ai2;
+	};
+
+	/*
+	 * The three analog inputs, as ADC channels.
+	 *
+	 * Each is ALSO a 4-bit mode selector in hardware - 0-10 V, 4-20 mA or
+	 * NTC is chosen by four GPIOs per channel, not by a register - so a
+	 * channel is not fully described by its ADC node. The mode pins are in
+	 * the channel table rather than here, because devicetree has no way to
+	 * say "these four pins together mean 4-20 mA on this channel".
+	 *
+	 * CHANNEL NUMBERS, and why they are what they are. The carrier wires
+	 * its inputs to the H7's dual "_C" analog pads, which have their own
+	 * dedicated ADC inputs:
+	 *
+	 *     AI0 = PC_3C -> ADC3_INP1
+	 *     AI1 = PC_2C -> ADC3_INP0
+	 *     AI2 = PA_1C -> ADC1_INP1
+	 *
+	 * PC2_C/ADC3_INP0 and PC3_C/ADC3_INP1 are confirmed by ST's UM2411 for
+	 * the STM32H747XI Discovery kit, which brings both out on CN9. AI2 is
+	 * the PA0_C/PA1_C pattern and is the least certain of the three.
+	 *
+	 * None of these reads anything meaningful until the SYSCFG analog
+	 * switches are open - see pmc_syscfg.c, which is the whole reason this
+	 * shield carries source.
+	 */
+	pmc_analog_in {
+		compatible = "zephyr,user";
+
+		pmc_ai0: ai0 {
+			io-channels = <&adc3 1>;
+			label = "AI0";
+		};
+
+		pmc_ai1: ai1 {
+			io-channels = <&adc3 0>;
+			label = "AI1";
+		};
+
+		pmc_ai2: ai2 {
+			io-channels = <&adc1 1>;
+			label = "AI2";
+		};
+	};
+};
+
+/*
+ * ADC1 and ADC3. The Portenta H7 board definition enables NO ADC at all, so
+ * both are turned on here.
+ *
+ * The st,adc-prescaler and acquisition settings are deliberately left at their
+ * defaults until a measurement justifies changing them: a settling time chosen
+ * before anything has been measured is a guess wearing a number's clothes.
+ */
+/*
+ * THE COMMON BLOCKS HAVE TO BE ENABLED TOO, and this is not obvious.
+ *
+ * On the STM32H7 each ADC node is a CHILD of a shared peripheral block:
+ * adc1 and adc2 live inside adc12_common, and adc3 inside adc3_common
+ * (zephyr/dts/arm/st/h7/stm32h7.dtsi:885 and :1330). Both parents are
+ * status = "disabled" by default, and `compatible = "st,stm32-adc"` is on the
+ * PARENT, not on the child.
+ *
+ * Enabling only the children therefore does two invisible things at once:
+ * DT_HAS_ST_STM32_ADC_ENABLED stays false so CONFIG_ADC_STM32 is never
+ * selected and the driver is not built, and a child of a disabled parent gets
+ * no device struct either way. Nothing complains about any of that. What
+ * actually fails is the LINK, much later and somewhere else:
+ *
+ *   libdrivers__adc.a(adc_shell.c.obj): undefined reference to
+ *   `__device_dts_ord_134'
+ *
+ * pointing at the ADC shell rather than at the ADC, because the shell is
+ * simply the first thing that referenced a device that was never created.
+ */
+&adc12_common {
+	/*
+	 * st,adc-clock-source and st,adc-prescaler are REQUIRED by
+	 * dts/bindings/adc/st,stm32-adc.yaml and the SoC dtsi does not supply
+	 * them, so a missing one is a devicetree error rather than a default.
+	 *
+	 * SYNC with /4 is the conservative starting point: derived from the bus
+	 * clock, no separate kernel clock to get wrong, and slow enough that
+	 * nothing here depends on sample timing. These are placeholders in the
+	 * honest sense - nothing has been measured, so there is no basis yet
+	 * for choosing anything cleverer. Revisit only with a measurement.
+	 */
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+
+&adc3_common {
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+
+&adc1 {
+	/*
+	 * CHANNEL MAPPING, confirmed from the vendor HAL rather than inferred.
+	 * stm32h747xihx-pinctrl.dtsi defines exactly these nodes for the three
+	 * pads this carrier uses:
+	 *
+	 *     adc1_inp1_pa1_c   adc2_inp1_pa1_c      -> PA1_C is ADC1/2 INP1
+	 *     adc3_inp0_pc2_c   adc3_inn1_pc2_c      -> PC2_C is ADC3 INP0
+	 *     adc3_inp1_pc3_c                        -> PC3_C is ADC3 INP1
+	 *
+	 * so AI0=PC_3C is adc3 channel 1, AI1=PC_2C is adc3 channel 0, and
+	 * AI2=PA_1C is adc1 channel 1. ADC2 could serve AI2 equally; ADC1 is
+	 * chosen because ADC3 already has both other channels and splitting
+	 * them means one conversion does not have to wait on the other.
+	 */
+	pinctrl-0 = <&adc1_inp1_pa1_c>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+};
+
+&adc3 {
+	pinctrl-0 = <&adc3_inp0_pc2_c &adc3_inp1_pc3_c>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+};
+
+/*
+ * The two TCA6424A I2C port expanders, which is where the digital inputs and
+ * the programmable digital channels actually live. They are NOT MCU pads, and
+ * pins_mc.h does not mention them at all.
+ *
+ * TWO devices, not one, distinguished by their ADDR pin:
+ *
+ *     0x22 (ADDR low)   the 12 programmable digital channels
+ *     0x23 (ADDR high)  the 8 digital inputs
+ *
+ * Both addresses are 7-bit here. TI's datasheet quotes 0x22/0x23 as 8-bit
+ * forms including the R/W bit, so a reader comparing against the datasheet
+ * should expect the shift. UNVERIFIED on this bench: `i2c scan` at M2 is what
+ * turns these into measured facts, and it is the first thing to check if
+ * nothing responds.
+ *
+ * The channel-to-port-bit maps are scrambled three different ways and are
+ * deliberately NOT encoded here - devicetree cannot express them, and open-
+ * coding them at a call site is how a panel ends up confidently driving the
+ * wrong channel. They live in tools/channels.csv. See
+ * docs/INFERRED_FROM_MBED.md.
+ *
+ * i2c1 is the one the Portenta datasheet calls I2C1, and it already carries
+ * pinctrl and bus-recovery GPIOs from arduino_portenta_h7-common.dtsi. (The
+ * board file says so in a comment; quoting that comment verbatim here nested a
+ * block comment inside a block comment and ended this one 40 lines early,
+ * which devicetree reported as a parse error at the closing brace.)
+ */
+&i2c1 {
+	status = "okay";
+
+	pmc_pdio_expander: tca6424a@22 {
+		compatible = "ti,tca6424a";
+		reg = <0x22>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <24>;
+		status = "okay";
+	};
+
+	pmc_din_expander: tca6424a@23 {
+		compatible = "ti,tca6424a";
+		reg = <0x23>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <24>;
+		status = "okay";
+	};
+};

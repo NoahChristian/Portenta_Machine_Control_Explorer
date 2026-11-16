@@ -1,0 +1,10 @@
+shield:
+  name: arduino_portenta_machine_control
+  full_name: Arduino Portenta Machine Control
+  vendor: arduino
+  supported_features:
+    - gpio
+    - adc
+    - i2c
+    - spi
+    - can
