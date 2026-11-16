@@ -61,8 +61,26 @@ fi
 
 # --- 4. Filled-in credential macros in staged CONTENT ------------------------
 # Added lines only, so existing history cannot block work.
+#
+# AN EMPTY VALUE IS THE BLANKED-EXAMPLE PATTERN, NOT A LEAK, and excluding it
+# is not a loophole - it is the rule this check exists to enforce.
+# app_secrets.h.example is REQUIRED to read
+#
+#     #define SECRET_PASS ""
+#
+# because an example is made by blanking every value and never by copying a
+# working file. The first version of this check blocked exactly that, on the
+# very commit that introduced the template: the allowlist named Your,
+# change-me, placeholder, xxx and TODO, and an empty string matches none of
+# them. A gate that refuses the convention it is guarding is how people learn
+# to reach for --no-verify.
+#
+# Narrowed by VALUE SHAPE - empty quotes and nothing else - rather than by
+# filename, so an app_secrets.h.example carrying a real passphrase is still
+# blocked. tools/test_secrets_rule.sh proves both directions.
 cred=$(printf '%s\n' "$added" \
   | grep -nE 'define[[:space:]]+(SECRET_|APP_|WIFI_|MQTT_)[A-Z_]*(SSID|PASS|PASSWORD|TOKEN|USER|USERNAME)[[:space:]]+"' \
+  | grep -vE 'define[[:space:]]+[A-Z_]+[[:space:]]+""[[:space:]]*$' \
   | grep -viE '"(Your|your|change-me|CHANGEME|placeholder|xxx|TODO)')
 if [ -n "$cred" ]; then
   say "BLOCKED: a credential macro appears to carry a real value:"

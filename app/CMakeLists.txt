@@ -14,6 +14,9 @@ target_sources(app PRIVATE
     src/main.c
     src/shell_mcuboot.c
     src/shell_analog.c
+    src/health.c
+    src/net.c
+    src/status_out.c
 )
 
 # MCUboot's maximum image sector count, needed by the APPLICATION as well as by
