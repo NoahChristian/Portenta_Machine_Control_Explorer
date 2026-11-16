@@ -57,14 +57,7 @@ if ([string]::IsNullOrWhiteSpace($ssid) -or [string]::IsNullOrWhiteSpace($pass))
     throw "app/app_secrets.h still has placeholder values - fill it in first."
 }
 
-# Auto-detect the Zephyr shell. COM18 is the bench's CH340K adapter and is
-# never the board; excluded by name so a wrong guess is impossible rather than
-# merely unlikely.
-if (-not $Port) {
-    $Port = [System.IO.Ports.SerialPort]::GetPortNames() |
-            Where-Object { $_ -ne 'COM18' } | Select-Object -Last 1
-}
-if (-not $Port) { throw "no candidate serial port found" }
+# The board is found below, after Invoke-ZShell is defined.
 
 # REDACTION. The Zephyr shell ECHOES what it is sent, so the board's reply to
 # the add command contains the passphrase verbatim. Every line printed from
@@ -93,6 +86,47 @@ function Invoke-ZShell {
         }
         return $sb.ToString()
     } finally { if ($sp.IsOpen) { $sp.Close() } }
+}
+
+
+# --- FIND THE RIGHT BOARD, BY ASKING IT --------------------------------------
+#
+# Not by port number, and not by VID:PID. More than one Zephyr board lives on
+# this bench, they expose identical CDC-ACM shells, and at least one enumerates
+# with the same VID:PID as this one in some states. Picking by position has
+# already sent a command to the wrong board in this project.
+#
+# `mdnsname` answers with the hostname compiled into the image, so a board that
+# replies "portentaexplorer" is this project's firmware and nothing else is.
+# A board running something that does not implement the command simply does not
+# answer, which is the correct outcome.
+function Find-PmcPort {
+    param([string]$Preferred)
+
+    $candidates = if ($Preferred) { @($Preferred) } else {
+        [System.IO.Ports.SerialPort]::GetPortNames()
+    }
+
+    foreach ($c in $candidates) {
+        try {
+            $r = Invoke-ZShell -Port $c -Cmd 'mdnsname' -QuietMs 1800
+            if ($r -match 'portentaexplorer') { return $c }
+        } catch { continue }
+    }
+    return $null
+}
+
+$Port = Find-PmcPort -Preferred $Port
+if (-not $Port) {
+    throw @"
+No port answered as this project's firmware.
+
+Every serial port was asked `mdnsname` and none replied "portentaexplorer".
+Either the board is not running this firmware, or it is in the bootloader.
+Deliberately NOT falling back to "whichever port looks likely": there is more
+than one Zephyr board on this bench and sending credentials to the wrong one
+is not a recoverable mistake.
+"@
 }
 
 Write-Host ""

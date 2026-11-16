@@ -20,7 +20,7 @@
  */
 void pmc_status_set(bool busy);
 
-/* True once every health check has passed. Defined in health.c. */
+/* True once every health check has passed. Declared in health.h. */
 bool pmc_health_is_healthy(void);
 
 #endif /* PMC_STATUS_OUT_H */

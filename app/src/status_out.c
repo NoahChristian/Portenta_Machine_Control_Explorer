@@ -12,19 +12,29 @@
  *
  * This drives one digital output as a boot indicator:
  *
- *     HIGH  from earliest boot: the firmware is running but NOT yet healthy
- *     LOW   every health check has passed
+ *     STEADY ON   the firmware is running but NOT yet healthy
+ *     BLINKING    every health check has passed
+ *     OFF         not running: unpowered, in the bootloader, or crashed
  *
- * so "D1 went low" is a positive statement that this image came up and its I/O
- * answered, and "D1 stayed high" distinguishes a board that is running badly
- * from one that is not running at all - which a dark board does not.
+ * A HEARTBEAT, NOT A LEVEL, AND THE FIRST VERSION HAD THIS BACKWARDS.
  *
- * THE POLARITY IS DELIBERATE AND IT IS THE SAFE WAY ROUND. The output is
- * de-energized in the good state, so the indicator costs nothing in steady
- * operation, and a board that is unpowered, held in reset, stuck in a
- * bootloader, or crashed before this code runs reads the SAME as a board that
- * is merely unhealthy. That is honest: none of those states has proved
- * anything about the application.
+ * It drove the output HIGH while unhealthy and LOW once healthy, on the
+ * reasoning that the good state should cost nothing. The flaw was found at the
+ * bench: during a double-tap into the DFU bootloader the indicator was dark -
+ * because the bootloader does not run this code, so the pin is undriven and
+ * the high-side switch is off. Which means LOW meant "healthy" AND "in the
+ * bootloader" AND "crashed before POST_KERNEL" AND "unpowered". The three
+ * failure states were indistinguishable from success, which is the worst
+ * possible way round for an indicator whose entire job is to tell you the
+ * board came back.
+ *
+ * One channel cannot distinguish three states with a level, but it can with
+ * time. Blinking requires code to be RUNNING and the checks to have PASSED -
+ * neither a bootloader nor a crashed image can fake it. Steady-on still means
+ * what it did. Off now means only "this firmware is not running".
+ *
+ * The duty is deliberately short. This is a 24 V high-side switch, not an
+ * indicator LED, and something may be wired to it.
  *
  * WHAT THIS DRIVES, AND THE CAVEAT. DO1 is `MC_DO_DO1_PIN PH_9` in the mbed
  * library's pins_mc.h, which is J6 pin 3 - channel 01 of the digital outputs.
@@ -132,14 +142,59 @@ static void latch_pulse(void)
 	gpio_pin_set(latch_dev, LATCH_PIN, 0);
 }
 
+static void drive(bool on)
+{
+	gpio_pin_set(do_chans[s_indicator].port, do_chans[s_indicator].pin, on);
+	latch_pulse();
+}
+
+/*
+ * 120 ms on, 1880 ms off. Short enough that a relay or lamp on the channel is
+ * barely disturbed and the average current is ~6% of steady-on, long enough to
+ * be unmistakable at a glance.
+ */
+#define HEARTBEAT_ON_MS   120
+#define HEARTBEAT_OFF_MS 1880
+
+static void heartbeat(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(heartbeat_work, heartbeat);
+
+static void heartbeat(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (!s_ready) {
+		return;
+	}
+
+	if (!pmc_health_is_healthy()) {
+		/* Steady on: running, not yet proved. */
+		drive(true);
+		k_work_reschedule(&heartbeat_work, K_MSEC(HEARTBEAT_OFF_MS));
+		return;
+	}
+
+	const bool on = gpio_pin_get(do_chans[s_indicator].port,
+				     do_chans[s_indicator].pin) != 0;
+
+	drive(!on);
+	k_work_reschedule(&heartbeat_work,
+			  K_MSEC(on ? HEARTBEAT_OFF_MS : HEARTBEAT_ON_MS));
+}
+
 void pmc_status_set(bool busy)
 {
 	if (!s_ready) {
 		return;
 	}
-	gpio_pin_set(do_chans[s_indicator].port, do_chans[s_indicator].pin,
-		     busy ? 1 : 0);
-	latch_pulse();
+	/*
+	 * Kept so the health thread and the `d1` command have one entry point.
+	 * busy=true forces steady-on immediately; busy=false hands over to the
+	 * heartbeat, which starts the blink on its next tick.
+	 */
+	drive(busy);
+	k_work_reschedule(&heartbeat_work, K_MSEC(busy ? HEARTBEAT_OFF_MS
+						      : HEARTBEAT_ON_MS));
 }
 
 static int pmc_status_init(void)
@@ -187,7 +242,8 @@ static int pmc_status_init(void)
 	 * as small as it can be.
 	 */
 	pmc_status_set(true);
-	LOG_INF("DO1 high: booting. It goes low when every health check passes.");
+	LOG_INF("DO1 steady: booting. It BLINKS once every health check passes;");
+	LOG_INF("dark means this firmware is not running at all.");
 	return 0;
 }
 
@@ -213,8 +269,8 @@ static void d1_report(const struct shell *sh)
 
 	shell_print(sh, "indicator is channel %s (%s, J6 pin %d): %s",
 		    c->label, c->pad, s_indicator + 2,
-		    gpio_pin_get(c->port, c->pin) ? "HIGH - booting or unhealthy"
-						  : "low - healthy");
+		    pmc_health_is_healthy() ? "blinking - healthy"
+					    : "steady on - running, not yet healthy");
 }
 
 static int cmd_d1(const struct shell *sh, size_t argc, char **argv)

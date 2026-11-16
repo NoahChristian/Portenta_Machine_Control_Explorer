@@ -100,8 +100,19 @@ if (-not $Ip) {
 
     foreach ($c in $candidates) {
         Write-Host "asking $c..." -ForegroundColor DarkGray
-        try { $ifc = Invoke-ZShell -Port $c -Cmd 'net iface' -QuietMs 3000 }
-        catch { continue }
+
+        # IDENTIFY BEFORE TRUSTING. Another Zephyr board on this bench answers
+        # `net iface` perfectly well and would hand over ITS address, which is
+        # how an update ends up aimed at the wrong unit. A board that does not
+        # reply "portentaexplorer" is skipped.
+        try {
+            $who = Invoke-ZShell -Port $c -Cmd 'mdnsname' -QuietMs 1800
+            if ($who -notmatch 'portentaexplorer') {
+                Write-Host "  not this project's firmware; skipping" -ForegroundColor DarkGray
+                continue
+            }
+            $ifc = Invoke-ZShell -Port $c -Cmd 'net iface' -QuietMs 3000
+        } catch { continue }
 
         # The FIRST address under an interface that is actually up. Matching
         # any dotted quad would also match a netmask, a gateway and a DHCP
@@ -131,48 +142,138 @@ Write-Host ("image        {0:N0} bytes" -f $size)
 Write-Host ("mode         {0}" -f $(if ($Confirm) { 'CONFIRM - no revert if it misbehaves' } else { 'test - reverts unless the health gate confirms it' }))
 Write-Host ""
 
+function Get-State {
+    $raw = & $smpmgr --ip $Ip --timeout 20 image state-read 2>&1 | Out-String
+    return $raw
+}
+
+function Get-SlotField {
+    param([string]$Raw, [int]$Slot, [string]$Field)
+    # The slot blocks come in order; take the text after "slot=N," up to the
+    # next "slot=" or the end.
+    $parts = $Raw -split 'slot='
+    foreach ($p in $parts) {
+        if ($p -match "^\s*$Slot\s*,") {
+            if ($p -match "$Field\s*=\s*'?([^',\r\n\)]+)") { return $Matches[1].Trim() }
+        }
+    }
+    return $null
+}
+
 Write-Host "==> before" -ForegroundColor Cyan
-& $smpmgr --ip $Ip --timeout 10 image state-read 2>&1 |
-    Select-String -Pattern 'slot=|version=|confirmed=|active=|pending=' |
-    ForEach-Object { "  " + $_.Line.Trim() }
+$before = Get-State
+if ($before -notmatch 'slot=') {
+    throw @"
+The board did not answer a state-read.
+
+Note that smpmgr prints "Connecting ... OK" for UDP even when nothing is
+there - it is a local socket, not a reply. Check `net iface` over the shell:
+an interface that is up with no IPv4 address looks identical from here to a
+board that is switched off.
+"@
+}
+Write-Host ("  slot0 {0}   slot1 {1}" -f `
+    (Get-SlotField $before 0 'version'), (Get-SlotField $before 1 'version'))
+
+# --- EACH STEP EXPLICITLY, AND VERIFIED ------------------------------------
+#
+# NOT `smpmgr upgrade`. That composite uploads, marks pending and resets in one
+# call, and its mark DID NOT TAKE here: the upload reported 100%, the reset was
+# acknowledged, the board came back on the OLD image, and slot1 read
+# pending=False. Nothing reported an error at any point. So each step is done
+# separately and the result is read back, because the whole value of an update
+# mechanism is knowing whether it worked.
+# ERASE FIRST, AS ITS OWN STEP.
+#
+# With CONFIG_IMG_ERASE_PROGRESSIVELY the image manager erases ahead while
+# writing, and when slot1 already holds an image that erase lands inside a
+# write request. Measured: uploading over a populated slot timed out at 20 s
+# with "Connection to device lost", while erasing separately took 7.5 s and the
+# subsequent upload took 18 s at 56 kB/s. Same bytes, same link - the only
+# difference is which request had to wait for 1536 KB of QSPI to be erased.
+Write-Host ""
+Write-Host "==> 1/5 erasing slot1" -ForegroundColor Cyan
+& $smpmgr --ip $Ip --timeout 150 image erase 1
+if ($LASTEXITCODE -ne 0) { throw "erase failed" }
 
 Write-Host ""
-Write-Host "==> uploading, marking for next boot, resetting" -ForegroundColor Cyan
-$args = @('--ip', $Ip, '--timeout', '20', 'upgrade', $img)
-if ($Confirm) { $args += '--confirm' }
-& $smpmgr @args
-if ($LASTEXITCODE -ne 0) { throw "upgrade failed" }
+Write-Host "==> 2/5 uploading to slot1" -ForegroundColor Cyan
+& $smpmgr --ip $Ip --timeout 90 image upload --slot 1 $img
+if ($LASTEXITCODE -ne 0) { throw "upload failed" }
+
+Write-Host ""
+Write-Host "==> 3/5 reading back the staged image's hash" -ForegroundColor Cyan
+$staged = Get-State
+# The hash is printed as a multi-line repr:
+#
+#     hash=HashBytes(
+#         'B7FB...'
+#     ),
+#
+# so a field matcher that stops at the end of the line finds "HashBytes("
+# rather than the digest. Take the 64-hex run from inside slot 1's block
+# instead, which is unambiguous because nothing else in the block is 64 hex
+# characters long.
+$slot1Block = ($staged -split 'slot=' | Where-Object { $_ -match '^\s*1\s*,' } | Select-Object -First 1)
+if (-not $slot1Block) { throw "slot1 does not appear in the state - nothing was staged" }
+if ($slot1Block -match "([0-9A-Fa-f]{64})") { $hash = $Matches[1] } else { throw "could not read slot1's hash" }
+$stagedVer = Get-SlotField $staged 1 'version'
+Write-Host ("  slot1 is now {0}, hash {1}..." -f $stagedVer, $hash.Substring(0,16))
+
+Write-Host ""
+Write-Host "==> 4/5 marking it for test, and CHECKING the mark took" -ForegroundColor Cyan
+& $smpmgr --ip $Ip --timeout 20 image state-write $hash | Out-Null
+$marked = Get-State
+if ((Get-SlotField $marked 1 'pending') -ne 'True') {
+    throw @"
+slot1 is staged but NOT pending, so a reset would boot the old image.
+
+This is the exact failure that made `smpmgr upgrade` unusable here: everything
+reports success and nothing has been marked. Do not reset - the board is still
+running a good image. Re-run, or mark it by hand with
+
+    smpmgr --ip $Ip image state-write $hash
+"@
+}
+Write-Host "  pending=True"
+
+Write-Host ""
+Write-Host "==> 5/5 resetting" -ForegroundColor Cyan
+& $smpmgr --ip $Ip --timeout 20 os reset | Out-Null
 
 Write-Host ""
 Write-Host "==> waiting for the swap and the rejoin" -ForegroundColor Cyan
 # The swap moves 1536 KB through a 4 KB-sector QSPI scratch, then the board
-# reboots and has to re-associate and take a DHCP lease before it answers
-# again. Generous on purpose: declaring failure early here would look exactly
-# like a failed swap.
+# reboots, re-associates and takes a DHCP lease before it answers again.
 Start-Sleep -Seconds 45
 
-for ($i = 1; $i -le 6; $i++) {
-    $out = & $smpmgr --ip $Ip --timeout 10 image state-read 2>&1 | Out-String
-    if ($out -match 'version=') {
+for ($i = 1; $i -le 8; $i++) {
+    $after = Get-State
+    if ($after -match 'slot=') {
+        $v0 = Get-SlotField $after 0 'version'
         Write-Host "==> after" -ForegroundColor Cyan
-        $out -split "`n" | Select-String -Pattern 'slot=|version=|confirmed=|active=|pending=' |
-            ForEach-Object { "  " + $_.Line.Trim() }
+        Write-Host ("  slot0 {0}   slot1 {1}" -f $v0, (Get-SlotField $after 1 'version'))
+        Write-Host ("  confirmed {0}" -f (Get-SlotField $after 0 'confirmed'))
         Write-Host ""
-        Write-Host "Check `health` over the shell for whether it confirmed itself," -ForegroundColor DarkGray
-        Write-Host "and `mcuboot` for what the bootloader saw. If D1 is still high," -ForegroundColor DarkGray
-        Write-Host "a health check is failing and the next reset will revert." -ForegroundColor DarkGray
+        if ($v0 -eq $stagedVer) {
+            Write-Host "the staged image is running." -ForegroundColor Green
+        } else {
+            Write-Warning "slot0 is $v0, expected $stagedVer - the swap did not take. Run `mcuboot` over the shell."
+        }
+        Write-Host "It confirms itself once every health check passes; until then it" -ForegroundColor DarkGray
+        Write-Host "reverts on the next reset and D1 stays high. `health` says which." -ForegroundColor DarkGray
         exit 0
     }
-    Write-Host "  no answer yet (attempt $i of 6)" -ForegroundColor DarkGray
+    Write-Host "  no answer yet (attempt $i of 8)" -ForegroundColor DarkGray
     Start-Sleep -Seconds 15
 }
 
 throw @"
 The board did not answer after the update.
 
-That is not necessarily a failed swap - it may simply not have rejoined the
-network. Check the USB shell: `mcuboot` prints what the bootloader decided and
-`net iface` whether it is back on WiFi. If a swap FAILED, run
-`swapclear confirm` - one failed swap leaves swap_info set in slot0's trailer
-and every later update is silently ignored until it is cleared.
+That is not necessarily a failed swap - it may not have rejoined the network.
+Over the USB shell, `mcuboot` prints what the bootloader decided and
+`net iface` whether it is back on WiFi. If a swap FAILED, `swapclear confirm`
+is the way back: one failed swap leaves swap_info set in slot0's trailer and
+every later update is silently ignored until it is cleared.
 "@

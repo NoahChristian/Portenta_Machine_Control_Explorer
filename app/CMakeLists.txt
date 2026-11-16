@@ -10,6 +10,16 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(pmc_explorer LANGUAGES C CXX)
 
+# The HTTP service's resource table needs a linker section named after the
+# SERVICE, which only the application knows the name of - see sections-rom.ld.
+# BOTH calls are needed: the first supplies the section for the linker-script
+# path, the second for the CMake-generated one.
+zephyr_linker_sources(SECTIONS sections-rom.ld)
+zephyr_linker_section(
+  NAME http_resource_desc_pmc_service
+  KVMA RAM_REGION GROUP RODATA_REGION
+)
+
 target_sources(app PRIVATE
     src/main.c
     src/shell_mcuboot.c
@@ -17,6 +27,7 @@ target_sources(app PRIVATE
     src/health.c
     src/net.c
     src/status_out.c
+    src/httpd.c
 )
 
 # MCUboot's maximum image sector count, needed by the APPLICATION as well as by

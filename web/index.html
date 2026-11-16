@@ -1,0 +1,90 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Portenta Machine Control Explorer</title>
+<style>
+  :root { color-scheme: light dark; --ok:#1a7f37; --bad:#b3261e; --dim:#6b7280; }
+  body { font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0; padding:1.5rem;
+         max-width:52rem; }
+  h1 { font-size:1.1rem; margin:0 0 .25rem; }
+  .sub { color:var(--dim); margin:0 0 1.5rem; font-size:.85rem; }
+  table { border-collapse:collapse; width:100%; margin-bottom:1.5rem; }
+  caption { text-align:left; font-weight:600; padding:.4rem 0; }
+  th,td { text-align:left; padding:.3rem .6rem .3rem 0; border-bottom:1px solid #8883; }
+  th { color:var(--dim); font-weight:500; font-size:.8rem; text-transform:uppercase;
+       letter-spacing:.04em; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .dim { color:var(--dim); }
+  .note { color:var(--dim); font-size:.85rem; border-left:2px solid #8884;
+          padding-left:.8rem; margin:1.5rem 0; }
+  #err { color:var(--bad); }
+</style>
+
+<h1>Portenta Machine Control Explorer</h1>
+<p class="sub">
+  <span id="host">portentaexplorer.local</span> &middot;
+  firmware <span id="fw">&hellip;</span> &middot;
+  up <span id="up">&hellip;</span>
+  <span id="err"></span>
+</p>
+
+<table>
+  <caption>Health</caption>
+  <thead><tr><th>check</th><th>state</th><th>detail</th></tr></thead>
+  <tbody id="health"><tr><td colspan="3" class="dim">loading&hellip;</td></tr></tbody>
+</table>
+
+<table>
+  <caption>Image</caption>
+  <thead><tr><th>slot</th><th>version</th><th>state</th></tr></thead>
+  <tbody id="slots"><tr><td colspan="3" class="dim">loading&hellip;</td></tr></tbody>
+</table>
+
+<table>
+  <caption>Analog inputs</caption>
+  <thead><tr><th>channel</th><th>pad</th><th>raw</th><th>mV</th><th>switch</th></tr></thead>
+  <tbody id="ai"><tr><td colspan="5" class="dim">loading&hellip;</td></tr></tbody>
+</table>
+
+<p class="note">
+  Readings are raw ADC counts at the MCU pad, not engineering units. Each
+  channel's 0&ndash;10&nbsp;V / 4&ndash;20&nbsp;mA / NTC mode is a four-bit GPIO
+  switch network that nothing drives yet, so the front end is in an undefined
+  mode and these numbers say nothing about any signal on the terminal block.
+  What they do show is that the ADC path works and that the SYSCFG analog
+  switches are open.
+</p>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const row = cells => '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+
+async function tick() {
+  try {
+    const r = await fetch('/state.json', {cache:'no-store'});
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const s = await r.json();
+    $('err').textContent = '';
+    $('fw').textContent = esc(s.fw);
+    $('up').textContent = s.uptime + ' s';
+    $('host').textContent = esc(s.host) + '.local';
+
+    $('health').innerHTML = s.health.map(h =>
+      row([esc(h.name),
+           h.ok ? '<span class="ok">ok</span>' : '<span class="bad">FAIL</span>',
+           `<span class="dim">${esc(h.detail || '')}</span>`])).join('');
+
+    $('slots').innerHTML = s.slots.map(sl =>
+      row([sl.slot, esc(sl.version),
+           `<span class="dim">${sl.active ? 'running, ' : ''}${sl.confirmed ? 'confirmed' : 'not confirmed'}</span>`])).join('');
+
+    $('ai').innerHTML = s.ai.map(a =>
+      row([esc(a.name), `<span class="dim">${esc(a.pad)}</span>`, a.raw, a.mv,
+           a.open ? '<span class="ok">open</span>' : '<span class="bad">CLOSED</span>'])).join('');
+  } catch (e) {
+    $('err').textContent = ' \u2014 ' + e.message;
+  }
+}
+tick();
+setInterval(tick, 2000);
+</script>

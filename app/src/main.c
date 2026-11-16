@@ -33,6 +33,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/drivers/flash.h>
 
+
 LOG_MODULE_REGISTER(pmc, LOG_LEVEL_INF);
 
 /*
@@ -153,7 +154,14 @@ SHELL_CMD_REGISTER(pmc, &sub_pmc, "Portenta Machine Control Explorer", NULL);
 int main(void)
 {
 	LOG_INF("Portenta Machine Control Explorer");
-	LOG_INF("board %s, M0: no carrier I/O yet", CONFIG_BOARD_TARGET);
+	LOG_INF("board %s", CONFIG_BOARD_TARGET);
+
+	/*
+	 * The panel is NOT started here. zsock_bind() returns ENOENT while no
+	 * interface has an address, so a server started from main() binds
+	 * nothing and never retries - see the L4_CONNECTED handler in net.c,
+	 * which starts it when there is actually something to bind to.
+	 */
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

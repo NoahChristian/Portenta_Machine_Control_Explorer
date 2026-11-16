@@ -131,6 +131,9 @@ Write-Host ""
 Write-Host "==> DFU devices present" -ForegroundColor Cyan
 $list = & $dfu -l 2>&1 | Out-String
 $alts = $list -split "`n" | Where-Object { $_ -match 'Found DFU' }
+$serials = @($alts | ForEach-Object {
+    if ($_ -match 'serial="([^"]+)"') { $Matches[1] }
+} | Select-Object -Unique)
 if (-not $alts) {
     Write-Host $list
     throw @"
@@ -146,6 +149,68 @@ gap between taps - the window is short.
 "@
 }
 $alts | ForEach-Object { Write-Host "  $($_.Trim())" -ForegroundColor DarkGray }
+
+# --- WHICH BOARD IS THIS? ----------------------------------------------------
+#
+# THE MOST IMPORTANT CHECK IN THIS SCRIPT, and the one that was missing.
+#
+# DFU HAS NO SIGNATURE CHECK. dfu-util writes whatever it is given to whatever
+# address it is given; MCUboot's key only protects the OTA path, which is why
+# a mis-aimed OTA is merely refused while a mis-aimed DFU overwrites another
+# board's bootloader.
+#
+# And VID:PID DOES NOT IDENTIFY THE BOARD. More than one Zephyr board lives on
+# this bench, they expose identical CDC-ACM shells, and at least one of them
+# enumerates with this same VID:PID in some states. Earlier in this project a
+# tool picked a port by position and asked the WRONG BOARD for its address.
+#
+# The USB serial is the STM32's unique device ID, which is a real
+# discriminator. It is compared against tools/bench.local.ps1 - gitignored,
+# because a unique ID is a device identifier in the same class as a MAC.
+#
+# FAIL-CLOSED: with no bench file, this prints the serial and REFUSES. The
+# alternative - writing to whatever answered - is exactly the behavior being
+# removed.
+if ($serials.Count -gt 1) {
+    throw ("More than one DFU device is present ({0}). Disconnect all but the " +
+           "target: this script will not guess." -f ($serials -join ', '))
+}
+$found = $serials[0]
+
+$benchFile = Join-Path $PSScriptRoot 'bench.local.ps1'
+if (Test-Path $benchFile) { . $benchFile }
+
+if (-not $PMC_DFU_SERIAL) {
+    throw @"
+No expected board recorded, so this script will not write.
+
+The DFU device present has serial:
+
+    $found
+
+If that is the Portenta Machine Control and not another board on this bench,
+copy tools/bench.local.ps1.example to tools/bench.local.ps1 and set
+
+    `$PMC_DFU_SERIAL = '$found'
+
+That file is gitignored. DFU performs no signature check, so this is the only
+thing standing between a typo and another board's bootloader.
+"@
+}
+
+if ($found -ne $PMC_DFU_SERIAL) {
+    throw @"
+WRONG BOARD. Refusing to write.
+
+    expected  $PMC_DFU_SERIAL   (tools/bench.local.ps1)
+    found     $found
+
+DFU writes with no signature check, so continuing would overwrite whatever
+this board is. If you have genuinely replaced the Portenta, update
+tools/bench.local.ps1 deliberately.
+"@
+}
+Write-Host "  board identity matches tools/bench.local.ps1" -ForegroundColor DarkGray
 
 # The internal-flash alt setting advertises its sector layout. Confirm the
 # addresses we are about to write fall in a WRITABLE region rather than

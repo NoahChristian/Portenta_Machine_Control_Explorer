@@ -27,6 +27,7 @@
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/device.h>
 #include <zephyr/init.h>
 #include <zephyr/logging/log.h>
@@ -38,6 +39,7 @@
 #include <stm32_ll_system.h>
 
 #include "status_out.h"
+#include "health.h"
 
 LOG_MODULE_REGISTER(pmc_health, LOG_LEVEL_INF);
 
@@ -80,24 +82,55 @@ static bool chk_uptime(const char **detail)
 	return true;
 }
 
-static bool chk_link(const char **detail)
-{
-	struct net_if *iface = net_if_get_default();
+struct link_scan {
+	bool any_up;
+	bool any_addr;
+};
 
-	if (iface == NULL) {
-		*detail = "no default interface";
-		return false;
-	}
+static void link_check_one(struct net_if *iface, void *user_data)
+{
+	struct link_scan *scan = user_data;
+
 	if (!net_if_is_up(iface)) {
-		*detail = "interface down";
-		return false;
+		return;
 	}
+	scan->any_up = true;
+
 #if defined(CONFIG_NET_IPV4)
-	if (net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED) == NULL) {
-		*detail = "up but no IPv4 address";
-		return false;
+	if (net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED) != NULL) {
+		scan->any_addr = true;
 	}
 #endif
+}
+
+/*
+ * ANY interface with an address, not the DEFAULT one.
+ *
+ * net_if_get_default() returns interface 1, which on this board is eth0 - the
+ * Ethernet port, which has no cable in it and never comes up. So the first
+ * version of this check reported "interface down" while wlan0 sat there
+ * associated, DHCP-bound and answering SMP requests. The board was reachable;
+ * the check was looking somewhere else and saying so with complete confidence.
+ *
+ * That is the same mistake as every other one worth recording today: not a
+ * wrong answer to the right question, but a confident answer to the wrong one.
+ * What this gate actually needs to know is "can this image be reached", and no
+ * part of that question mentions which interface.
+ */
+static bool chk_link(const char **detail)
+{
+	struct link_scan scan = { false, false };
+
+	net_if_foreach(link_check_one, &scan);
+
+	if (!scan.any_up) {
+		*detail = "no interface is up";
+		return false;
+	}
+	if (!scan.any_addr) {
+		*detail = "an interface is up but none has an IPv4 address";
+		return false;
+	}
 	return true;
 }
 
@@ -149,6 +182,54 @@ static bool chk_analog_switches(const char **detail)
 	return true;
 }
 
+static atomic_t s_http_200;
+
+void pmc_health_note_http_200(void)
+{
+	atomic_set(&s_http_200, 1);
+}
+
+/*
+ * WAIVED AFTER A GRACE PERIOD, and that is not laziness - it is the fix for a
+ * deadlock this check caused.
+ *
+ * "The panel answered a request" is a good health signal and a terrible gate.
+ * It was added in the same image whose HTTP server was never started, so that
+ * image could never confirm itself; an unconfirmed image has a revert armed;
+ * a revert armed makes slot1 un-erasable, because slot1 IS the image MCUboot
+ * intends to fall back to; and an un-erasable slot1 blocks the next update.
+ * So one unsatisfiable check took the update path down with it - on a board
+ * whose whole recovery story is "push a new image".
+ *
+ * The rule this encodes: a health check may delay a confirmation, but it must
+ * not be able to prevent one forever. Anything that can is a brick waiting for
+ * the right bug. After the grace period the condition is waived LOUDLY, so the
+ * panel being broken is still visible in `health` and in the log - it just no
+ * longer strands the board.
+ */
+#define PMC_PANEL_GRACE_S 180
+
+static bool chk_served(const char **detail)
+{
+	if (atomic_get(&s_http_200)) {
+		return true;
+	}
+
+	const int64_t up = k_uptime_get() / 1000;
+
+	if (up < PMC_PANEL_GRACE_S) {
+		static char buf[56];
+
+		snprintk(buf, sizeof(buf), "no request yet (%lld s of %d)",
+			 (long long)up, PMC_PANEL_GRACE_S);
+		*detail = buf;
+		return false;
+	}
+
+	*detail = "WAIVED - no request in the grace period; the panel is broken";
+	return true;
+}
+
 static const struct health_check checks[] = {
 	{ "uptime", "a crash loop must not confirm itself", chk_uptime },
 	{ "network", "the image can be updated, which is what makes a bad one "
@@ -156,12 +237,33 @@ static const struct health_check checks[] = {
 	{ "expanders", "the carrier's digital I/O answers", chk_io_expanders },
 	{ "analog switches", "the analog inputs are not shorted to the Ethernet "
 			     "clock and the temperature bus", chk_analog_switches },
+	/*
+	 * Serving a request is the strongest "this image works" signal
+	 * available here, and it replaces the Giga port's live-broker check.
+	 * Reaching main() proves the vector table; answering a 200 on a real
+	 * route proves the network stack, the server and the route table.
+	 */
+	{ "panel", "the web panel answered a real request", chk_served },
 };
 
 /* --- the gate ------------------------------------------------------------- */
 
 static bool s_confirmed_by_us;
 static bool s_healthy;
+
+
+size_t pmc_health_check_count(void) { return ARRAY_SIZE(checks); }
+
+const char *pmc_health_check_name(size_t i)
+{
+	return i < ARRAY_SIZE(checks) ? checks[i].name : "?";
+}
+
+bool pmc_health_check(size_t i, const char **detail)
+{
+	*detail = "";
+	return i < ARRAY_SIZE(checks) ? checks[i].test(detail) : false;
+}
 
 bool pmc_health_is_healthy(void)
 {
@@ -249,7 +351,6 @@ static int cmd_pmc_health(const struct shell *sh, size_t argc, char **argv)
 
 	shell_print(sh, "");
 	shell_print(sh, "NOT YET CHECKED, and listed so the gap is visible:");
-	shell_print(sh, "  - that the web panel served a 200 to a real route");
 	shell_print(sh, "  - that the temperature front ends identify themselves");
 	shell_print(sh, "  - that a full channel scan completes without a fault");
 	shell_print(sh, "  - that the SMP server is bound, as opposed to merely");

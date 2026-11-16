@@ -12,6 +12,11 @@ app_secrets.h
 arduino_secrets.h
 secrets.h
 
+# --- Which board this bench is allowed to flash ------------------------------
+# A unique device ID is a device identifier in the same class as a MAC address.
+# tools/bench.local.ps1.example is the committed template.
+tools/bench.local.ps1
+
 # --- Signing keys ------------------------------------------------------------
 # The MCUboot signing key lives OUTSIDE every repository, in
 # Documents/Arduino/mcuboot-signing/. These patterns are belt-and-braces for a
