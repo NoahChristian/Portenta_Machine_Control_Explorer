@@ -1,0 +1,228 @@
+#!/bin/sh
+#
+# The only layer that inspects CONTENT.
+#
+# .gitignore is per-branch and advisory; `git add -f` walks past it, and it only
+# ever stops a file being added by NAME - it does not stop a credential pasted
+# into a file that is already tracked. This hook reads what is actually staged.
+#
+# THIS FILE IS THE SOURCE. .git/hooks/pre-commit is a COPY, installed by
+# tools/installhook.sh. On the a sibling project on this bench bench the two drifted, the
+# hook was run, it passed, and the evidence quoted was a `diff -q` from minutes
+# earlier - the installed copy still had the old patterns. If you edit this
+# file, reinstall it, and prove the new check fires by planting a violation.
+#
+# Bypass (only when you are certain):  git commit --no-verify
+#
+# CHECKS 7 AND 8 ARE NOT ABOUT CREDENTIALS. They are here because this hook is
+# the only thing that runs on every commit, and each describes a failure that
+# builds clean, flashes clean, and is silent on the device.
+
+fail=0
+say() { echo "pre-commit: $*" >&2; }
+
+# Every content check below reads these. Assigned once, HERE, rather than in
+# the middle of the file: a check placed above the assignment sees an empty
+# string, passes, and looks exactly like a check that found nothing.
+added=$(git diff --cached --diff-filter=ACM -U0 | grep '^+' | grep -v '^+++')
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+# --- 1. A credentials header, under any path ---------------------------------
+if printf '%s\n' "$staged" | grep -E '(^|/)(app_secrets|arduino_secrets|secrets)\.h$' >/dev/null; then
+  say "BLOCKED: a credentials header is staged."
+  say "  Commit app_secrets.h.example instead; the real file stays local."
+  fail=1
+fi
+
+# --- 2. A private key, by name and by content --------------------------------
+# The MCUboot signing key lives outside every repository. .gitignore lists
+# *.pem, but a key renamed .priv matches nothing, and `git add -f` ignores the
+# file entirely.
+keys=$(printf '%s\n' "$staged" \
+  | grep -iE '\.(pem|key|priv|p8|pkcs8)$|(^|/)[a-z_-]*private[a-z_-]*\.')
+if [ -n "$keys" ]; then
+  say "BLOCKED: something that looks like a private key is staged:"
+  printf '%s\n' "$keys" | sed 's/^/  /' >&2
+  say "  The signing key never enters this repo. It belongs in"
+  say "  Documents/Arduino/mcuboot-signing/, which is in no repository."
+  fail=1
+fi
+if printf '%s\n' "$added" | grep -qE 'BEGIN (EC |RSA |OPENSSH |)PRIVATE KEY'; then
+  say "BLOCKED: a PEM private key block was added to a staged file."
+  fail=1
+fi
+
+# --- 3. Build artifacts (a compiled image embeds every value defined into it)
+if printf '%s\n' "$staged" | grep -E '\.(bin|elf|map|hex)$' >/dev/null; then
+  say "BLOCKED: a build artifact is staged. A compiled image contains any"
+  say "  credential that was defined into it - the string is readable."
+  fail=1
+fi
+
+# --- 4. Filled-in credential macros in staged CONTENT ------------------------
+# Added lines only, so existing history cannot block work.
+cred=$(printf '%s\n' "$added" \
+  | grep -nE 'define[[:space:]]+(SECRET_|APP_|WIFI_|MQTT_)[A-Z_]*(SSID|PASS|PASSWORD|TOKEN|USER|USERNAME)[[:space:]]+"' \
+  | grep -viE '"(Your|your|change-me|CHANGEME|placeholder|xxx|TODO)')
+if [ -n "$cred" ]; then
+  say "BLOCKED: a credential macro appears to carry a real value:"
+  printf '%s\n' "$cred" | sed 's/^/  /' >&2
+  say "  Keep real values in app_secrets.h (gitignored) only."
+  fail=1
+fi
+
+# --- 5. A WPA-looking passphrase on an obvious password identifier -----------
+pw=$(printf '%s\n' "$added" \
+  | grep -nEi '(pass(word|phrase)?|psk|wifi_?key)[[:space:]]*[:=][[:space:]]*"[^"]{8,63}"' \
+  | grep -viE '"(Your|your|change-me|CHANGEME|placeholder|xxx|TODO|%s)')
+if [ -n "$pw" ]; then
+  say "BLOCKED: a password-shaped literal was added. Review these lines:"
+  printf '%s\n' "$pw" | sed 's/^/  /' >&2
+  fail=1
+fi
+
+# --- 6. Device-specific values: addresses, MACs, ports, machine paths --------
+# NOT credentials, and that is exactly why this exists. On the PowerMonitor
+# bench every credential check passed for three weeks while a real MAC sat in
+# a tool and a LAN address sat two lines above it. Neither is a password, and
+# neither is inert.
+ip=$(printf '%s\n' "$added" \
+  | grep -oE '\b([0-9]{1,3}\.){3}[0-9]{1,3}\b' \
+  | grep -vE '^(0\.0\.0\.0|255\.255\.255\.255|127\.0\.0\.1|192\.168\.4\.1)$')
+if [ -n "$ip" ]; then
+  say "BLOCKED: an IP address was added:"
+  printf '%s\n' "$ip" | sort -u | sed 's/^/  /' >&2
+  say "  Address the board by name. A DHCP lease is not a property of the unit."
+  fail=1
+fi
+mac=$(printf '%s\n' "$added" \
+  | grep -oiE '\b([0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b' | grep -viE '^aa[:-]bb[:-]cc')
+if [ -n "$mac" ]; then
+  say "BLOCKED: a MAC address was added:"
+  printf '%s\n' "$mac" | sort -u | sed 's/^/  /' >&2
+  say "  Use AA:BB:CC:11:22:33."
+  fail=1
+fi
+port=$(printf '%s\n' "$added" | grep -oE '\bCOM[0-9]{1,2}\b|/dev/tty[A-Za-z0-9]*')
+if [ -n "$port" ]; then
+  say "NOTE: a serial port was added -" "$(printf '%s' "$port" | sort -u | tr '\n' ' ')"
+  say "  prefer COMx, so nobody expects their board to be on this one."
+fi
+# Matched with . rather than an escaped backslash: this file is edited through
+# shells that eat a level of escaping, and a silently broken guard is worse
+# than no guard. The dot also catches the forward-slash spelling.
+if printf '%s\n' "$added" | grep -qE 'C:.Users.[A-Za-z0-9_.-]+'; then
+  say "NOTE: a path carrying an account name was added. Inside this repo, write"
+  say "  it relative to the repo root - it is read on another machine."
+fi
+
+# --- 7. The size of flash0, which must never be overridden ------------------
+#
+# THE trap on this SoC: declaring the real 2 MB silently corrupts every write
+# above 1 MB, and MCUboot then halts with no fault bits and no log line. The
+# full explanation, and the two ways this check was wrong before it worked,
+# are in tools/check_flash0.awk. slot0 here deliberately crosses the 1 MB bank
+# boundary, so this is not theoretical.
+#
+# Reads the staged CONTENT of each file rather than the diff: the trap is a
+# property of the resulting devicetree, and a one-line edit that moves an
+# existing property into the flash0 node changes no line that mentions flash0.
+#
+# A missing script is not a pass.
+F0CHECK="tools/check_flash0.awk"
+if [ -f "$F0CHECK" ]; then
+  dts=$(printf '%s\n' "$staged" | grep -E '\.(dts|dtsi|overlay)$')
+  if [ -n "$dts" ]; then
+    tmp=$(mktemp -d)
+    for f in $dts; do
+      mkdir -p "$tmp/$(dirname "$f")"
+      git show ":$f" > "$tmp/$f" 2>/dev/null || continue
+      if ! (cd "$tmp" && awk -f "$OLDPWD/$F0CHECK" "$f"); then
+        say "BLOCKED: a staged devicetree file sets size or reg on flash0:"
+        say "  Do not. See the comment in pmc-partitions.dtsi and in"
+        say "  tools/check_flash0.awk; this silently corrupts every write"
+        say "  above 1 MB and MCUboot halts with no diagnostic at all."
+        fail=1
+      fi
+    done
+    rm -rf "$tmp"
+  fi
+else
+  say "$F0CHECK not found - NOT a pass"
+  fail=1
+fi
+
+# --- 8. The MCUboot key guard, still fail-closed ----------------------------
+#
+# mcuboot/pmc.conf is committed and must keep the MISSING- placeholder. The
+# real path arrives from pmc-key.conf, which is gitignored and listed LAST on
+# the command line so that it wins. If a real path is ever committed here the
+# guard is gone, and what it guards against is silent: the ECDSA-P256 default,
+# root-ec-p256.pem, is committed in the MCUboot repository and therefore
+# PUBLISHED, so a build that falls back to it accepts images anyone can sign.
+# Measured on the Giga: that build succeeds with one warning line among
+# hundreds and produces a bootloader that flashes and runs.
+if printf '%s\n' "$staged" | grep -qE '^mcuboot/pmc\.conf$'; then
+  if ! grep -q 'MISSING-pmc-key' mcuboot/pmc.conf; then
+    say "BLOCKED: mcuboot/pmc.conf no longer carries the fail-closed key"
+    say "  placeholder. The real key path belongs in mcuboot/pmc-key.conf,"
+    say "  which is local and gitignored. See mcuboot/README.md."
+    fail=1
+  fi
+fi
+
+# --- 9. American spelling in the lines being added --------------------------
+#
+# Only the added lines, never the tree: the rule governs new text, and a hook
+# that re-policed history would put an unrelated diff in every commit and be
+# bypassed within a day.
+#
+# Deliberately the GLOBAL copy, not a third one in this repo. Two copies of
+# spellcheck.py already have to agree byte for byte on this bench; a third
+# would make that worse. Home-relative because this file is committed and an
+# absolute path is useless on another machine.
+SPELL="$HOME/.claude/scripts/spellcheck.py"
+if [ -f "$SPELL" ]; then
+  if ! python "$SPELL" --staged; then
+    say "British spelling in added lines - see above"
+    fail=1
+  fi
+else
+  say "spellcheck.py not found at $SPELL - NOT a pass"
+  fail=1
+fi
+
+# --- Checks not yet registered ----------------------------------------------
+#
+# Each is added HERE, as a fail-if-missing block, on the same commit that first
+# creates the script it runs. Deliberately not stubbed in advance: a block that
+# skips because its script does not exist yet cannot be told apart from one
+# that passed, and that is exactly how a gate sits dead for weeks.
+#
+#   gen_channels.py --check                once tools/channels.csv exists (M2)
+#   the two-way hotspot/channel assertion  once web/ exists (M8)
+#   mkhtml.py --check                      once web/*.html exists (M3)
+
+# --- The global gate, called ABOVE the exit ----------------------------------
+#
+# installhooks.py APPENDS its call to .git/hooks/pre-commit, and on the
+# PowerMonitor bench it appended below the `exit 0` that ended the file - so
+# the one check that catches the class of leak pattern scanning misses never
+# ran once, from the day it was installed. Called here so that ordering cannot
+# repeat. A missing script is not a pass: it says so and fails.
+GLOBAL_GATE="$HOME/.claude/scripts/security/precommit_secrets.py"
+if [ -f "$GLOBAL_GATE" ]; then
+  python "$GLOBAL_GATE" || fail=1
+else
+  say "global secrets gate not found at $GLOBAL_GATE - NOT a pass"
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  say ""
+  say "Nothing was committed. Fix the above, or use --no-verify if this is a"
+  say "false positive you have actually checked."
+  exit 1
+fi
+
+exit 0
