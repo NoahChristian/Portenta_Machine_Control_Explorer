@@ -132,7 +132,7 @@ Write-Host ""
 foreach ($f in @($bin, $signed)) {
     if (Test-Path $f) {
         $size = (Get-Item $f).Length
-        $slot = 0x140000      # keep equal to slot0 in pmc-partitions.dtsi
+        $slot = 0x180000      # keep equal to slot0 in pmc-partitions.dtsi
         $pct = [math]::Round(100.0 * $size / $slot, 2)
         Write-Host ("{0,-22} {1,9:N0} bytes  {2,6}% of slot0" -f (Split-Path -Leaf $f), $size, $pct)
     }

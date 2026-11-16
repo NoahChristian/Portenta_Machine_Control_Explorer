@@ -54,6 +54,11 @@ that file. So the WiFi firmware alone is what overruns the stock slot.
 
 ### Then the real number, against the map in `pmc-partitions.dtsi`
 
+This was first measured against a 1280 KB slot0, when the plan was still to
+replace the Arduino bootloader at 0x08000000. That plan did not survive contact
+with the hardware - see "BOOT0 is not reachable" below - so slot0 is now 1536 KB
+and the percentage is lower. The byte count is the same measurement.
+
 ```
 west build -p always -b arduino_portenta_h7/stm32h747xx/m7 app -d build/app
 ```
@@ -78,7 +83,21 @@ $ ls -la build/app/zephyr/zephyr.bin
 816076 build/app/zephyr/zephyr.bin
 ```
 
-**816,076 bytes (797 KB), at 62.26% of a 1280 KB slot.**
+**816,076 bytes (797 KB).**
+
+With the carrier shield, MCUboot and the `mcuboot`/`swapclear` shell commands
+added, and measured against the final 1536 KB slot0:
+
+```
+Memory region         Used Size  Region Size  %age Used
+           FLASH:        820 KB      1536 KB     53.39%
+             RAM:      166052 B       512 KB     31.67%
+```
+
+```
+zephyr.bin               839,680 bytes   53.39% of slot0
+zephyr.signed.bin        839,831 bytes    53.4% of slot0
+```
 
 What this build contains: WiFi (AIROC CYW4343W), Ethernet, the IPv4/TCP/UDP
 stack, DHCPv4, the HTTP server, mcumgr/SMP over UDP with `img_mgmt`, LittleFS,
@@ -97,6 +116,52 @@ The middle option is the attractive one on paper — homogeneous 128 KB geometry
 no scratch area, and none of the asymmetric-slot traps. It was rejected on
 arithmetic, and the arithmetic is only 29 KB wide, which is why it is recorded
 here rather than merely dropped. See [FLASH.md](FLASH.md).
+
+### BOOT0 is not reachable on this assembly
+
+Established 2026-11-15, from the datasheets and confirmed at the bench.
+
+The Giga port installs MCUboot at 0x08000000 over the STM32 ROM bootloader,
+which is entered by holding BOOT0 at reset. That cannot be done here.
+
+- The Machine Control's own datasheet topology table (section 3.2) lists
+  exactly one button: `PB1 RESET Push Button`. A search of the whole datasheet
+  text for `swd`, `jtag`, `debug`, `boot0` and `boot sel` returns nothing but
+  unrelated matches on "resettable fuse".
+- The Portenta H7's schematic (SL-ABX00042 V4.10) contains exactly one push
+  button, designated PB1 - its pin references are `PIPB105` and `PIPB106`, and
+  no other `PB*` or `SW*` button designator appears. The `SW1`/`SW2`/`SW3` nets
+  in that schematic are the PF1550 PMIC's switching regulator nodes, not
+  switches.
+- BOOT0 exists on the H7 as a net and is brought out to the high-density
+  connector as `FORCE_BOOTLOADER`. The carrier occupies that connector.
+- Opening the enclosure found an unmarked button on the H7 module itself. Per
+  the schematic that is PB1, the H7's own reset - not a boot select.
+
+So there is no BOOT0 button, no SWD header and no JTAG header on this
+assembly, and reaching BOOT0 would mean unmounting the module from the
+carrier.
+
+**What is used instead.** The Arduino DFU bootloader stays at 0x08000000 and
+chainloads MCUboot from 0x08040000, which is the address that bootloader
+already jumps to - the Zephyr board file says so in a comment, and MCUboot
+links wherever `boot_partition` is because its own `app.overlay:3` sets
+`zephyr,code-partition = &boot_partition`. Everything installs by double-tap
+RESET over USB.
+
+Verified by reading the built images rather than by reasoning:
+
+```
+MCUboot      initial SP 0x24006d00   reset PC 0x08041e1d   (inside boot_partition)
+application  vector table at header offset 0x400: SP 0x2400f880  PC 0x080918a5
+```
+
+so the Arduino bootloader's jump to 0x08040000 lands in MCUboot's code, and
+MCUboot's jump to slot0 + 0x400 lands in the application's.
+
+This is strictly safer than the Giga arrangement: sector 0 is never written, so
+the Arduino bootloader cannot be damaged by anything done here and double-tap
+RESET always reaches it again.
 
 ### Toolchain this was measured with
 
