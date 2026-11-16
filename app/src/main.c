@@ -1,0 +1,165 @@
+/*
+ * Portenta Machine Control Explorer.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ * Written by Noah Christian (C) 2026
+ *
+ * M0 STATE. This does nothing with the carrier's I/O yet, on purpose. M0
+ * exists to produce two measurements, and both of them constrain decisions
+ * that are expensive to change afterwards:
+ *
+ *   1. The size of an image with WiFi compiled in. The AIROC 4343WA1 firmware
+ *      is 421,421 bytes and there is no Kconfig to load it from the QSPI
+ *      airoc_firmware partition, so it is linked INTO the image. That single
+ *      number decides whether two internal MCUboot slots are possible at all.
+ *      They are not: see docs/FLASH.md.
+ *
+ *   2. What the three analog inputs actually read. The STM32H747's SYSCFG
+ *      analog switches are CLOSED after reset, and on this board that ties
+ *      PA_1C/PC_2C/PC_3C - the carrier's three analog inputs - to the Ethernet
+ *      RMII clock and to SPI2. Nothing in Zephyr opens them. See
+ *      boards/shields/.../pmc_syscfg_init.c.
+ *
+ * The board has NO display of any kind. The USB CDC-ACM shell and, later, the
+ * web panel are the only two ways to see anything, which is why the shell
+ * commands here are not a convenience.
+ */
+
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
+#include <zephyr/storage/flash_map.h>
+#include <zephyr/drivers/flash.h>
+
+LOG_MODULE_REGISTER(pmc, LOG_LEVEL_INF);
+
+/*
+ * Entropy, asserted rather than assumed.
+ *
+ * CONFIG_CSPRNG_NEEDED is a request; CONFIG_CSPRNG_ENABLED is the answer, and
+ * the answer can be no even with an entropy node in the devicetree, because
+ * the driver may be gated by some other Kconfig that is not set. Zephyr's own
+ * help text says to enable the first and then check the second.
+ *
+ * It matters here more than it looks. The web panel's form layer refuses EVERY
+ * write when its CSRF token has no entropy behind it - deliberately failing
+ * closed rather than seeding from uptime, which would produce a token that
+ * looks exactly right and is guessable. A silent "no" here therefore surfaces
+ * much later as a panel whose buttons all appear to do nothing, with nothing
+ * in any log to say why. Failing the BUILD is cheaper.
+ */
+BUILD_ASSERT(IS_ENABLED(CONFIG_CSPRNG_ENABLED),
+	     "no cryptographically secure entropy source was pulled into this "
+	     "build; the panel would refuse every write at runtime");
+
+/*
+ * Every partition this application believes in, by nodelabel.
+ *
+ * Printed rather than assumed. The flash map is the one thing MCUboot and this
+ * application MUST agree about, and when they disagree nothing fails loudly:
+ * MCUboot writes, validates and swaps at addresses the application does not
+ * share, and the symptom is a corrupt image or a silently ignored update
+ * rather than a build error. Both sides include pmc-partitions.dtsi, and this
+ * command is how you check that the include actually took effect - in
+ * particular that the /delete-node/ of the board's own internal slot1 and
+ * scratch resolved, instead of quietly leaving the old nodes in place.
+ */
+struct part_row {
+	const char *name;
+	uint8_t     id;
+};
+
+static int cmd_pmc_parts(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	static const struct part_row rows[] = {
+#if PARTITION_EXISTS(boot_partition)
+		{ "boot_partition  (mcuboot)", PARTITION_ID(boot_partition) },
+#endif
+#if PARTITION_EXISTS(slot0_partition)
+		{ "slot0_partition (image-0)", PARTITION_ID(slot0_partition) },
+#endif
+#if PARTITION_EXISTS(slot1_partition)
+		{ "slot1_partition (image-1)", PARTITION_ID(slot1_partition) },
+#endif
+#if PARTITION_EXISTS(scratch_partition)
+		{ "scratch_partition", PARTITION_ID(scratch_partition) },
+#endif
+#if PARTITION_EXISTS(web_partition)
+		{ "web_partition (LittleFS)", PARTITION_ID(web_partition) },
+#endif
+#if PARTITION_EXISTS(kvs_partition)
+		{ "kvs_partition (settings)", PARTITION_ID(kvs_partition) },
+#endif
+	};
+
+	shell_print(sh, "%-28s %-10s %-10s %-9s %s",
+		    "partition", "offset", "size", "sector", "device");
+
+	for (size_t i = 0; i < ARRAY_SIZE(rows); i++) {
+		const struct flash_area *fa;
+		int rc = flash_area_open(rows[i].id, &fa);
+
+		if (rc != 0) {
+			shell_print(sh, "%-28s  open failed (%d)", rows[i].name, rc);
+			continue;
+		}
+
+		/*
+		 * The erase-block size is printed because it is the number the
+		 * swap turns on. MCUboot's boot_slots_compatible() compares
+		 * sector geometry between the slots, and the scratch area has
+		 * to be STRICTLY larger than the largest sector it must hold -
+		 * an exactly-equal scratch passes the compatibility check and
+		 * then fails during the swap itself, because a scratch trailer
+		 * is written into the same area. 128 KB internally against
+		 * 4 KB in the QSPI NOR is exactly why this layout needs
+		 * swap-using-scratch and cannot use swap-using-move.
+		 */
+		const struct device *dev = flash_area_get_device(fa);
+		struct flash_pages_info pg;
+		size_t sector = 0;
+
+		if (dev != NULL && flash_get_page_info_by_offs(dev, fa->fa_off, &pg) == 0) {
+			sector = pg.size;
+		}
+
+		shell_print(sh, "%-28s 0x%08lx 0x%08zx %-9zu %s",
+			    rows[i].name,
+			    (unsigned long)fa->fa_off,
+			    (size_t)fa->fa_size,
+			    sector,
+			    dev != NULL ? dev->name : "(none)");
+
+		flash_area_close(fa);
+	}
+
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_pmc,
+	SHELL_CMD(parts, NULL,
+		  "Print every flash partition this image believes in.",
+		  cmd_pmc_parts),
+	SHELL_SUBCMD_SET_END
+);
+
+SHELL_CMD_REGISTER(pmc, &sub_pmc, "Portenta Machine Control Explorer", NULL);
+
+int main(void)
+{
+	LOG_INF("Portenta Machine Control Explorer");
+	LOG_INF("board %s, M0: no carrier I/O yet", CONFIG_BOARD_TARGET);
+
+	/*
+	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)
+	 * either: main returning is fine in Zephyr, the shell and the network
+	 * stack run on their own threads, and leaving a thread parked here
+	 * would only cost a stack.
+	 */
+	return 0;
+}

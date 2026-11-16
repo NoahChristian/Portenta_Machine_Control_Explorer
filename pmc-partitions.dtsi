@@ -1,0 +1,232 @@
+/*
+ * Flash map for the Portenta Machine Control Explorer, shared by MCUboot and
+ * by the application.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * ONE FILE ON PURPOSE. If the bootloader and the application disagree about
+ * where a slot starts or how big it is, nothing fails loudly: MCUboot writes,
+ * validates and swaps at addresses the application does not share, and the
+ * symptom is a corrupt image or a silently ignored update rather than a build
+ * error. Both sides include this.
+ *
+ *   0x08000000     boot_partition   256 KB   MCUboot (uses ~40 KB of it)
+ *   0x08040000     slot0_partition 1280 KB   the running application
+ *   QSPI 0x100000  slot1_partition 1280 KB   the staged update
+ *   QSPI 0x240000  scratch_partition 256 KB  swap scratch
+ *   QSPI 0x300000  web_partition      2 MB   LittleFS: pages and board image
+ *
+ * WHY THE SLOTS ARE THIS SIZE, measured rather than guessed. Building the
+ * application with WiFi enabled against the board's own 384 KB slot0 fails to
+ * link with
+ *
+ *     region `FLASH' overflowed by 422828 bytes
+ *
+ * so the image is 393,216 + 422,828 = 816,044 bytes, about 797 KB. The
+ * overflow is within 1.4 KB of 421,421, which is the size of the AIROC
+ * CYW4343W firmware blob at
+ * modules/hal/infineon/zephyr/blobs/.../COMPONENT_4343W/4343WA1.bin: that blob
+ * is linked INTO the image, and there is no Kconfig to load it from the QSPI
+ * airoc_firmware partition instead. 1280 KB therefore leaves about 57%
+ * headroom over a measured 797 KB.
+ *
+ * WHY THE SECONDARY SLOT IS EXTERNAL. Two 1280 KB slots plus a 256 KB
+ * bootloader do not fit in 2 MB of internal flash, so the secondary goes to
+ * the 16 MB QSPI NOR. An all-internal layout was considered and rejected on
+ * arithmetic: boot 128 + slot0 896 + slot1 896 = 1920 KB does fit, and would
+ * give homogeneous geometry, swap-using-move, no scratch and none of the traps
+ * below - but swap-using-move reserves one sector of the primary slot, leaving
+ * a usable image of 896 - 128 = 768 KB, which is 29 KB less than the image
+ * already measures today. It would have been outgrown before it was finished.
+ *
+ * WHY slot0 CROSSES THE BANK BOUNDARY, DELIBERATELY. 0x08040000 + 1280 KB ends
+ * at 0x08180000, so the image trailer at ~0x0817FF80 sits in bank 2. That is
+ * on purpose: it means the VERY FIRST OTA exercises the bank-2 write path
+ * described below. If flash0's size is ever "corrected", OTA number one fails
+ * instead of OTA number forty, a year from now, in the field.
+ *
+ * WHY boot_partition IS 256 KB FOR A 40 KB BOOTLOADER. The erase unit is
+ * 128 KB, and the board's own map puts boot at 64 KB with scratch beginning at
+ * 0x08010000 - inside the SAME sector. Erasing that scratch would erase the
+ * bootloader. Two whole sectors means nothing shares an erase unit with
+ * MCUboot. Keeping slot0 at 0x08040000 also preserves the address the Arduino
+ * DFU bootloader expects an application at, so an unsigned
+ * -DCONFIG_BOOTLOADER_MCUBOOT=n build can still be flashed with the stock
+ * bootloader during bring-up.
+ */
+
+/*
+ * flash0's SIZE IS DELIBERATELY NOT OVERRIDDEN HERE, and tools/pre-commit
+ * refuses a commit that adds one.
+ *
+ * Setting it to the real 2 MB looks obviously right and silently corrupts
+ * every write above 1 MB. stm32h747Xi_m7.dtsi declares DT_SIZE_K(1024), which
+ * reads like "bank 1 only", but drivers/flash/flash_stm32h7x.c doubles it on
+ * dual-core parts:
+ *
+ *     #if defined(CONFIG_STM32H7_DUAL_CORE)
+ *     #define REAL_FLASH_SIZE_KB (DT_REG_SIZE(...) * 2)
+ *
+ * Declaring 2 MB therefore makes the driver believe 4 MB, which moves
+ * get_sector()'s bank boundary from 1 MB to 2 MB and classifies every bank-2
+ * address as bank 1. PG is then set in CR1 for a bank-2 address, bank 2 raises
+ * PGSERR, and the write fails with -EIO while erase of the SAME sector still
+ * returns 0.
+ *
+ * On the Giga this stayed dormant until MCUboot ran a swap, which erased
+ * slot0's last sector, tried to write the trailer word, got -EIO, and hit
+ * assert(rc == 0) in swap_status_init(). MCUboot then sat in arch_system_halt
+ * with NO fault bits set (CFSR=0, HFSR=0) and no log line, which looks nothing
+ * like a flash problem and cost four blind debugging attempts. The draft
+ * upstream report is in docs/stm32h7_flash_bank2_issue.md.
+ */
+
+/ {
+	chosen {
+		/*
+		 * Settings live in the Arduino table's `kvs` partition - the
+		 * same 1 MB region the mbed firmware's KVStore used.
+		 *
+		 * Chosen over `storage` deliberately: keeping settings where
+		 * settings have always lived means the Arduino QSPIFormat
+		 * layout still describes this board honestly. Zephyr's NVS
+		 * format is not KVStore's, so any old contents are overwritten
+		 * rather than read - that is the one-way part of the decision.
+		 */
+		zephyr,settings-partition = &kvs_partition;
+	};
+};
+
+/*
+ * The board's own internal secondary slot and scratch have to GO, not be
+ * resized.
+ *
+ * arduino_portenta_h7_stm32h747xx_m7.dts defines scratch_partition at
+ * 0x08010000 (192 KB, sharing sector 0 with boot) and slot1_partition at
+ * 0x080a0000 (384 KB). Both are in internal flash with 128 KB sectors, and a
+ * 128 KB-sector scratch cannot serve a secondary slot whose sectors are 4 KB:
+ * MCUboot's scratch must be strictly larger than the largest sector it has to
+ * hold. Leaving either node in place and adding a same-named one in the QSPI
+ * would be a duplicate nodelabel, which is why these are deleted outright.
+ *
+ * `pmc parts` on the shell prints what the running image actually resolved, so
+ * a deletion that silently did not take is visible rather than assumed.
+ */
+/delete-node/ &scratch_partition;
+/delete-node/ &slot1_partition;
+
+/*
+ * And Arduino's 5 MB `ota` region, which the mbed firmware staged updates into
+ * through a FAT filesystem in MBR partition 2. None of that applies here, so
+ * the region is reclaimed below as the raw secondary slot, the swap scratch
+ * and the web filesystem.
+ *
+ * DELETED BY LABEL, and that detail is load-bearing. The first version of this
+ * file wrote
+ *
+ *     &qspi_flash { /delete-node/ partition@100000; ... };
+ *
+ * which silently did NOTHING: partition@100000 is a child of `partitions`, not
+ * of qspi_flash, and /delete-node/ by node name only matches a DIRECT child.
+ * The new node then MERGED with Arduino's instead of replacing it, and the
+ * generated devicetree read
+ *
+ *     ota_partition: slot1_partition: partition@100000 {
+ *
+ * carrying both labels. The reg and label overrides had taken, so the slot was
+ * at the right address and the build was clean - but ota_partition still
+ * resolved to it, meaning any code or overlay referring to the old label would
+ * have been handed the live secondary slot. Deleting by label cannot miss,
+ * because a wrong label is a build error rather than a no-op.
+ *
+ * Found by reading build/app/zephyr/zephyr.dts rather than by anything
+ * failing, which is the only reason it was found at all.
+ */
+/delete-node/ &ota_partition;
+
+&flash0 {
+	partitions {
+		/*
+		 * 2 sectors. read-only is NOT set: MCUboot is installed over
+		 * ROM DFU (BOOT0 + RST), and marking the partition read-only
+		 * here would only stop the application writing it, which it
+		 * never does.
+		 */
+		boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			reg = <0x00000000 DT_SIZE_K(256)>;
+			label = "mcuboot";
+		};
+
+		/*
+		 * 0x140000 = 1,310,720 bytes, which is the number that must be
+		 * passed to imgtool as --slot-size. If these ever disagree the
+		 * trailer goes somewhere MCUboot does not read.
+		 */
+		slot0_partition: partition@40000 {
+			compatible = "zephyr,mapped-partition";
+			reg = <0x00040000 0x00140000>;
+			label = "image-0";
+		};
+
+		/*
+		 * 0x08180000 to 0x08200000, 512 KB, is unallocated. Named here
+		 * rather than merely absent, so the next reader can see it is
+		 * a decision: growing slot0 into it means moving slot1 and
+		 * scratch in the QSPI to match, and re-signing every image.
+		 */
+	};
+};
+
+&qspi_flash {
+	partitions {
+		/*
+		 * Exactly equal to slot0. MCUboot swaps between equal slots,
+		 * and 1280 KB of 4 KB sectors is 320 sectors - which is what
+		 * CONFIG_BOOT_MAX_IMG_SECTORS=512 has to cover. The ceiling
+		 * must suit the SECONDARY slot's 320, not the primary's 10;
+		 * deriving it from the first image's partition, which is what
+		 * CONFIG_BOOT_MAX_IMG_SECTORS_AUTO does, takes the wrong end
+		 * of an asymmetric layout like this one.
+		 */
+		slot1_partition: partition@100000 {
+			reg = <0x00100000 0x00140000>;
+			label = "image-1";
+		};
+
+		/*
+		 * 256 KB = TWICE the 128 KB internal sector, and deliberately
+		 * not equal to it.
+		 *
+		 * boot_slots_compatible() only rejects a sector STRICTLY
+		 * larger than scratch, so an exactly-equal 128 KB scratch
+		 * passes the compatibility check and then fails during the
+		 * swap itself, because MCUboot also writes a scratch trailer
+		 * into the same area.
+		 */
+		scratch_partition: partition@240000 {
+			reg = <0x00240000 DT_SIZE_K(256)>;
+			label = "image-scratch";
+		};
+
+		/* 0x280000 to 0x300000, 512 KB, spare. */
+
+		/*
+		 * The web filesystem: diag.html, the rendered board image and
+		 * the hashed assets.
+		 *
+		 * It is a separate partition so that a ~400 KB raster of the
+		 * board never enters slot0 and therefore never inflates an OTA
+		 * image. It also buys the edit-without-recompiling loop the
+		 * PowerMonitor panel has, where the page is served from the
+		 * filesystem first and from flash only as a fallback.
+		 *
+		 * LittleFS is affordable here precisely because these sectors
+		 * are 4 KB; in internal flash they would be 128 KB.
+		 */
+		web_partition: partition@300000 {
+			reg = <0x00300000 DT_SIZE_M(2)>;
+			label = "web";
+		};
+	};
+};

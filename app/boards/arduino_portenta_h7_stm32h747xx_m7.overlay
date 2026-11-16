@@ -1,0 +1,10 @@
+/*
+ * Application overlay for the Portenta H7 carrying the Machine Control.
+ *
+ * The flash map is NOT written here. It is included from the repository root
+ * so that MCUboot's own build includes the identical file - see the comment at
+ * the top of pmc-partitions.dtsi for what goes wrong when the two disagree,
+ * which is nothing visible until a swap.
+ */
+
+#include "../../pmc-partitions.dtsi"
