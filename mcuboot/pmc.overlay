@@ -1,0 +1,32 @@
+/*
+ * Devicetree overlay for MCUboot on the Portenta Machine Control.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * It does one thing: include the SAME flash map the application includes.
+ * That is the entire point - a bootloader and an application that disagree
+ * about where a slot starts produce no build error at all.
+ */
+
+#include "../pmc-partitions.dtsi"
+
+/*
+ * THE ONE REMAINING BUILD WARNING IS UPSTREAM'S AND CANNOT BE REMOVED:
+ *
+ *   warning: I2C ... was assigned the value 'n' but got the value 'y'
+ *
+ * MCUboot's own prj.conf:18 says `# CONFIG_I2C is not set`, while this board
+ * enables i2c1 - which makes I2C_STM32 default y, which selects I2C back on.
+ * The message unhelpfully cites an unrelated NXP shield, because Kconfig lists
+ * every place a symbol is DEFINED rather than the place that set it.
+ *
+ * Disabling i2c1 and i2c3 here was tried, on the reasoning that a bootloader
+ * has no business on an I2C bus. It does: `zephyr_i2c` IS i2c1, and the
+ * Portenta H7's PF1550 PMIC hangs off it at pmic@8
+ * (arduino_portenta_h7_stm32h747xx_m7.dts:101). Turning the bus off failed the
+ * build on mfd_pf1550.c and regulator_pf1550.c, which is the board telling you
+ * that its power rails are behind that bus.
+ *
+ * So the warning stays. Recorded here so the next person does not spend the
+ * same twenty minutes discovering that the obvious fix removes the PMIC.
+ */

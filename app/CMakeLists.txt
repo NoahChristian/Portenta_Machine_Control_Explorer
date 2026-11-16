@@ -12,6 +12,7 @@ project(pmc_explorer LANGUAGES C CXX)
 
 target_sources(app PRIVATE
     src/main.c
+    src/shell_mcuboot.c
 )
 
 # MCUboot's maximum image sector count, needed by the APPLICATION as well as by

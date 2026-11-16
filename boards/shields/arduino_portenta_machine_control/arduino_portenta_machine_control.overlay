@@ -205,6 +205,13 @@
  * wrong channel. They live in tools/channels.csv. See
  * docs/INFERRED_FROM_MBED.md.
  *
+ * EXPECT THREE DEVICES ON THIS BUS, not two. i2c1 is the node the board
+ * aliases as `zephyr_i2c`, and the Portenta H7's own PF1550 PMIC hangs off it
+ * at pmic@8 (arduino_portenta_h7_stm32h747xx_m7.dts:101). So a healthy
+ * `i2c scan` should report 0x08 as well as 0x22 and 0x23 - and 0x08 appearing
+ * alone is the useful negative result, because it proves the bus works and
+ * that the expanders are somewhere else.
+ *
  * i2c1 is the one the Portenta datasheet calls I2C1, and it already carries
  * pinctrl and bus-recovery GPIOs from arduino_portenta_h7-common.dtsi. (The
  * board file says so in a comment; quoting that comment verbatim here nested a
