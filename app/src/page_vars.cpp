@@ -90,6 +90,17 @@ static char     vHost[48];
 static char     vFw[24];
 static uint32_t vUptime;
 
+/* The clock marker. vClkTime is what the SERVER renders, one character per
+   cell, so the page is correct with JavaScript disabled - the script only
+   makes those cells tick. vClkEpoch is 0 whenever the time is not real, which
+   is what the script tests before it starts ticking at all. */
+static uint32_t vClkEpoch;
+static char     vClkTime[12];
+static char     vClkLabel[56];
+
+static char rCCh[2];
+static char rCCls[8];
+
 static bool vPickOn;
 static char vPickCh[20];
 static char vPickKind[12];
@@ -143,6 +154,44 @@ static void put(char *dst, size_t cap, const char *src)
 
 #define PUT(DST, SRC) put((DST), sizeof(DST), (SRC))
 
+/*
+ * THE CLOCK MARKER'S THREE STATES, which must not render alike.
+ *
+ * A clock that was held through a power-off, a part that says it lost time,
+ * and no part at all are three different facts. vClkEpoch stays 0 for the last
+ * two, which is what stops the browser-side tick from starting: a ticking
+ * "--:--:--" would be the worst of the three renderings.
+ *
+ * UTC, deliberately. There is no timezone in the build and inventing one in
+ * the renderer would make every timestamp on this page a claim about a setting
+ * nobody chose. The label says UTC so the reader is not guessing.
+ */
+static void fillClock(void)
+{
+	vClkEpoch = 0;
+
+	switch (gSnap.clock_state) {
+	case PMC_CLOCK_HELD: {
+		const int64_t e = gSnap.clock_epoch;
+		const uint32_t tod = (uint32_t)(((e % 86400) + 86400) % 86400);
+
+		vClkEpoch = (uint32_t)e;
+		snprintk(vClkTime, sizeof(vClkTime), "%02u:%02u:%02u",
+			 tod / 3600U, (tod / 60U) % 60U, tod % 60U);
+		PUT(vClkLabel, "UTC - held through power-off");
+		break;
+	}
+	case PMC_CLOCK_LOST:
+		PUT(vClkTime, "--:--:--");
+		PUT(vClkLabel, "RTC lost power - no time");
+		break;
+	default:
+		PUT(vClkTime, "--:--:--");
+		PUT(vClkLabel, "no RTC in this image");
+		break;
+	}
+}
+
 /* ---------------------------------------------------------- row providers */
 
 static uint16_t healthCount(void)
@@ -178,6 +227,30 @@ static bool slotSelect(uint16_t i)
 	(void)snprintf(rSState, sizeof(rSState), "%s, %s",
 		       gSnap.slot[i].active ? "running" : "standby",
 		       gSnap.slot[i].confirmed ? "confirmed" : "unconfirmed");
+	return true;
+}
+
+/*
+ * ONE CELL PER CHARACTER of the rendered time, including the colons.
+ *
+ * A flip-card readout needs each digit in its own box, and eight boxes cannot
+ * be eight registry variables for the same reason seventy-nine terminals
+ * cannot. The row provider walks the string the server already formatted, so
+ * the markup does not care whether that string is a time or "--:--:--".
+ */
+static uint16_t clkCount(void)
+{
+	return (uint16_t)strlen(vClkTime);
+}
+
+static bool clkSelect(uint16_t i)
+{
+	if (i >= strlen(vClkTime)) {
+		return false;
+	}
+	rCCh[0] = vClkTime[i];
+	rCCh[1] = '\0';
+	PUT(rCCls, (vClkTime[i] == ':') ? "ccw-c" : "ccw-d");
 	return true;
 }
 
@@ -286,6 +359,8 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_STR_RO("host", vHost)
 	TPL_STR_RO("fw", vFw)
 	TPL_VAR_RO("uptime", vUptime)
+	TPL_VAR_RO("clkEpoch", vClkEpoch)
+	TPL_STR_RO("clkLabel", vClkLabel)
 
 	/* The clicked terminal. */
 	TPL_VAR_RO("pickOn", vPickOn)
@@ -295,6 +370,10 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_STR_RO("pickBlock", vPickBlock)
 	TPL_STR_RO("pickVal", vPickVal)
 	TPL_STR_RO("pickConf", vPickConf)
+
+	TPL_EACH("clk", clkCount, clkSelect)
+	TPL_ROW_STR("cCh", rCCh)
+	TPL_ROW_STR("cCls", rCCls)
 
 	TPL_EACH("health", healthCount, healthSelect)
 	TPL_ROW_STR("hName", rHName)
@@ -484,6 +563,7 @@ extern "C" void pmc_page_init(void)
 	PUT(vHost, gSnap.host);
 	PUT(vFw, gSnap.fw);
 	vUptime = gSnap.uptime_s;
+	fillClock();
 
 	const uint16_t faults = gTpl.selfTest(TPL_FROM_FLASH(PAGE_INDEX), sink);
 
@@ -523,6 +603,7 @@ extern "C" int pmc_page_step(enum http_transaction_status status,
 		PUT(vHost, gSnap.host);
 		PUT(vFw, gSnap.fw);
 		vUptime = gSnap.uptime_s;
+	fillClock();
 		pick(query, qlen);
 	}
 

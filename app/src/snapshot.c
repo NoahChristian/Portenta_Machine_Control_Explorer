@@ -11,9 +11,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/rtc.h>
 #include <zephyr/dfu/mcuboot.h>
 #include <zephyr/net/hostname.h>
 #include <zephyr/storage/flash_map.h>
+#include <zephyr/sys/timeutil.h>
 #include <zephyr/sys/util.h>
 
 #include <stm32_ll_system.h>
@@ -75,6 +77,50 @@ static const uint8_t slot_id[] = {
 #endif
 };
 
+/*
+ * The carrier's RTC, found by compatible rather than by nodelabel so that this
+ * compiles with the shield absent - which is how the application is built when
+ * someone is bisecting a networking problem and does not want the carrier in
+ * the way.
+ */
+#if DT_HAS_COMPAT_STATUS_OKAY(nxp_pcf8563)
+static const struct device *const pmc_rtc =
+	DEVICE_DT_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(nxp_pcf8563));
+#else
+static const struct device *const pmc_rtc;
+#endif
+
+static void read_clock(struct pmc_snapshot *s)
+{
+	struct rtc_time rt;
+	int rc;
+
+	s->clock_state = PMC_CLOCK_ABSENT;
+	s->clock_epoch = 0;
+
+	if (pmc_rtc == NULL || !device_is_ready(pmc_rtc)) {
+		return;
+	}
+
+	rc = rtc_get_time(pmc_rtc, &rt);
+	if (rc == -ENODATA) {
+		/*
+		 * The part is there and is telling us its oscillator stopped.
+		 * That is a reading, not a failure, and it is the one that says
+		 * the board has been unpowered longer than the supercapacitor
+		 * holds.
+		 */
+		s->clock_state = PMC_CLOCK_LOST;
+		return;
+	}
+	if (rc != 0) {
+		return;
+	}
+
+	s->clock_state = PMC_CLOCK_HELD;
+	s->clock_epoch = timeutil_timegm64(rtc_time_to_tm(&rt));
+}
+
 void pmc_snapshot_take(struct pmc_snapshot *s)
 {
 	const uint32_t pmcr = SYSCFG->PMCR & AI_SWITCHES;
@@ -84,6 +130,8 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	s->host = net_hostname_get();
 	s->fw = CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION;
 	s->uptime_s = (uint32_t)(k_uptime_get() / 1000);
+
+	read_clock(s);
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {
@@ -174,6 +222,14 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	n += snprintk(out + n, cap - n,
 		      "{\"host\":\"%s\",\"fw\":\"%s\",\"uptime\":%u,",
 		      s->host, s->fw, s->uptime_s);
+
+	/* epoch is 0 unless state is "held", so a reader that only looks at the
+	 * number cannot mistake a lost clock for 1970. */
+	n += snprintk(out + n, cap - n,
+		      "\"clock\":{\"state\":\"%s\",\"epoch\":%lld},",
+		      s->clock_state == PMC_CLOCK_HELD ? "held"
+			: s->clock_state == PMC_CLOCK_LOST ? "lost" : "absent",
+		      (long long)s->clock_epoch);
 
 	n += snprintk(out + n, cap - n, "\"health\":[");
 	for (size_t i = 0; i < pmc_health_check_count(); i++) {

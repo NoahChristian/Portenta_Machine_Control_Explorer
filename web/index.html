@@ -2,11 +2,18 @@
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Portenta Machine Control Explorer</title>
-<!--#! THE PAGE IS AUTHORED HERE AND RENDERED ON THE BOARD, server-side, with
-     no JavaScript at all. Every value arrives through an SSI tag that
+<!--#! THE PAGE IS AUTHORED HERE AND RENDERED ON THE BOARD, server-side.
+     Every value arrives through an SSI tag that
      tools/mkhtml.py checks against the registry in app/src/page_vars.cpp, so a
      misspelled variable is a build error rather than a plausible-looking page
      with an empty cell in it.
+
+     THERE IS EXACTLY ONE SCRIPT, at the end, and it advances the clock
+     marker. It is here rather than absent because the alternative - reloading
+     the page to see the time move - is the polling this page exists without.
+     It issues no request of any kind: the board renders the digits and the
+     epoch, and the browser counts forward from its own elapsed time. Nothing
+     else on this page is scripted, and nothing on it polls.
 
      IT USED TO POLL /state.json AND BUILD THE TABLES IN JAVASCRIPT. That was
      wrong for this repository and wrong for this board. The page was a C byte
@@ -119,7 +126,57 @@
           margin:0 0 1.25rem; font-size:.9rem; }
   #pick .ch { font-weight:600; }
   #pick .meta { color:var(--dim); font-size:.85rem; }
+
+  /* THE CLOCK MARKER, top right.
+     One cell per character, which is what makes a flip-card readout possible
+     without a digit being a variable. The seam across each card at half
+     height is the whole trick: it is what makes a box read as a flip card
+     rather than as a bordered letter. */
+  .ccw { position:fixed; top:10px; right:12px; z-index:50; text-align:right;
+         pointer-events:none;
+         font:19px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .ccw-row { display:flex; gap:2px; justify-content:flex-end;
+             align-items:center; }
+  .ccw-d { display:inline-block; min-width:1.05em; padding:3px 5px;
+           border-radius:3px; background:Canvas; color:CanvasText;
+           border:1px solid #8886; position:relative; line-height:1.15;
+           font-size:19px; }
+  .ccw-d:after { content:""; position:absolute; left:0; right:0; top:50%;
+                 height:1px; background:#8886; }
+  .ccw-c { color:var(--dim); font-size:16px; padding:0 1px; }
+  .ccw-l { color:var(--dim); font-size:12px; letter-spacing:.04em;
+           text-transform:uppercase; margin-top:3px; }
+  /* Fixed position puts it over the board drawing on a narrow screen, where
+     the board is the thing someone came to look at. */
+  @media (max-width:620px) {
+    .ccw { position:static; text-align:left; margin:0 0 .75rem; }
+    .ccw-row { justify-content:flex-start; }
+  }
 </style></head><body>
+
+<!--#! THE CLOCK, SERVED BY THE BOARD AND TICKED BY THE BROWSER.
+
+     The server renders the digits, so this reads correctly with JavaScript
+     disabled - the script at the end of the page only makes them advance. It
+     NEVER FETCHES ANYTHING: the epoch travels in the page once, in
+     data-epoch, and the browser counts forward from its own elapsed time. A
+     clock that asks a board over HTTP what second it is was the thing worth
+     not copying, and it is the same mistake this page already removed from
+     everything else on it.
+
+     data-epoch is 0 whenever the time is not real, and the script tests that
+     before it starts, so a lost clock renders a still "--:--:--" rather than
+     a ticking one. A ticking placeholder would be the worst of the three
+     states to show.-->
+<div class="ccw">
+  <div class="ccw-row" id="ccwT"
+       data-tpl-attr="data-epoch clkEpoch" data-epoch="0">
+    <!--#each clk-->
+    <span data-tpl-attr="class cCls" class="ccw-d"><!--#vp cCh-->0<!--#/--></span>
+    <!--#/each-->
+  </div>
+  <div class="ccw-l"><!--#vp clkLabel-->no RTC in this image<!--#/--></div>
+</div>
 
 <h1>Portenta Machine Control Explorer</h1>
 <p class="sub">
@@ -327,4 +384,39 @@
   analog switches are open.
 </p>
 
+<script>
+/* The only script on this page, and it talks to nobody.
+   It reads one number the server already rendered and advances the cells the
+   server already filled. With it removed the page still shows the time the
+   board held when it rendered; with it running that time ticks. Neither case
+   involves a request. */
+(function () {
+  var row = document.getElementById('ccwT');
+  if (!row) { return; }
+  var base = parseInt(row.getAttribute('data-epoch'), 10);
+  if (!base) { return; }          /* no real clock: leave the server's text */
+
+  var cells = row.getElementsByTagName('span');
+  var t0 = Date.now();
+
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+
+  function tick() {
+    var d = new Date(base * 1000 + (Date.now() - t0));
+    var s = two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()) + ':' +
+            two(d.getUTCSeconds());
+    for (var i = 0; i < cells.length && i < s.length; i++) {
+      if (cells[i].textContent !== s.charAt(i)) {
+        cells[i].textContent = s.charAt(i);
+      }
+    }
+  }
+
+  /* Four times a second so a second boundary lands within a quarter of one.
+     The cost is a string compare per cell; nothing is laid out again unless a
+     digit actually changed. */
+  tick();
+  setInterval(tick, 250);
+})();
+</script>
 </body></html>

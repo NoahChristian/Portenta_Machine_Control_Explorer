@@ -178,54 +178,59 @@ connector anywhere, and lists `STM32H747XI` as a part of the product.
 
 ### RTC drift against NTP
 
-Discipline, or at least *measure*, the RTC against NTP and report the drift. A
-PCF8563 at 0x51 has an ordinary 32.768 kHz crystal and will drift; knowing by
-how much turns a timestamp from a claim into a measurement.
+**Use the carrier's clock.** Datasheet section 3-20: a PCF8563T/F4 on a
+dedicated 32.768 kHz crystal, with a 100 mF supercapacitor holding it up for
+at least 48 hours once board power is removed. The SoC's internal RTC has no
+backup here.
 
-**The method, written down because the obvious version of it is wrong.** You
-cannot measure the system clock's rate with the system clock: an NTP sync
-*steps* it, so the interval it reports between two syncs is the interval NTP
-just imposed. The monotonic timer is never stepped, which makes it the only
-usable ruler. Record a pair at every successful sync — the UTC epoch that sync
-set, and the monotonic timer at that instant — and two pairs give:
+**Nothing is missing from the toolchain**, which was worth checking rather
+than assuming. Zephyr carries `drivers/rtc/rtc_pcf8563.c` with the
+`nxp,pcf8563` binding, the generic `rtc.h` API, and SNTP in
+`subsys/net/lib/sntp`. This application's `prj.conf` names none of them. It is
+a devicetree node and a Kconfig line, not a driver that has to be written.
 
-```
-ppm = ((delta_epoch - delta_monotonic) / delta_monotonic) * 1e6
-```
+**The feature, which is smaller than it first looks:**
 
-That is the **SoC's** time base against UTC, which is one of three numbers
-worth keeping apart rather than collapsing into one:
+1. **At boot, read the RTC.** The part answers the question itself: the VL bit
+   in its seconds register means the oscillator stopped, and the driver turns
+   that into `-ENODATA` from `rtc_get_time()`. A clean read means the
+   supercapacitor held and the board already knows the time with no network
+   involved — switch the bench on and the timestamps are real immediately.
+2. **If the clock is unset and NTP answers, set it**, and keep the moment it
+   was set.
+3. **Later — hours, not minutes — ask NTP again** and read the RTC beside it.
+   The error is the difference between them, and
+   `ppm = error_seconds / interval_seconds * 1e6`.
+4. **Report the last error in ppm**, with the interval it was measured over,
+   next to the time and where the time came from: held through a power-off,
+   or set from NTP at a stated moment.
 
-| number | what it compares | measured from |
-|---|---|---|
-| part against SoC | the RTC chip against this MCU's time base | timestamped edges of the RTC's 1 Hz output |
-| SoC against UTC | the MCU's time base against real time | two NTP syncs, the formula above |
-| part against UTC | their sum — the number a datasheet's ±ppm claim is about | both rows above |
+Nothing here counts edges and nothing needs a second time base. The thing
+being measured is an independent part read over I2C and the reference is NTP,
+so no clock is being asked to measure itself. (That failure does exist, but in
+a different feature: disciplining the SYSTEM clock from NTP and then trying to
+measure its rate between syncs cannot work, because the sync steps the clock
+under measurement.)
 
-Each is NaN until it can be computed, and each carries the span it was
-measured over, because a ppm figure without a window is not a measurement.
-The sum is the whole point: an edge comparison on its own can never give
-absolute accuracy, because it is measured against the same time base it is
-trying to qualify.
+Two things for whoever writes it:
 
-Two things to settle here specifically:
+- Zephyr's PCF8563 driver never touches the CLKOUT control register, so
+  anything wanting a 1 Hz edge to count would need direct register writes. The
+  design above does not want one.
+- That driver's comment says "if the first bit is 1 it is ok" while the code
+  returns `-ENODATA` when bit 7 is set. The code is right and matches the
+  part: VL set means integrity is **not** guaranteed.
 
-- **A set clock is not evidence of an RTC.** Whatever backup domain survives
-  a reset on this part will make a clock read correctly after a reflash with
-  no battery and no sync this boot, which looks exactly like success. The
-  validity test should be an epoch floor — a clock reading 1970 is not a
-  clock — and the panel should name which source set it.
-- **Is the PCF8563's CLKOUT wired on this carrier at all?** The first row of
-  that table needs an edge to timestamp. If the pin goes nowhere, only the
-  second and third rows are available and the part can only be qualified
-  through NTP, over hours rather than minutes.
+Separate and lower priority: the build target carries no board revision, so it
+takes the 1.0.0 default, which clocks the SoC's internal RTC from LSI rather
+than 4.10.0's LSE. Irrelevant while the wall clock is the carrier's part;
+wrong the moment anything uses the internal one.
 
-And the board revision matters more than anywhere else in this file:
-`board.yml` declares revisions 1.0.0 and 4.10.0 with different RTC clock
-sources, LSI against LSE. An RC oscillator and a crystal differ by orders of
-magnitude, so which is fitted changes what counts as a normal reading.
-
-*Waiting on:* the RTC driver being enabled at all, and SNTP in the build.
+*Waiting on:* a `pcf8563@51` node on the Portenta's internal bus, `CONFIG_RTC`
+and SNTP in the build. One commit's work, and nothing in it is blocked on
+hardware.
+and SNTP in the build. All of it is one commit's work; none of it is blocked
+on hardware that is missing.
 
 ---
 

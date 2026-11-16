@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "32bb69cd"
-#define PAGE_INDEX_BYTES 12061
+#define PAGE_INDEX_BUILD "84774981"
+#define PAGE_INDEX_BYTES 15015
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -113,7 +113,44 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
           margin:0 0 1.25rem; font-size:.9rem; }
   #pick .ch { font-weight:600; }
   #pick .meta { color:var(--dim); font-size:.85rem; }
+
+  /* THE CLOCK MARKER, top right.
+     One cell per character, which is what makes a flip-card readout possible
+     without a digit being a variable. The seam across each card at half
+     height is the whole trick: it is what makes a box read as a flip card
+     rather than as a bordered letter. */
+  .ccw { position:fixed; top:10px; right:12px; z-index:50; text-align:right;
+         pointer-events:none;
+         font:19px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .ccw-row { display:flex; gap:2px; justify-content:flex-end;
+             align-items:center; }
+  .ccw-d { display:inline-block; min-width:1.05em; padding:3px 5px;
+           border-radius:3px; background:Canvas; color:CanvasText;
+           border:1px solid #8886; position:relative; line-height:1.15;
+           font-size:19px; }
+  .ccw-d:after { content:""; position:absolute; left:0; right:0; top:50%;
+                 height:1px; background:#8886; }
+  .ccw-c { color:var(--dim); font-size:16px; padding:0 1px; }
+  .ccw-l { color:var(--dim); font-size:12px; letter-spacing:.04em;
+           text-transform:uppercase; margin-top:3px; }
+  /* Fixed position puts it over the board drawing on a narrow screen, where
+     the board is the thing someone came to look at. */
+  @media (max-width:620px) {
+    .ccw { position:static; text-align:left; margin:0 0 .75rem; }
+    .ccw-row { justify-content:flex-start; }
+  }
 </style></head><body>
+
+
+<div class="ccw">
+  <div class="ccw-row" id="ccwT"
+       data-tpl-attr="data-epoch clkEpoch" data-epoch="0">
+    <!--#each clk-->
+    <span data-tpl-attr="class cCls" class="ccw-d"><!--#v cCh--></span>
+    <!--#/each-->
+  </div>
+  <div class="ccw-l"><!--#v clkLabel--></div>
+</div>
 
 <h1>Portenta Machine Control Explorer</h1>
 <p class="sub">
@@ -302,6 +339,41 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   analog switches are open.
 </p>
 
+<script>
+/* The only script on this page, and it talks to nobody.
+   It reads one number the server already rendered and advances the cells the
+   server already filled. With it removed the page still shows the time the
+   board held when it rendered; with it running that time ticks. Neither case
+   involves a request. */
+(function () {
+  var row = document.getElementById('ccwT');
+  if (!row) { return; }
+  var base = parseInt(row.getAttribute('data-epoch'), 10);
+  if (!base) { return; }          /* no real clock: leave the server's text */
+
+  var cells = row.getElementsByTagName('span');
+  var t0 = Date.now();
+
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+
+  function tick() {
+    var d = new Date(base * 1000 + (Date.now() - t0));
+    var s = two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()) + ':' +
+            two(d.getUTCSeconds());
+    for (var i = 0; i < cells.length && i < s.length; i++) {
+      if (cells[i].textContent !== s.charAt(i)) {
+        cells[i].textContent = s.charAt(i);
+      }
+    }
+  }
+
+  /* Four times a second so a second boundary lands within a quarter of one.
+     The cost is a string compare per cell; nothing is laid out again unless a
+     digit actually changed. */
+  tick();
+  setInterval(tick, 250);
+})();
+</script>
 </body></html>
 )HTMLTPL";
 

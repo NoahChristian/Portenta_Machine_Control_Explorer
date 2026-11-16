@@ -49,10 +49,34 @@ struct pmc_slot_read {
 	bool    confirmed;
 };
 
+/*
+ * WHETHER THERE IS A CLOCK, AND WHY NOT.
+ *
+ * The carrier's PCF8563 reports its own trustworthiness and that is better
+ * than anything this application could infer. The VL bit in its seconds
+ * register means the oscillator stopped, and the driver turns that into
+ * -ENODATA from rtc_get_time(). A 100 mF supercapacitor holds the part up for
+ * at least 48 hours with board power removed (datasheet section 3-20), so
+ * these three states are the difference between switching the bench on
+ * overnight and switching it on after a long weekend.
+ *
+ * ABSENT and LOST must not render the same, for the same reason a channel
+ * with no reader must not render as LOW: one is a missing part and the other
+ * is a part saying it lost time.
+ */
+enum pmc_clock_state {
+	PMC_CLOCK_ABSENT = 0, /* no device in the tree, or it never answered */
+	PMC_CLOCK_LOST,       /* answered -ENODATA: the oscillator had stopped */
+	PMC_CLOCK_HELD,       /* read cleanly: the supercapacitor carried it */
+};
+
 struct pmc_snapshot {
 	const char *host;
 	const char *fw;
 	uint32_t    uptime_s;
+
+	uint8_t clock_state;  /* enum pmc_clock_state */
+	int64_t clock_epoch;  /* UTC seconds; 0 unless clock_state is HELD */
 
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;

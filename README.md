@@ -43,8 +43,8 @@ at the connector yet, so every channel renders dashed.
 ### The panel is a template the board renders, not a page a script assembles
 
 It is server-side includes, through the [HtmlTpl][lib] engine shared with a
-sibling project on this bench, and it runs **no JavaScript at all**. The page
-is authored as `web/index.html` and opens in a browser as a file;
+sibling project on this bench. The page is authored as `web/index.html` and
+opens in a browser as a file;
 `tools/gen_page.py` checks every `<!--#v name-->` in it against the registry
 in `app/src/page_vars.cpp` and emits the committed header the firmware
 serves. A name the registry does not have is a build error naming the line.
@@ -55,6 +55,11 @@ Two consequences worth stating, because each replaced something worse:
   single snapshot before the first row is asked for, which is what makes the
   sentence in the page's own heading true. Nothing polls; reload to take a
   fresh set.
+- **One script, and it talks to nobody.** The clock marker is rendered by the
+  board, digits and all, and a few lines at the end of the page advance them
+  from the browser's own elapsed time. It issues no request, so the page still
+  takes every reading in one pass and still never polls. With the script
+  removed the marker shows the time the board held when it rendered.
 - **The board drawing is one terminal, written once.** All 79 are the same
   markup inside an `each` block, and `tools/gen_board.py` solves where each one
   sits from `tools/terminals.csv`. That is also the only way the hover tips can

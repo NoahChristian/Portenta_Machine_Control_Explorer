@@ -214,9 +214,11 @@
  *     i2c3  PH7/PH8    0x22, 0x23         <- the carrier's two expanders
  *     i2c4  PH11/PH12  nothing
  *
- * 0x08 is the PF1550 PMIC the board declares at pmic@8; 0x51 is almost
- * certainly the PCF8563 RTC, which is its standard address and matches the
- * carrier having an RTC with its interrupt on MC_RTC_INT_PIN PB_9. 0x36 is
+ * 0x08 is the PF1550 PMIC the board declares at pmic@8. 0x51 is the PCF8563
+ * RTC, and that is no longer a guess: datasheet section 3-20 names the part as
+ * PCF8563T/F4 on its own 32.768 kHz crystal, backed by a 100 mF supercapacitor
+ * good for at least 48 hours, with its interrupt on MC_RTC_INT_PIN PB_9. 0x36
+ * is
  * unidentified and is on the module's internal bus rather than the carrier's,
  * so it is more likely part of the H7 than of the Machine Control.
  *
@@ -245,6 +247,40 @@
  * the wrong channel. They belong in tools/channels.csv. See
  * docs/INFERRED_FROM_MBED.md.
  */
+/*
+ * THE CARRIER'S REAL-TIME CLOCK, and it is the carrier's rather than the
+ * module's even though it answers on the module's bus.
+ *
+ * Datasheet section 3-20 names the part: a PCF8563T/F4 on a dedicated
+ * 32.768 kHz crystal (Q13FC1350000400), held up by a 100 mF supercapacitor
+ * (FC0V104ZFTBR24) for "at least 48 hours" after board power is removed. That
+ * backup is why this is the clock to use and not the SoC's own RTC, which has
+ * no battery or supercapacitor on this board: switch the bench on in the
+ * morning and this part already knows the time, with no network involved.
+ *
+ * THE PART REPORTS ITS OWN TRUSTWORTHINESS, which is better than any heuristic
+ * an application could apply. The VL bit in its seconds register means the
+ * oscillator stopped, and Zephyr's driver turns that into -ENODATA from
+ * rtc_get_time(). So "the supercapacitor held" and "this board has been off
+ * too long" are distinguishable at boot without guessing from an epoch floor.
+ * Note that rtc_pcf8563.c's comment on that test reads "if the first bit is 1
+ * it is ok" while the code returns -ENODATA when bit 7 is set; the CODE is
+ * right and matches the part.
+ *
+ * int1-gpios IS DELIBERATELY ABSENT. The carrier routes the interrupt to
+ * MC_RTC_INT_PIN PB_9, and the binding accepts it, but the driver only
+ * compiles the interrupt path when alarms or update callbacks are configured.
+ * Nothing here uses either yet, and a property wired in advance of its first
+ * user is a claim that something was tested.
+ */
+&i2c1 {
+	pmc_rtc: pcf8563@51 {
+		compatible = "nxp,pcf8563";
+		reg = <0x51>;
+		status = "okay";
+	};
+};
+
 &i2c3 {
 	status = "okay";
 

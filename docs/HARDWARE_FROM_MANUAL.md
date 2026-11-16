@@ -137,8 +137,30 @@ manual, so it lives in [todo.md](todo.md) rather than here.
   2.4 GHz 802.11 b/g/n, BLE 4.2 by firmware and 5.1 by hardware
 - Programmable channels are pulled up to the board 24 V supply through 10 kΩ
 
+## RTC, section 3-20
+
+The carrier has **its own** real-time clock, and this is the detail that
+changes how timekeeping should be built here:
+
+- the part is a **PCF8563T/F4** — so the 0x51 answering on the Portenta's
+  internal I2C bus is identified, not merely plausible
+- clocked by a **dedicated 32.768 kHz crystal**, Q13FC1350000400 — its own
+  oscillator, not the H7's LSI or LSE
+- a **100 mF supercapacitor**, FC0V104ZFTBR24, powers it when board power is
+  disconnected, for **"at least 48 hours"**
+
+The feature list repeats the last point as "RTC — at least 48 hours of memory
+retention", which is the number a bench instrument actually runs into: powered
+down overnight it keeps time, over a long weekend it does not. A panel that
+reports a timestamp should say which of those just happened rather than
+present a recovered clock and a resumed one identically.
+
+Its interrupt reaches the H7 on `MC_RTC_INT_PIN PB_9`. Whether CLKOUT is
+wired anywhere is not stated here.
+
 ## Open questions this page cannot answer
 
 - Which I2C bus the expanders sit on. Answered by measurement, not here.
 - Which pin drives each channel. The datasheet names no MCU pins at all.
 - The 0x36 device found on the Portenta's internal I2C bus.
+- Whether the PCF8563's CLKOUT pin is connected to anything.
