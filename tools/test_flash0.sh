@@ -142,13 +142,15 @@ run ok_comment_before.dtsi       0
 run ok_comment_inside_starred.dtsi 0
 run ok_comment_inside_bare.dtsi  0
 
-# And against the real files, which are the cases that actually matter. Both
+# And against the real files, which are the cases that actually matter. All
 # are allowed to be absent: this test must be runnable on a machine that has
-# neither the Zephyr tree nor the Giga repo.
+# neither a Zephyr tree nor any other port checked out. Set
+# FLASH0_EXTRA_DTS to a further devicetree file to include it here - the
+# sibling port this partition file derives from is the reason that exists.
 echo "real files (skipped if absent):"
 for real in \
     "$HOME/zephyrproject/zephyr/boards/arduino/portenta_h7/arduino_portenta_h7_stm32h747xx_m7.dts" \
-    "$HOME/Documents/Arduino/a-sibling-zephyr-port/zephyr/giga-partitions.dtsi" \
+    ${FLASH0_EXTRA_DTS:+"$FLASH0_EXTRA_DTS"} \
     "$here/../pmc-partitions.dtsi"
 do
     [ -f "$real" ] || { echo "skip  $(basename "$real") (not present)"; continue; }
