@@ -11,7 +11,8 @@
     --screw:#c9a227; --silk:#e8eaed; --feat:#9aa3ad;
     --live-hi:#38d16a;   /* a channel that is HIGH / energized */
     --live-lo:#2a3340;   /* a channel that is LOW / off       */
-    --live-unk:#6b7280;  /* no reading yet                    */
+    --live-unk:#e3c75a;  /* a channel with no reading yet     */
+    --nochan:#8c7118;    /* not a channel: GND, a supply pin  */
   }
   body { font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0;
          padding:1.25rem; max-width:84rem; }
@@ -30,41 +31,53 @@
           gap:0 2rem; }
 
   /* ---- the board ------------------------------------------------------ */
-  .boardwrap { background:#0b0d10; border-radius:10px; padding:.6rem;
+  .boardwrap { background:#07090b; border-radius:10px; padding:.5rem;
                margin:0 0 .6rem; overflow-x:auto; }
-  svg.board { width:100%; min-width:46rem; height:auto; display:block; }
-  .rail { fill:var(--rail); }
-  .pcb  { fill:var(--pcb); }
-  .conn { fill:var(--conn); stroke:var(--conn-lip); stroke-width:1.5; }
-  .tbody { fill:#2f2a1a; }
-  .screw { fill:var(--screw); }
-  .slot  { stroke:#6b5a14; stroke-width:1.6; }
-  .silk  { fill:var(--silk); font:9px ui-monospace,monospace; letter-spacing:.02em; }
-  .blocktitle { fill:var(--silk); font:11px ui-monospace,monospace;
-                letter-spacing:.09em; }
-  .featlbl { fill:var(--feat); font:9px ui-monospace,monospace; text-anchor:middle; }
-  .ledlbl  { fill:var(--feat); font:9px ui-monospace,monospace; }
-  .usba,.rj45,.usbm,.hdr { fill:#aab2bb; }
-  .btn { fill:#55606c; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
+  svg.board { width:100%; min-width:58rem; height:auto; display:block; }
+  .rail { fill:#3b4149; }
+  .pcb  { fill:#15181d; }
+  .conn { fill:#4e9c5f; stroke:#6fbd80; stroke-width:1.2; }
+  .connband { fill:#10140f; }
+  .guide { fill:#1d3a24; }
+  .hole  { fill:#0e1a11; }
+  .screwblk { fill:#c9a227; }
+  .screw { fill:#e3c75a; transition:fill .12s; }
+  .hit   { fill:transparent; }
+  .silk  { fill:#e8eaed; font:10px ui-monospace,monospace; letter-spacing:.02em; }
+  .blocktitle { fill:#f2f4f6; font:12px ui-monospace,monospace;
+                letter-spacing:.11em; }
+  .featlbl { fill:#9aa3ad; font:10px ui-monospace,monospace; text-anchor:middle; }
+  .ledlbl  { fill:#9aa3ad; font:10px ui-monospace,monospace; }
+  .shell { fill:#d6dade; } .shield { fill:#c3c9cf; }
+  .cavity { fill:#0d1013; } .tongue { fill:#2b2f33; }
+  .pin { fill:#c9a227; }
+  .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
+  .btnbody { fill:#aeb6bd; } .btn { fill:#3d454e; }
+  .hdr { fill:#e9ecee; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
   .led { fill:#333b45; }
-  .brand  { fill:#cfd4da; font:13px ui-monospace,monospace; text-anchor:middle;
-            letter-spacing:.14em; }
+  .brand  { fill:#cfd4da; font:14px ui-monospace,monospace; text-anchor:middle;
+            letter-spacing:.15em; }
   .brand2 { fill:#8d959e; font:10px ui-monospace,monospace; text-anchor:middle;
-            letter-spacing:.2em; }
+            letter-spacing:.22em; }
 
-  /* A terminal the panel can read or drive. */
+  /* The per-channel PCB LED. Dark until the firmware says otherwise. */
+  .chled { fill:#2a1206; stroke:#000; stroke-width:.5; transition:fill .12s; }
+  .chled.on  { fill:#ff5a1f; filter:drop-shadow(0 0 3px #ff5a1f); }
+  .chled.off { fill:#2a1206; }
+
   .term { cursor:pointer; }
   .term.nochan { cursor:default; }
-  .term .screw { transition:fill .12s; }
-  .term.live-hi  .screw { fill:var(--live-hi); }
-  .term.live-lo  .screw { fill:var(--live-lo); }
-  .term.live-unk .screw { fill:var(--live-unk); }
+  .term.nochan .screw { fill:var(--nochan); }
+  .term.nochan .screwblk { fill:#9c8420; }
+  .term.live-hi .screw { fill:#38d16a; }
+  .term.live-lo .screw { fill:#7d848c; }
   .term:focus { outline:none; }
-  .term:hover .tbody, .term:focus .tbody { fill:#5a4a1e; }
-  .term.sel .tbody { fill:#7a6526; }
-  /* An UNVERIFIED mapping gets a dashed body. The panel must not render a
-     guess and a measurement identically - see tools/terminals.csv. */
-  .term.unverified .tbody { stroke:#b08900; stroke-width:1; stroke-dasharray:2 2; }
+  .term:hover .screwblk, .term:focus .screwblk { fill:#f0d978; }
+  .term.sel .screwblk { fill:#fff1a8; }
+  /* An UNVERIFIED mapping gets a dashed screw block. The panel must not
+     render a guess and a measurement identically - see tools/terminals.csv. */
+  .term.unverified .screwblk { stroke:#6b4e00; stroke-width:1;
+                               stroke-dasharray:2 2; }
 
   .legend { color:var(--dim); font-size:.8rem; margin:0 0 1.25rem;
             display:flex; gap:1.25rem; flex-wrap:wrap; }
@@ -94,7 +107,8 @@
   <span><i class="sw" style="background:var(--live-hi)"></i>high / energized</span>
   <span><i class="sw" style="background:var(--live-lo)"></i>low / off</span>
   <span><i class="sw" style="background:var(--live-unk)"></i>not read yet</span>
-  <span><i class="sw" style="background:var(--screw)"></i>not a channel</span>
+  <span><i class="sw" style="background:var(--nochan)"></i>GND / supply</span>
+  <span><i class="sw" style="background:#ff5a1f"></i>channel LED lit</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
 </p>
 
@@ -143,7 +157,6 @@ const terms = {};
 for (const g of document.querySelectorAll('.term[data-ch]')) {
   const ch = g.getAttribute('data-ch');
   (terms[ch] = terms[ch] || []).push(g);
-  g.classList.add('live-unk');
   const show = () => pick(ch, g);
   g.addEventListener('click', show);
   g.addEventListener('keydown', e => {
@@ -151,20 +164,28 @@ for (const g of document.querySelectorAll('.term[data-ch]')) {
   });
 }
 
-function pick(ch, g) {
-  if (sel) sel.classList.remove('sel');
-  sel = g; g.classList.add('sel');
+function describe(ch, g) {
   const kind = g.getAttribute('data-kind');
   const conf = g.getAttribute('data-conf');
   const v = last[ch];
-  const note = conf === 'measured'
-    ? 'confirmed at the connector'
-    : 'mapping from the published pinout, NOT yet confirmed at the connector';
-  $('pick').innerHTML =
-    `<span class="ch">${esc(ch)}</span> &middot; <span class="meta">${esc(kind)}</span>` +
-    (v === undefined ? ' &middot; <span class="dim">no reading</span>'
-                     : ` &middot; ${esc(v)}`) +
-    `<br><span class="meta">${esc(note)}</span>`;
+  return ch + '  (' + kind + ')
+' +
+         (v === undefined ? 'no reading yet' : v) + '
+' +
+         (conf === 'measured'
+            ? 'confirmed at the connector'
+            : 'pinout mapping, NOT confirmed at the connector');
+}
+
+function pick(ch, g) {
+  if (sel) sel.classList.remove('sel');
+  sel = g; g.classList.add('sel');
+  $('pick').innerHTML = describe(ch, g)
+    .split('
+')
+    .map((l, i) => i === 0 ? `<span class="ch">${esc(l)}</span>`
+                           : `<span class="meta">${esc(l)}</span>`)
+    .join('<br>');
 }
 
 let last = {};
@@ -172,12 +193,24 @@ let last = {};
 function paint(s) {
   last = {};
   for (const a of (s.ai || [])) last[a.name] = `${a.raw} raw, ${a.mv} mV`;
+  for (const d of (s.dio || [])) last[d.name] = d.level ? 'HIGH' : 'low';
+
   for (const ch in terms) {
-    const known = last[ch] !== undefined;
+    const v = last[ch];
     for (const g of terms[ch]) {
-      g.classList.toggle('live-unk', !known);
-      g.classList.remove('live-hi', 'live-lo');
+      g.classList.toggle('live-hi', v === 'HIGH');
+      g.classList.toggle('live-lo', v === 'low');
+      // THE HOVER TIP IS THE SAME TEXT AS THE PANEL BELOW. A tooltip that
+      // says what the board is, when the pointer is on one terminal of
+      // eighty, answers a question nobody asked.
+      const t = g.querySelector('title');
+      if (t) t.textContent = describe(ch, g);
     }
+  }
+  for (const el of document.querySelectorAll('.chled[data-led]')) {
+    const v = last[el.getAttribute('data-led')];
+    el.classList.toggle('on', v === 'HIGH');
+    el.classList.toggle('off', v !== 'HIGH');
   }
   if (sel) pick(sel.getAttribute('data-ch'), sel);
 }

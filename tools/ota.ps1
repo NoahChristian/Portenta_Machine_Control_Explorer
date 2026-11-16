@@ -45,7 +45,8 @@
 param(
     [string]$Ip,
     [string]$Serial,
-    [switch]$Confirm
+    [switch]$Confirm,
+    [switch]$Resume
 )
 
 $ErrorActionPreference = 'Stop'
@@ -196,6 +197,22 @@ Write-Host ("  slot0 {0}   slot1 {1}" -f `
 # subsequent upload took 18 s at 56 kB/s. Same bytes, same link - the only
 # difference is which request had to wait for 1536 KB of QSPI to be erased.
 Write-Host ""
+if ($Resume) {
+    # RESUME: the bytes are already in slot1, so do not erase and re-send them.
+    #
+    # This exists because the upload and the tool that drives it fail
+    # independently. smpmgr has timed out "waiting for request" AFTER the
+    # transfer reached 100% - the image was staged correctly and the wrapper
+    # reported failure - and the reflex of running the whole thing again
+    # erases a good image and re-sends a megabyte over WiFi at 64 kB/s to
+    # reach the state it was already in.
+    #
+    # Verify with `image state-read` before reaching for this: slot1 should
+    # already hold the version being shipped. If it does not, a plain run is
+    # the right thing.
+    Write-Host "==> resuming: slot1 is assumed already staged" -ForegroundColor Yellow
+} else {
+
 Write-Host "==> 1/5 erasing slot1" -ForegroundColor Cyan
 & $smpmgr --ip $Ip --timeout 150 image erase 1
 if ($LASTEXITCODE -ne 0) { throw "erase failed" }
@@ -206,6 +223,8 @@ Write-Host "==> 2/5 uploading to slot1" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "upload failed" }
 
 Write-Host ""
+}
+
 Write-Host "==> 3/5 reading back the staged image's hash" -ForegroundColor Cyan
 $staged = Get-State
 # The hash is printed as a multi-line repr:
