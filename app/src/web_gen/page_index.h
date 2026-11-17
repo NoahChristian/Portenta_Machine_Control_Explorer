@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "a28a83d2"
-#define PAGE_INDEX_BYTES 28666
+#define PAGE_INDEX_BUILD "dabee84e"
+#define PAGE_INDEX_BYTES 33326
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -222,7 +222,21 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
             min-height:1.2em; white-space:pre-wrap; }
   #ctlsay.bad { color:var(--bad); }
   #ctlsay.ok  { color:var(--ok); }
+
+  /* --- connector lines ---------------------------------------------------
+     Drawn on hover or focus, one at a time, NOT all at once. DO sits on the
+     bottom row so those lines are short, but AI and AO are on the top row
+     and a permanent set would cross the whole board - eleven lines over the
+     drawing they are annotating. */
+  #links { position:absolute; left:0; top:0; pointer-events:none; z-index:40;
+           overflow:visible; }
+  #links path { fill:none; stroke:var(--acc, #7cc4ff); stroke-width:1.6;
+                stroke-dasharray:4 3; opacity:.9; }
+  #links circle { fill:var(--acc, #7cc4ff); }
+  .linked { outline:2px solid var(--acc, #7cc4ff); outline-offset:1px;
+            border-radius:3px; }
 </style></head><body>
+<svg id="links" aria-hidden="true"></svg>
 
 
 <div class="ccw">
@@ -518,6 +532,93 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </p>
 
 <script>
+/* --- connector lines -------------------------------------------------
+   A control and the terminal it drives are far apart on this page, so the
+   association is invisible until something draws it. Hovering either end
+   draws a dashed line to the other and outlines both.
+
+   Positions come from getBoundingClientRect plus the page scroll, so the
+   line is in document coordinates and does not need recomputing while
+   scrolling - only when the layout actually changes. */
+(function () {
+  var svg = document.getElementById('links');
+  if (!svg || !svg.getBoundingClientRect) { return; }
+
+  function terminalFor(ch) {
+    /* The board's terminals are anchors carrying ?ch=<name>; that is already
+       the allow-list key, so no second identifier has to be kept in step. */
+    return document.querySelector('a[href="?ch=' + ch + '"]');
+  }
+
+  function box(el) {
+    var r = el.getBoundingClientRect();
+    return {
+      x: r.left + window.pageXOffset + r.width / 2,
+      y: r.top + window.pageYOffset + r.height / 2,
+      top: r.top + window.pageYOffset,
+      bot: r.top + window.pageYOffset + r.height
+    };
+  }
+
+  var marked = [];
+
+  function clear() {
+    while (svg.firstChild) { svg.removeChild(svg.firstChild); }
+    for (var i = 0; i < marked.length; i++) {
+      marked[i].classList.remove('linked');
+    }
+    marked = [];
+  }
+
+  function draw(ctl, ch) {
+    var term = terminalFor(ch);
+    if (!term) { return; }
+    clear();
+
+    svg.setAttribute('width', document.documentElement.scrollWidth);
+    svg.setAttribute('height', document.documentElement.scrollHeight);
+
+    var a = box(ctl), b = box(term);
+    var ay = (a.y > b.y) ? a.top : a.bot;
+    var by = (a.y > b.y) ? b.bot : b.top;
+    /* A cubic with vertical control points, so the line leaves each end
+       perpendicular instead of cutting diagonally across the drawing. */
+    var mid = (ay + by) / 2;
+    svg.appendChild(mk('path', {
+      d: 'M ' + a.x + ' ' + ay + ' C ' + a.x + ' ' + mid + ', ' +
+         b.x + ' ' + mid + ', ' + b.x + ' ' + by
+    }));
+    svg.appendChild(mk('circle', { cx: b.x, cy: by, r: 3 }));
+
+    ctl.classList.add('linked');
+    term.classList.add('linked');
+    marked = [ctl, term];
+  }
+
+  function mk(tag, attrs) {
+    var e = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (var k in attrs) { e.setAttribute(k, attrs[k]); }
+    return e;
+  }
+
+  window.pmcLink = function (el, ch) {
+    el.addEventListener('mouseenter', function () { draw(el, ch); });
+    el.addEventListener('focus', function () { draw(el, ch); });
+    el.addEventListener('mouseleave', clear);
+    el.addEventListener('blur', clear);
+  };
+
+  window.pmcLinkDynamic = function (el, chFn) {
+    el.addEventListener('mouseenter', function () { draw(el, chFn()); });
+    el.addEventListener('focus', function () { draw(el, chFn()); });
+    el.addEventListener('change', function () { draw(el, chFn()); });
+    el.addEventListener('mouseleave', clear);
+    el.addEventListener('blur', clear);
+  };
+
+  window.addEventListener('resize', clear);
+})();
+
 /* Controls and the AI poll. Both talk to the board; neither re-renders the
    page. The clock script below is separate and talks to nobody. */
 (function () {
@@ -577,6 +678,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         post({ do: 'set', chan: 'DO' + n, v: on ? 1 : 0 }, 'DO' + n);
       });
       dob.appendChild(btn);
+      if (window.pmcLink) { window.pmcLink(btn, 'DO' + n); }
 
       var p = document.createElement('button');
       p.type = 'button';
@@ -585,7 +687,15 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         post({ do: 'pulse', chan: 'DO' + n, ms: 200 }, 'DO' + n + ' pulse');
       });
       pub.appendChild(p);
+      if (window.pmcLink) { window.pmcLink(p, 'DO' + n); }
     })(i);
+  }
+
+  var aoch = document.getElementById('aoch');
+  if (window.pmcLinkDynamic && aoch) {
+    window.pmcLinkDynamic(aoch, function () { return aoch.value; });
+    window.pmcLinkDynamic(document.getElementById('aoset'),
+                          function () { return aoch.value; });
   }
 
   document.getElementById('aoset').addEventListener('click', function () {
@@ -601,6 +711,18 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
      seconds, one small document, and only the numbers are touched. */
   var aiTable = document.getElementById('aitable');
   if (!aiTable) { return; }
+
+  /* The AI rows link too - they are on the far side of the board from the
+     table, which is exactly why the association is worth drawing. */
+  if (window.pmcLink) {
+    var airows = aiTable.tBodies[0].rows;
+    for (var q = 0; q < airows.length; q++) {
+      (function (row) {
+        var name = row.cells[0] ? row.cells[0].textContent.trim() : '';
+        if (name) { window.pmcLink(row, name); }
+      })(airows[q]);
+    }
+  }
 
   function poll() {
     fetch('/state.json', { cache: 'no-store' })
