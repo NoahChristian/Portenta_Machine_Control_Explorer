@@ -630,3 +630,418 @@ more than 1 Mbaud here - which no industrial bus will.
 Caveat worth keeping: this is a six-inch jumper with no termination. Real
 RS485 at these rates is limited by cable length and reflections, not by either
 end of this test.
+
+## The radio has its own queues, and Zephyr's priorities never reach them
+
+**2026-11-17. This is a source trace, not a bench measurement.** It is in this
+file because it corrects a conclusion recorded here, and it names the number
+that would confirm or refute it. Nothing below was observed on hardware.
+
+The prompt was an observation worth more than the four theories that preceded
+it: a radio may not process low priority UDP when other traffic is present, so
+thread priority and radio priority are not the same thing, and the physical
+layer may be behaving differently from the scheduler.
+
+That is correct, and the chain can be read end to end in the shipped sources.
+
+### Zephyr's packet priority is discarded at the driver boundary
+
+```c
+/* zephyr/drivers/wifi/infineon/airoc_wifi.c - airoc_mgmt_send() */
+static int airoc_mgmt_send(const struct device *dev, struct net_pkt *pkt)
+{
+    ...
+    net_pkt_read(pkt, data->frame_buf, pkt_len);      /* payload only */
+    ...
+    ret = whd_network_send_ethernet_data(airoc_if, (void *)buf);
+```
+
+The payload is copied out and handed to WHD. `net_pkt_priority(pkt)` is never
+read. **No Zephyr transmit traffic class, and no thread priority, survives this
+call.** Whatever ordering the stack applied upstream ends here.
+
+### But WHD reads the DSCP byte off the wire and queues by access category
+
+```c
+/* modules/hal/infineon/whd-expansion/WHD/COMMON/src/whd_cdc_bdc.c */
+#define IPV4_DSCP_OFFSET  (15)       /* :55  - byte 1 of the IPv4 header */
+
+dscp = whd_buffer_get_current_piece_data_pointer(whd_driver, buffer)
+       + IPV4_DSCP_OFFSET;          /* :440 - read from the frame itself */
+if (*dscp != 0)
+    priority = whd_map_dscp_to_priority(whd_driver, *dscp);   /* :477 */
+```
+
+```c
+/* modules/hal/infineon/whd-expansion/WHD/COMMON/src/whd_sdpcm.c */
+#define AC_QUEUE_SIZE 64                                           /* :63  */
+static const uint8_t prio_to_ac[9] = {1, 0, 0, 1, 2, 2, 3, 3, 4};  /* :157 */
+
+ac = prio_to_ac[prio];                                             /* :634 */
+if ((header_type == DATA_HEADER) && (sdpcm_info->npkt_in_q[ac] > AC_QUEUE_SIZE))
+{
+    result = whd_buffer_release(whd_driver, buffer, WHD_NETWORK_TX);
+    ...
+    return WHD_BUFFER_ALLOC_FAIL;                                  /* :636 */
+}
+```
+
+and the drain loop takes the highest category first:
+
+```c
+for (ac = MAX_WMM_AC; ac >= 0; ac--)                               /* :512 */
+```
+
+So the radio layer **does** prioritize, it has five queues, each is 64 packets
+deep, it **drops on overflow**, and the only thing that selects a queue is the
+DSCP byte in the packet. Not the sending thread. Not the socket. The byte.
+
+### What this build therefore does
+
+`CONFIG_NET_CONTEXT_DSCP_ECN` is not set in `app/prj.conf`, no socket sets
+`IP_TOS`, and so every frame this board transmits carries DSCP 0.
+
+```
+DSCP 0  ->  priority 0  ->  prio_to_ac[0]  ->  AC 1
+```
+
+**Every packet the board sends shares one 64-deep queue.** The small SMP
+responses that acknowledge each upload chunk sit in the same FIFO as the large
+HTTP responses that carry the panel and its PNG, and when that queue is full
+the next packet is released rather than sent.
+
+### Why that would be a stall and not a slowdown
+
+SMP over UDP is lockstep. The host sends a chunk, waits for the response,
+sends the next; there is no window and no fast retransmit. Throughput is
+therefore `chunk / round-trip`, and a response that is queued behind a page
+of PNG lengthens every round trip in the transfer. A response that is
+**dropped** is not recovered by the protocol at all - it becomes a client
+timeout, which is exactly the shape of the reported symptom.
+
+Both halves fit the observations: the transfer is slow because the round trip
+is long, and it stalls because one round trip never completes.
+
+### This narrows a conclusion recorded above, and it was read wrongly
+
+The receive pool section concluded from `rxDrops=0` that "every buffer theory
+on this bench is wrong". That is too broad. `rxDrops` is `errors.rx`, which
+the AIROC driver increments on one path, in one direction: it could not get a
+buffer for an **arriving** frame. A zero there clears the receive pool and
+nothing else. It says nothing about a transmit queue in the radio driver.
+
+The counter for that path is `errors.tx`, incremented by `airoc_mgmt_send()`
+on precisely the `WHD_BUFFER_ALLOC_FAIL` return shown above - and it has been
+published in `/snapshot.json` as **`txErrs`** the whole time, beside the
+`rxDrops` that was read instead. The measurement was already on the board. The
+wrong field was read from it.
+
+### The measurement that settles it
+
+Read `txErrs` before and after an upload, with the panel open and with it
+closed. It needs no new code and no new Kconfig.
+
+- `txErrs` climbs while an upload stalls -> the access-category queue is the
+  cause, and the fix is below.
+- `txErrs` stays at zero -> this trace is a correct reading of the sources and
+  still not the cause, and the next suspect is the air itself: retries and
+  rate fallback, visible through `whd_wifi_get_counters()` and the RSSI, which
+  nothing on this board reads yet.
+
+### The lever, if it is confirmed
+
+Mark the management traffic so it stops sharing a queue with bulk traffic:
+
+```
+CONFIG_NET_CONTEXT_DSCP_ECN=y
+```
+
+then `setsockopt(fd, IPPROTO_IP, IP_TOS, ...)` on the SMP socket. The chain
+from there is already complete and was checked: `sockets_inet.c:3057` gates
+`IP_TOS` on exactly that symbol, `net_context.c:1338` moves it onto the packet,
+`ipv4.c:101` writes it into the header, and WHD reads it back out at byte 15.
+
+**The obstacle is that the transport owns its socket.**
+`zephyr/subsys/mgmt/mcumgr/transport/src/smp_udp.c:211` calls `zsock_socket()`
+and never calls `zsock_setsockopt()` for anything but DTLS, and exposes no
+hook. Reaching it means patching that transport, or adding the Kconfig option
+upstream - which is a reasonable thing to want in general, since a device
+management transport losing to a web page is not specific to this board.
+
+Checked before recommending, because this is the same shape as the power save
+call that compiled, looked right, and returned `-ENOTSUP`: an `IP_TOS` set
+without `CONFIG_NET_CONTEXT_DSCP_ECN` falls through to an error return rather
+than silently doing nothing, so that one at least fails loudly.
+
+### What it does not explain
+
+One upload failed at 25 seconds of uptime with no browser open anywhere. No
+panel traffic means nothing to fill AC 1, so this mechanism does not cover that
+case. Either there is a second cause, or that frame was lost on the air. It is
+recorded here unexplained rather than folded into the theory.
+
+## The stalled OTA is frame loss on this board's radio link (2026-11-17)
+
+**Measured, and it supersedes every software explanation above.** Four theories
+in this file blamed processor load, power save, the panel's polling and the
+receive pool. A fifth, added this morning, traced the radio's access-category
+queues through the vendor sources. All five were looking for a software cause
+for a hardware fault.
+
+Instrument: `ping` from the bench PC, which needs nothing on the board and
+cannot be confused by anything in the application.
+
+### Loss rises smoothly with frame length
+
+```
+ping -n 15 -w 1200 -l <size> <board>
+```
+
+run for each size in turn, the loop's own summary:
+
+```
+    32 bytes :   0% loss   avg 62 ms
+   200 bytes :   6% loss   avg 70 ms
+   500 bytes :  20% loss   avg 78 ms
+   800 bytes :  53% loss   avg 59 ms
+  1000 bytes :  73% loss   avg 77 ms
+  1200 bytes :  53% loss   avg 100 ms
+  1472 bytes :  53% loss   avg 80 ms
+```
+
+and the two runs that prompted the sweep, `ping`'s verbatim summary lines:
+
+```
+    Packets: Sent = 50, Received = 45, Lost = 5 (10% loss),
+    Minimum = 4ms, Maximum = 153ms, Average = 56ms        <- 32 bytes
+
+    Packets: Sent = 50, Received = 8, Lost = 42 (84% loss),
+    Minimum = 54ms, Maximum = 115ms, Average = 75ms       <- 1400 bytes
+```
+
+**No cliff at any particular size**, so this is not the MTU and not
+fragmentation. A smooth rise with frame length is what a marginal radio link
+does: a longer frame occupies the air for longer, so at a given error rate the
+chance of at least one bad bit rises with length.
+
+The round trip is the second tell. A 32-byte ping to a device on the same
+subnet averaged **62 ms**, where a healthy 2.4 GHz link gives single-digit
+milliseconds. The frames that do arrive are arriving after link-layer retries;
+the ones that do not have exhausted the retry limit.
+
+### It is this board, not this bench
+
+The control that matters, same AP, same room, same minute, same 1400-byte
+frame:
+
+| target | loss | average |
+|---|---|---|
+| this board | **73%** | 145 ms |
+| a sibling WiFi board on the same bench | 0% | 110 ms |
+| the gateway | 0% | 39 ms |
+
+Another board of the same radio family, associated to the same access point,
+loses nothing. So the access point is fine, the channel is usable, and 2.4 GHz
+congestion is not the explanation. **The fault is in this board's own RF
+path** - antenna, its connector, or the assembly between the module and the
+carrier's SMA.
+
+Which of those it is has NOT been established. It is written here as the
+remaining question, not as a finding.
+
+### Why every software theory fit, and why none of them worked
+
+A crippled antenna still associates. Association, authentication and small
+management frames are short, robust and sent at low rates, so the board joins
+the network, answers a ping, and serves a page. Only sustained transfer of
+full-size frames fails. The board therefore looks healthy in every way a
+person checks first.
+
+Specifically, this accounts for each observation that misled the sections
+above:
+
+- **`image state-read` always worked; a megabyte upload never finished.** The
+  first is one short exchange; the second is hundreds of full-size frames at
+  70-80% loss.
+- **SMP over UDP is lockstep** - one request outstanding, no window, no fast
+  retransmit. A lost frame is not recovered by the protocol, it becomes a
+  client timeout. Loss therefore shows up as a stall rather than as a
+  slowdown, which is exactly the reported symptom.
+- **59 kB/s** when a transfer did run: round trips of 60-150 ms with
+  retransmissions, in a protocol whose throughput is one chunk per round trip.
+- **`rxDrops=0` and `txErrs=0`, measured.** Both counters are blind to this by
+  construction. A frame lost on the air never reaches the driver, so there is
+  no buffer to fail to allocate and no queue to overflow. Reading zero from
+  both and concluding "not a buffer problem" was correct; concluding anything
+  about the cause was not.
+- **An upload failed at 25 seconds of uptime with no browser open.** The
+  access-category theory could not explain this one and said so. Loss
+  explains it without effort, because loss does not care what else is running.
+- **The panel-open versus panel-closed trial.** At 73% loss on full-size
+  frames, whether an upload completes is close to a coin flip. One trial each
+  way could not have meant anything. The retraction was right, for a better
+  reason than the one given for it.
+- **HTTP that took 0.13 s, 0.44 s, 4.4 s and 10 s** for the identical request
+  on an idle link, with power save read back as off. Retransmission, not load.
+
+### The lesson, which is not a new one here
+
+Every one of the five theories was a reading of source code or a plausible
+mechanism, and each was argued before it was measured. The measurement that
+settled it took four minutes, needed no firmware, and could have been run on
+the first evening. **When a network symptom is being explained, measure the
+network before reading the stack** - and run a control on a second device
+before concluding anything about the first, because a single device's numbers
+cannot distinguish a bad device from a bad environment.
+
+### Still to measure
+
+- The RSSI, which nothing on this board reads yet. `whd_wifi_get_rssi()` is
+  reachable through the interface handle already exposed for the power save
+  readback, so this is the same small addition, and it would give a number to
+  compare before and after anything is changed physically.
+- The WHD retry and failure counters via `whd_wifi_get_counters()`, which say
+  how hard the link is working for the frames that do succeed.
+- The same ping sweep over Ethernet, which shares none of the RF path and
+  would confirm the application and the OTA machinery are sound.
+
+## The radio is fine, and the frame-loss conclusion is retracted (2026-11-17)
+
+The section above concluded, from a ping sweep, that this board's own RF path
+was at fault. **That conclusion is withdrawn.** The signal strength is now
+published, and it says the opposite.
+
+### What the radio actually reports
+
+Read through `NET_REQUEST_WIFI_IFACE_STATUS`, which the AIROC driver does
+implement, and published in `/state.json` and on the panel:
+
+```
+rssi -45 dBm   rate 144.0   chan 3   mode 802.11n   state completed   psMode 0
+```
+
+**-45 dBm is a strong signal and 144 Mbps is the ceiling** for 1x1 802.11n at
+20 MHz with a short guard interval. The radio has not fallen back one step. No
+antenna fault produces those two numbers together.
+
+### And the loss is gone
+
+The same sweep that measured 0 to 73% loss re-run afterwards:
+
+```
+size      loss   avg
+    32 B    0%     9 ms
+   200 B    0%    10 ms
+   500 B    0%    21 ms
+   800 B    0%    13 ms
+  1000 B    0%     9 ms
+  1200 B    0%     8 ms
+  1472 B    0%    12 ms
+```
+
+Flat, at every size, with the round trip down roughly sixfold. `rxDrops` and
+`txErrs` both stayed at 0 throughout a 40-packet 1400-byte flood.
+
+### The control was not a control, and that is the lesson
+
+The earlier conclusion rested on one comparison: another board on "the same
+access point, same channel, same minute" losing nothing. **That board's band
+and channel were never checked.** If it is on 5 GHz, the comparison says
+nothing at all about 2.4 GHz conditions, and ambient interference on channel 3
+would explain every observation - including why the loss was real when
+measured and absent an hour later.
+
+A second board is only a control if it is on the same link. Writing "same
+access point" was an assumption typed as an observation, which is the same
+failure as the panel-polling claim retracted earlier in this file: a sentence
+that reads like evidence and is not.
+
+What the loss WAS remains unexplained. It was reproducible across two runs and
+a sweep, and it is not reproducible now. The instrumentation to catch it next
+time now exists, which is the only durable outcome.
+
+### OTA works now, and the numbers say how badly it was hurt
+
+Same command, same image size, before and after:
+
+```
+erase slot1   150 s timeout, no response     ->  OK in about 8 s
+upload        0.1% at 7.1 kB/s, abandoned    ->  completes at the default MTU
+```
+
+Four OTA cycles ran end to end over WiFi while chasing the Ethernet problem
+below. The update path is not fragile; it was starved.
+
+## Ethernet: compiled in, and the MAC will not initialize (2026-11-17)
+
+`&mac` is enabled and the drivers are in the image - `eth_stm32_hal_v2`,
+`eth_stm32_hal_common`, `mdio_stm32_hal` and `phy_mii` all build. The
+interface still does not come up, and the board says why:
+
+```
+eth: {"present":true,"rc":-19,"initRes":-5,"carrier":false,"link":false}
+```
+
+`rc -19` is this application reporting the device not ready. `initRes -5` is
+**-EIO out of `eth_initialize()` itself**, read back from
+`dev->state->init_res`.
+
+### Reading a driver's init errno on a board with no console
+
+Worth keeping as a technique. Zephyr stores every device's init return value
+in `dev->state->init_res` as a POSITIVE errno - the field's own comment says
+so, since no Zephyr errno exceeds 255. On an assembly with no console and no
+RTT, a driver that fails during init otherwise leaves **no evidence at all**,
+and this turns that silence into one number. It ended a round of guessing that
+had already produced four plausible and unmeasured explanations.
+
+### Traced as far as source allows
+
+In `eth_stm32_hal_common.c` the -EIO is `HAL_ETH_Init()` failing, and in
+`stm32h7xx_hal_eth.c` that function has exactly one realistic failure before
+any of its parameter checks: it sets `ETH_DMAMR_SWR` and spins until the bit
+clears, returning `HAL_ERROR` on timeout. **That reset cannot complete without
+the RMII receive clock**, which on this board is 50 MHz arriving on PA1 from
+the PHY - the MCU does not generate it.
+
+### Ruled out, each by test rather than by argument
+
+| suspected | how it was eliminated |
+|---|---|
+| init order - drivers running before the PHY's reset is released | real, and fixed. `CONFIG_ETH_INIT_PRIORITY` was 60 against a reset regulator at 75. Corrected to 80/81/82 and **verified in the ELF**, not assumed: `check_init_priorities.py --initlevels` shows both fixed regulators ahead of `eth_initialize`. Did not fix it. |
+| the PHY needing time to lock after reset | `startup-delay-us = <50000>` on `ethernet_phy_en`, honored by `regulator_fixed.c` with a `k_usleep`. No change. |
+| the PA1 analog switch isolating the reference clock | made a Kconfig choice and **tested both ways**. `initRes` is -5 with the switch open and -5 with it closed. Not the cause, and AI2 keeps its switch. |
+| MII selected instead of RMII | the driver passes `.MediaInterface` from `phy-connection-type`, and `HAL_ETH_Init` calls `HAL_SYSCFG_ETHInterfaceSelect(SYSCFG_ETH_RMII)` with a read-modify-write that preserves the analog switch bits. Already correct. |
+| the Ethernet clock gates | all three present in the devicetree - `stm-eth`, `mac-clk-tx`, `mac-clk-rx` on RCC 0xd8. |
+
+### What is left, and it is hardware
+
+Three questions this bench cannot answer from software, and the next step is a
+scope on PA1 or the carrier schematic:
+
+- is PJ15 actually the PHY reset on THIS carrier, or only on the board Zephyr's
+  portenta_h7 support was written against?
+- does the PHY have its own clock source, and is it gated by something?
+- is the PHY strapped to drive REF_CLK out at all?
+
+**Reported as unresolved.** The interface reports itself honestly - present,
+not ready, with the driver's own errno - rather than looking like a cable
+problem. The shield overlay previously disabled `&mac` with the note that "an
+interface nothing has ever exercised is not a feature"; it has now been
+exercised, and it does not work.
+
+### Two gotchas found on the way
+
+- **`-DCONFIG_FOO=n` persists in the CMake cache.** After the PA1 experiment, a
+  normal rebuild still produced `# CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH is not
+  set` despite `default y`. Only `-Pristine` cleared it. A one-off Kconfig
+  override silently becomes the new default for every later build in that
+  directory - and the board ran one cycle with AI2 shorted to the RMII clock
+  because of it. Check the generated `.config` after any build whose
+  configuration matters, which is the only reason this was caught.
+- **`check_init_priorities.py` fails the build on a devicetree ordering
+  violation.** The first attempt at the priority fix put MDIO ahead of the MAC;
+  the build refused it, naming both symbols, because the mdio node is a CHILD
+  of ethernet@40028000 and therefore depends on it. A gate that catches a wrong
+  init order at build time is worth knowing about on a board that cannot report
+  one at runtime.
