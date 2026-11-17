@@ -248,6 +248,33 @@
   #links circle { fill:var(--acc, #7cc4ff); }
   .linked { outline:2px solid var(--acc, #7cc4ff); outline-offset:1px;
             border-radius:3px; }
+
+  /* --- temperature ------------------------------------------------------
+     Three amber lamps over a three-position slider. The lamps are indicators
+     and nothing else: they follow the BOARD's reported mode, never the
+     slider's position, so dragging the slider does not light a lamp - the
+     board answering does. A control that lights its own indicator is a
+     control that reports what you asked for rather than what happened. */
+  .tempwrap { display:flex; gap:2rem; align-items:flex-start; flex-wrap:wrap; }
+  .modebox { border:1px solid #8884; border-radius:6px; padding:.9rem 1.2rem; }
+  .lamps { display:grid; grid-template-columns:repeat(3,1fr); gap:0;
+           width:15rem; margin-bottom:.5rem; }
+  .lamp { height:1.1rem; border-radius:2px; margin:0 .9rem;
+          background:#3a2d12; border:1px solid #6b5520;
+          box-shadow:inset 0 1px 2px #0008; transition:background .12s; }
+  .lamp.on { background:#ffb020; border-color:#ffc860;
+             box-shadow:0 0 8px #ffb02088, inset 0 1px 1px #fff4; }
+  .lampcap { display:grid; grid-template-columns:repeat(3,1fr);
+             width:15rem; font-size:.72rem; color:var(--dim);
+             text-align:center; letter-spacing:.04em; margin-bottom:.9rem; }
+  .lampcap b { color:inherit; font-weight:600; }
+  #tslider { width:15rem; margin:0; display:block; }
+  .modenote { font-size:.75rem; color:var(--dim); margin-top:.7rem;
+              max-width:17rem; line-height:1.45; }
+  #tsay { font-size:.8rem; margin-top:.6rem; min-height:1.2em; }
+  #tsay.bad { color:var(--bad); }
+  #tsay.ok  { color:var(--ok); }
+  .approx { color:#ffb020; }
 </style></head><body>
 <svg id="links" aria-hidden="true"></svg>
 
@@ -576,6 +603,58 @@
 </table>
 </div>
 
+<h2 style="font-size:.9rem;letter-spacing:.06em;color:var(--dim);
+           text-transform:uppercase;margin:2rem 0 .8rem">Temperature</h2>
+
+<div class="tempwrap">
+  <div class="modebox">
+    <div class="lamps">
+      <div class="lamp" id="lamp0"></div>
+      <div class="lamp" id="lamp1"></div>
+      <div class="lamp" id="lamp2"></div>
+    </div>
+    <div class="lampcap"><span>PT100</span><span>J</span><span>K</span></div>
+    <input type="range" id="tslider" min="0" max="2" step="1" value="2"
+           list="tmarks" aria-label="acquisition mode">
+    <datalist id="tmarks">
+      <option value="0"></option><option value="1"></option><option value="2"></option>
+    </datalist>
+    <div class="modenote">
+      One switch for the whole board, not one per channel: the carrier has a
+      single double-throw switch between the two converters.
+    </div>
+    <div id="tsay"></div>
+  </div>
+
+  <table id="ttable" style="flex:1 1 22rem;margin-top:0">
+    <caption>Channels &middot; <span class="dim"
+      style="font-weight:400;font-size:.8rem">read in rotation, not at once</span></caption>
+    <thead><tr><th>channel</th><th>state</th><th>&deg;C</th>
+      <th>cold junction</th><th>converter word</th></tr></thead>
+    <tbody>
+      <tr><td>TEMP0</td><td class="tv">-</td><td class="tv">-</td>
+          <td class="tv dim">-</td><td class="tv dim">-</td></tr>
+      <tr><td>TEMP1</td><td class="tv">-</td><td class="tv">-</td>
+          <td class="tv dim">-</td><td class="tv dim">-</td></tr>
+      <tr><td>TEMP2</td><td class="tv">-</td><td class="tv">-</td>
+          <td class="tv dim">-</td><td class="tv dim">-</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="note" style="margin-top:.9rem">
+  <b>J and K are the same chip.</b> The datasheet gives one
+  <code>MAX31855KASA+T</code> for thermocouples and describes J as that part
+  &ldquo;with software multiplication coefficient&rdquo;, so J is an
+  approximation computed from a K-type measurement, not a second front end.
+  The coefficient scales the <em>difference from the cold junction</em> rather
+  than the reported temperature &mdash; scaling the reading itself is wrong by
+  roughly the cold-junction temperature, about 5&nbsp;&deg;C in a warm room,
+  which is small enough to pass for calibration. The ratio is derived from the
+  Seebeck coefficients and has never been checked against a J probe here,
+  which is why the raw K reading is kept in the table beside it.
+</p>
+
 <table id="aitable">
   <caption>Analog inputs &middot; <span class="dim" style="font-weight:400;font-size:.8rem">updating every 2 s</span></caption>
   <thead><tr><th>channel</th><th>pad</th><th>raw</th><th>mV</th>
@@ -802,6 +881,76 @@
      server thread for every service and every client, so an event-stream
      would occupy it forever and starve the panel and the write route. Two
      seconds, one small document, and only the numbers are touched. */
+  /* --- temperature ------------------------------------------------- */
+  var slider = document.getElementById('tslider');
+  var tsay = document.getElementById('tsay');
+  var MODES = ['PT100', 'J', 'K'];
+  var lamps = [document.getElementById('lamp0'),
+               document.getElementById('lamp1'),
+               document.getElementById('lamp2')];
+
+  function lampsShow(name) {
+    /* Driven by the BOARD's reported mode, never by the slider. */
+    var k = MODES.indexOf(name);
+    for (var i = 0; i < lamps.length; i++) {
+      if (lamps[i]) { lamps[i].classList.toggle('on', i === k); }
+    }
+  }
+
+  if (slider) {
+    slider.addEventListener('change', function () {
+      var want = MODES[+slider.value];
+      tsay.textContent = 'asking for ' + want + ' ...';
+      tsay.className = '';
+      fetch('/io', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'token=' + encodeURIComponent(tok.value) +
+              '&do=tmode&mode=' + encodeURIComponent(want)
+      }).then(function (r) { return r.text(); })
+        .then(function (t) {
+          tsay.textContent = t.trim();
+          tsay.className = /^refused/.test(t) ? 'bad' : 'ok';
+          /* The lamps do not move here. The next poll reads the board's
+             own mode, and if the write was refused they stay where the
+             hardware actually is - which is the point of them. */
+        })
+        .catch(function (e) { tsay.textContent = 'request failed: ' + e;
+                              tsay.className = 'bad'; });
+    });
+  }
+
+  function tempShow(j) {
+    if (!j.temp) { return; }
+    lampsShow(j.temp.mode);
+
+    var tbl = document.getElementById('ttable');
+    if (!tbl) { return; }
+    var rows = tbl.tBodies[0].rows;
+    for (var k = 0; k < rows.length && k < j.temp.chan.length; k++) {
+      var c = j.temp.chan[k];
+      var cell = rows[k].querySelectorAll('.tv');
+      if (cell.length < 4) { continue; }
+
+      cell[0].textContent = c.state;
+      cell[0].className = 'tv ' + (c.state === 'ok' ? 'ok'
+                                 : c.state === 'open' ? 'dim' : 'bad');
+
+      /* A temperature is shown only when the converter says it has one.
+         An open channel has a number in the register and it is not a
+         temperature, so it is not rendered as one. */
+      cell[1].textContent = (c.state === 'ok')
+        ? (c.mC / 1000).toFixed(2) + (j.temp.mode === 'J' ? ' *' : '')
+        : '-';
+      cell[1].className = 'tv' + (j.temp.mode === 'J' && c.state === 'ok'
+                                  ? ' approx' : '');
+
+      cell[2].textContent = (j.temp.mode === 'PT100') ? 'n/a'
+        : (c.coldMC ? (c.coldMC / 1000).toFixed(2) : '-');
+      cell[3].textContent = c.word || '-';
+    }
+  }
+
   var aiTable = document.getElementById('aitable');
   if (!aiTable) { return; }
 
@@ -821,6 +970,7 @@
     fetch('/state.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
+        tempShow(j);
         if (!j.ai) { return; }
         /* Row order is the registry's order, which is the order the board
            reads them in - matching by position rather than by a key the

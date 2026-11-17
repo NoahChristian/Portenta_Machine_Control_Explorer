@@ -36,6 +36,7 @@
 #include "clock.h"
 #include "expander.h"
 #include "ao.h"
+#include "temp.h"
 #include "io_write.h"
 #include "page_vars.h"
 
@@ -196,6 +197,9 @@ int main(void)
 	(void)pmc_io_init();
 	(void)pmc_io_write_init();
 	(void)pmc_ao_init();
+	/* Temperature starts its own sweep thread; a failure here is
+	 * reported by the health check rather than stopping boot. */
+	(void)pmc_temp_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

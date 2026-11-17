@@ -26,6 +26,7 @@ extern "C" {
 }
 #include "io_post.h"
 #include "io_write.h"
+#include "temp.h"
 
 LOG_MODULE_REGISTER(pmc_post, LOG_LEVEL_INF);
 
@@ -195,6 +196,28 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 		const enum pmc_write_result r =
 			pmc_ao_set(chan, (uint32_t)mv, detail, sizeof(detail));
 		n = refuse("%s: %s\n", pmc_write_result_str(r), detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "tmode") == 0) {
+		/*
+		 * The acquisition mode is a property of the board, not of a
+		 * channel, so this verb takes no chan. Datasheet 3-9: one
+		 * single-pole double-throw switch chooses between the two
+		 * converters, and whichever way it is thrown applies to
+		 * whichever channel the one-hot select has enabled.
+		 */
+		char mode[8];
+
+		if (field(s_body, "mode", mode, sizeof(mode)) == nullptr) {
+			n = refuse("refused: tmode needs mode\n");
+			goto done;
+		}
+		if (pmc_temp_mode_set(mode, detail, sizeof(detail))) {
+			n = refuse("%s", detail);
+		} else {
+			n = refuse("%s", detail);
+		}
 		goto done;
 	}
 

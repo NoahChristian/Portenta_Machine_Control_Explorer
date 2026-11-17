@@ -25,6 +25,7 @@
 #include "expander.h"
 #include "health.h"
 #include "snapshot.h"
+#include "temp.h"
 
 #define AI_SWITCHES (LL_SYSCFG_ANALOG_SWITCH_PA1 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC2 | \
@@ -307,6 +308,42 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	n += snprintk(out + n, cap - n, "],\"pdio\":[");
 	for (size_t i = 0; i < PMC_PDIO_COUNT; i++) {
 		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "", s->io.pdio[i]);
+	}
+	n += snprintk(out + n, cap - n, "]},");
+
+	/*
+	 * TEMPERATURE. The mode is reported beside the readings because a
+	 * number without it is meaningless - the same channel reads a
+	 * different temperature through the other converter, and J and K come
+	 * from the same part. "sweeps" is here so a stalled rotation is
+	 * visible: three unchanging numbers and a frozen counter is a dead
+	 * thread, while three unchanging numbers and a rising counter is a
+	 * room that is not getting warmer.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"temp\":{\"mode\":\"%s\",\"ready\":%s,\"sweeps\":%u,"
+		      "\"faults\":%u,\"chan\":[",
+		      pmc_temp_mode_name(pmc_temp_mode_get()),
+		      pmc_temp_ready() ? "true" : "false",
+		      (unsigned)pmc_temp_sweeps(), (unsigned)pmc_temp_faults());
+	for (size_t i = 0; i < PMC_TEMP_COUNT; i++) {
+		struct pmc_temp_chan c;
+		const char *st = "unread";
+
+		(void)pmc_temp_get((uint8_t)i, &c);
+		switch (c.state) {
+		case PMC_T_OK:    st = "ok";    break;
+		case PMC_T_OPEN:  st = "open";  break;
+		case PMC_T_FAULT: st = "fault"; break;
+		case PMC_T_ERR:   st = "error"; break;
+		default:          st = "unread"; break;
+		}
+		n += snprintk(out + n, cap - n,
+			      "%s{\"state\":\"%s\",\"mC\":%d,\"rawMC\":%d,"
+			      "\"coldMC\":%d,\"word\":\"%08x\"}",
+			      i ? "," : "", st, (int)c.milli_c,
+			      (int)c.raw_milli_c, (int)c.cold_milli_c,
+			      (unsigned)c.raw_word);
 	}
 	n += snprintk(out + n, cap - n, "]},");
 

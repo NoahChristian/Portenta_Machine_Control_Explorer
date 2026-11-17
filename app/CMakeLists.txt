@@ -31,6 +31,7 @@ target_sources(app PRIVATE
     src/io_write.c
     src/auth.c
     src/ao.c
+    src/temp.c
     src/snapshot.c
     src/status_out.c
     src/httpd.c

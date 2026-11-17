@@ -388,6 +388,99 @@
 };
 
 /*
+ * TEMPERATURE: two front ends on one bus, fed by analog switches.
+ *
+ * Datasheet 3-9, quoted because the pin names mislead. There are exactly two
+ * converters:
+ *
+ *     MAX31855KASA+T   dedicated to thermocouples
+ *     MAX31865ATP+T    dedicated to PT100
+ *
+ * and the three channels reach them through
+ *
+ *     "A single low-ohmic single-pole double-throw analog switch NX3L4053HR
+ *      which is switching between one front end or the other"
+ *     "Three quadruple single pole single throw analog switches TMUX1511RSVR
+ *      which are switching the active channel between the three available"
+ *
+ * So SEL0/SEL1/SEL2 are ONE-HOT CHANNEL ENABLES, not a 3-bit binary code.
+ * This repo previously recorded them as a "shared 3-bit channel mux", which
+ * was inferred from the pin names and is wrong. Writing 0b011 to mean
+ * "channel 3" closes two switches and parallels two sensors onto one front
+ * end - it does not select a fourth channel, which does not exist.
+ *
+ * The converters are always addressable on SPI; what the switches move is
+ * which SENSOR is wired to which converter. That is why a mux change needs a
+ * dwell before the next read: the MAX31855 free-runs, so the register still
+ * holds a conversion of the PREVIOUS channel. See temp.c - it is the one
+ * detail that turns this family into a confident liar.
+ *
+ * The bus is spi2, identified because PI_0 is spi2_nss in the Portenta board
+ * definition. Note PC2/PC3 carry spi2 miso/mosi while PC2_C/PC3_C carry two
+ * of the analog inputs: they coexist only because the shield opens the SYSCFG
+ * analog switches at PRE_KERNEL_1. With those closed, this bus and the analog
+ * front end are tied together.
+ */
+&spi2 {
+	/*
+	 * NSS DROPPED ON PURPOSE. The board definition lists spi2_nss_pi0, but
+	 * PI_0 is the thermocouple converter's chip select and has to be a
+	 * GPIO this driver can drive per transfer. Leaving it in pinctrl puts
+	 * the pin in alternate function and cs-gpios would never move it.
+	 */
+	pinctrl-0 = <&spi2_sck_pi1 &spi2_miso_pc2 &spi2_mosi_pc3>;
+	pinctrl-names = "default";
+
+	cs-gpios = <&gpioi 0 GPIO_ACTIVE_LOW>,   /* MC_TC_CS  - MAX31855 */
+		   <&gpioa 6 GPIO_ACTIVE_LOW>;   /* MC_RTD_CS - MAX31865 */
+	status = "okay";
+
+	pmc_tc: max31855@0 {
+		compatible = "maxim,max31855";
+		reg = <0>;
+		/* Datasheet maximum is 5 MHz; 4 is the usual safe step down. */
+		spi-max-frequency = <4000000>;
+		status = "okay";
+	};
+
+	pmc_rtd: max31865@1 {
+		compatible = "maxim,max31865";
+		reg = <1>;
+		spi-max-frequency = <4000000>;
+
+		/* PT100, and the 400 ohm reference the MAX31865 datasheet
+		 * recommends for it. Both are properties of this carrier, not
+		 * of whatever probe someone screws on. */
+		resistance-at-zero = <100>;
+		resistance-reference = <400>;
+
+		/*
+		 * TWO-OR-FOUR WIRE, NOT THREE. This has to match how the probe
+		 * is actually wired, and getting it wrong gives a plausible
+		 * WRONG NUMBER rather than a fault - there is no way for
+		 * software to tell. The carrier offers both: datasheet 3-11
+		 * wires a two-wire RTD across TPn/TNn, and 3-12 adds the third
+		 * wire on RTDn. Nothing is connected here yet, so this takes
+		 * the simpler wiring; add `maxim,3-wire;` when a three-wire
+		 * probe goes on, and record it in MEASURED.md.
+		 */
+		/*
+		 * 60 Hz NOTCH, BY OMITTING filter-50hz. The MAX31865's filter
+		 * rejects mains hum coupled into a long probe lead, and the
+		 * wrong one rejects nothing: it is a notch, not a low-pass.
+		 * The symptom is a reading that wanders by a fraction of a
+		 * degree in step with nothing, which looks like noise rather
+		 * than like a setting. 60 Hz is the assumption for this bench;
+		 * add `filter-50hz;` on a 50 Hz supply.
+		 *
+		 * Note the property has NO vendor prefix while `maxim,3-wire`
+		 * in the same binding does. Guessing costs a build.
+		 */
+		status = "okay";
+	};
+};
+
+/*
  * ETHERNET IS OFF, DELIBERATELY AND TEMPORARILY.
  *
  * The carrier has an RJ45 on J13 and the plan is to use it. But with no cable
