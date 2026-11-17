@@ -41,9 +41,19 @@ DEFAULT_LIB = REPO.parent / "Arduino_HTTP_HTML"
 
 # The page carries the board drawing, so it is bigger than a page of tables and
 # smaller than the 62 KB of flat SVG the previous design embedded. 32768 is the
-# tool's default and this page is already past it; 65536 leaves room for the
-# write controls M4 adds without the budget becoming a thing nobody reads.
-BUDGET = 65536
+# tool's default and this page is already past it.
+#
+# RAISED FROM 65536 ON 2026-11-16, DELIBERATELY. That figure was chosen to
+# leave room for "the write controls M4 adds"; since then the page has gained
+# the temperature panel, a wire-level serial terminal and a Modbus decoder,
+# and it was within 7 bytes of the limit. The failure mode that mattered was
+# not the size - it was that the response to hitting the limit became shaving
+# words off comments, which trades documentation for a number nobody chose
+# deliberately.
+#
+# 98304 is 50% more, still small enough that a careless addition is noticed,
+# and roughly 6% of slot0 on a board at 65%.
+BUDGET = 98304
 
 
 def main() -> int:

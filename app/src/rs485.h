@@ -44,6 +44,34 @@ struct pmc_485_cfg {
 
 int pmc_rs485_init(void);
 
+/*
+ * DIAGNOSTIC: drive one transceiver control pin directly.
+ *
+ * Exists because polarity is not guessable and guessing costs a flash each
+ * time. /RE on this board turned out to be active low after this code had
+ * driven it high all session, and the board was deaf the whole time with
+ * nothing able to say so - an idle bus and a muted receiver produce the same
+ * evidence, which is none. Rather than repeat that discovery once per pin,
+ * every control line is reachable from the shell so the right combination can
+ * be swept rather than argued about.
+ *
+ * Names: de, re, en, rs232, term, fdterm, slew, hf.
+ */
+bool pmc_rs485_pin_set(const char *name, int value, char *detail, size_t cap);
+
+/*
+ * DIAGNOSTIC: shift bytes out of the UART and touch NOTHING else - no driver
+ * enable, no receiver enable, no turnaround. Whatever the control pins were
+ * left at is what the transceiver sees.
+ *
+ * This exists so that pin polarity can be established by experiment instead
+ * of by argument. pmc_rs485_send() asserts DE itself, which makes it useless
+ * for deciding whether asserting DE is the right thing to do - the test and
+ * the assumption are the same line of code. This separates them.
+ */
+int pmc_rs485_send_raw(const uint8_t *buf, size_t len, char *detail,
+		       size_t cap);
+
 void pmc_rs485_cfg_get(struct pmc_485_cfg *out);
 bool pmc_rs485_cfg_set(const struct pmc_485_cfg *in, char *detail, size_t cap);
 

@@ -716,6 +716,7 @@
       <input type="number" id="mcount" min="0" max="2000" value="1"
              style="width:4.6rem" title="quantity, or the value for 05/06">
       <button type="button" id="mbuild">build</button>
+      <button type="button" id="mdecode">decode</button>
     </div>
 
     <div class="row"><label for="txhex">send</label></div>
@@ -1095,6 +1096,19 @@
         f.map(hx).join(' ').toUpperCase();
       termNote('built: ' + (func === 5 || func === 6 ? 'write' : 'read') +
            ', ' + f.length + ' bytes, CRC appended');
+    });
+  }
+
+  /* Decode without sending: no token, no bus. A wrong CRC looks exactly
+     like a device that is not there, so checking first is cheap. */
+  var mdec = document.getElementById('mdecode');
+  if (mdec) {
+    mdec.addEventListener('click', function () {
+      var b = hexToBytes(document.getElementById('txhex').value);
+
+      if (!b.length) { termNote('nothing to decode', true); return; }
+      renderFrame(b, 't', '-- decoded, not sent --');
+      termNote('decoded ' + b.length + ' bytes, bus untouched');
     });
   }
 

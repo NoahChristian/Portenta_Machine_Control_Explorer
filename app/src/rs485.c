@@ -51,10 +51,62 @@ static const struct device *const uart = DEVICE_DT_GET(DT_NODELABEL(uart4));
 #define PIN(port, n) { DEVICE_DT_GET(DT_NODELABEL(port)), n }
 struct pin { const struct device *dev; gpio_pin_t pin; };
 
-static const struct pin p_de     = PIN(gpioi, 13);  /* driver enable      */
-static const struct pin p_re     = PIN(gpioi, 10);  /* receiver enable    */
+/*
+ * RE IS ACTIVE LOW, AND GETTING THIS WRONG MADE THE BOARD DEAF.
+ *
+ * The transceiver is an SP335ECR1-L (datasheet 3-x: "SP335ECR1-L with onboard
+ * termination resistors. RS-485 is configurable to be half duplex or full
+ * duplex"). Like every RS485 transceiver, its receiver enable is /RE: LOW
+ * enables the receiver, HIGH disables it. The driver enable DE is the
+ * opposite, active high, which is exactly why the two are usually tied
+ * together and driven as one signal.
+ *
+ * This file originally drove RE HIGH and called it "receiver on". The
+ * receiver was therefore off from the moment the board booted, and every
+ * reading of zero received bytes in this project was a deaf radio rather than
+ * a quiet bus. Nothing detected it, because an idle RS485 line and a disabled
+ * receiver produce identical evidence: nothing.
+ *
+ * It was found by sending a frame with echo enabled and expecting to hear it
+ * come back. tx 8, rx 0. That test is the only thing in the session that
+ * could have distinguished the two, which is an argument for building the
+ * loopback demonstration early rather than last.
+ */
+#define RE_ENABLE  0   /* /RE low  = receiver listening */
+#define RE_DISABLE 1   /* /RE high = receiver muted     */
+
+static const struct pin p_de     = PIN(gpioi, 13);  /* driver enable, active high */
+static const struct pin p_re     = PIN(gpioi, 10);  /* /RE, ACTIVE LOW            */
 static const struct pin p_en     = PIN(gpiog, 9);   /* transceiver on     */
-static const struct pin p_rs232  = PIN(gpioa, 10);  /* protocol select    */
+/*
+ * PROTOCOL SELECT, AND IT IS THE OPPOSITE OF ITS NAME.
+ *
+ * MEASURED on this board with a jumper across the TX and RX pairs, sweeping
+ * every control pin and sending the same frame each time:
+ *
+ *     rs232 hf de | rx | hex
+ *     ------------+----+------------------
+ *     0     0  0  |  1 | 00
+ *     0     0  1  |  0 |
+ *     1     0  1  |  8 | 010300000001840a   <- the frame, exactly
+ *     1     1  1  |  8 | 010300000001840a
+ *
+ * HIGH selects RS485. LOW selects RS232. The pin was named for RS232 in the
+ * pin list this was transcribed from, and the obvious reading - drive it high
+ * for RS232 - is backwards. Driven low "for RS485", the transceiver sat in
+ * RS232 the entire time and nothing was ever put on the 485 pair, which is
+ * why a transmitter that was working perfectly produced a receiver that heard
+ * nothing.
+ *
+ * Note what the sweep also settles, since both were suspected and neither was
+ * guilty: DE is active HIGH (de=1 is the only column that works) and EN is
+ * active HIGH (en=0 produced no bytes at all in an earlier sweep). Only /RE
+ * and this pin were inverted.
+ */
+#define PROTO_RS485 1
+#define PROTO_RS232 0
+
+static const struct pin p_rs232  = PIN(gpioa, 10);  /* protocol select, see above */
 static const struct pin p_term   = PIN(gpioi, 14);  /* 120R termination   */
 static const struct pin p_fdterm = PIN(gpioi, 15);  /* full-duplex term   */
 static const struct pin p_slew   = PIN(gpiog, 14);  /* slew limiting      */
@@ -81,6 +133,35 @@ static uint8_t  rep_buf[PMC_485_TX_MAX];
 static size_t   rep_len;
 static uint32_t rep_period_ms;
 static struct k_mutex rep_lock;
+
+bool pmc_rs485_pin_set(const char *name, int value, char *detail, size_t cap)
+{
+	static const struct { const char *n; const struct pin *p; } tbl[] = {
+		{ "de", &p_de },         { "re", &p_re },
+		{ "en", &p_en },         { "rs232", &p_rs232 },
+		{ "term", &p_term },     { "fdterm", &p_fdterm },
+		{ "slew", &p_slew },     { "hf", &p_hf },
+	};
+
+	if (name == NULL) {
+		(void)snprintk(detail, cap, "refused: no pin named\n");
+		return false;
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(tbl); i++) {
+		if (strcmp(name, tbl[i].n) == 0) {
+			int rc = gpio_pin_set(tbl[i].p->dev, tbl[i].p->pin,
+					      value ? 1 : 0);
+
+			(void)snprintk(detail, cap, "%s <- %d (rc %d)\n",
+				       tbl[i].n, value ? 1 : 0, rc);
+			return rc == 0;
+		}
+	}
+	(void)snprintk(detail, cap,
+		       "refused: '%s' is not a control pin - de, re, en, "
+		       "rs232, term, fdterm, slew, hf\n", name);
+	return false;
+}
 
 static int pin_set(const struct pin *p, int v)
 {
@@ -116,15 +197,15 @@ static void apply_pins(void)
 	const bool full = (cfg.mode == PMC_485_FULL);
 
 	(void)pin_set(&p_en, 1);
-	(void)pin_set(&p_rs232, rs232 ? 1 : 0);
+	(void)pin_set(&p_rs232, rs232 ? PROTO_RS232 : PROTO_RS485);
 	(void)pin_set(&p_hf, full ? 1 : 0);
 	(void)pin_set(&p_slew, cfg.slew ? 1 : 0);
 	(void)pin_set(&p_term, cfg.term && !full ? 1 : 0);
 	(void)pin_set(&p_fdterm, cfg.term && full ? 1 : 0);
 
-	/* Idle: driver off, receiver on. */
+	/* Idle: driver off, receiver listening. */
 	(void)pin_set(&p_de, 0);
-	(void)pin_set(&p_re, 1);
+	(void)pin_set(&p_re, RE_ENABLE);
 }
 
 static int apply_uart(char *detail, size_t cap)
@@ -170,9 +251,26 @@ bool pmc_rs485_cfg_set(const struct pmc_485_cfg *in, char *detail, size_t cap)
 	 * fail, but the obviously silly values are caught first so the message
 	 * names the field.
 	 */
-	if (in->baud < 1200 || in->baud > 921600) {
+	/*
+	 * THE CEILING IS THE HARDWARE'S TO SET, NOT THIS FUNCTION'S.
+	 *
+	 * 921600 was a guess written when nothing could be tested. The SP335
+	 * is specified to 20 Mbps on RS-485, and what actually limits this
+	 * board is the UART kernel clock and its oversampling, which
+	 * uart_configure() already knows and this code does not. So the range
+	 * is opened to the transceiver's own figure and the driver is allowed
+	 * to refuse what it cannot clock - a refusal from the peripheral is a
+	 * fact, where a refusal from a constant here is only an opinion.
+	 *
+	 * Configuring successfully is not the same as working. With the TX
+	 * and RX pairs jumpered, every rate can be checked by sending a frame
+	 * and seeing whether the same bytes come back, which is the
+	 * difference between a baud the UART accepts and a baud the link
+	 * survives.
+	 */
+	if (in->baud < 1200 || in->baud > 20000000) {
 		(void)snprintk(detail, cap,
-			       "refused: baud %u outside 1200..921600\n",
+			       "refused: baud %u outside 1200..20000000\n",
 			       (unsigned)in->baud);
 		return false;
 	}
@@ -298,6 +396,34 @@ static void rx_isr(const struct device *dev, void *user)
 	}
 }
 
+int pmc_rs485_send_raw(const uint8_t *buf, size_t len, char *detail, size_t cap)
+{
+	if (len == 0 || len > PMC_485_TX_MAX) {
+		(void)snprintk(detail, cap, "refused: 1..%u bytes\n",
+			       (unsigned)PMC_485_TX_MAX);
+		return -EINVAL;
+	}
+
+	for (size_t i = 0; i < len; i++) {
+		uart_poll_out(uart, buf[i]);
+	}
+
+	const uint32_t ct = pmc_rs485_char_us() ? pmc_rs485_char_us() : 100;
+
+	for (int i = 0; i < 64; i++) {
+		if (uart_irq_tx_complete(uart) > 0) {
+			break;
+		}
+		k_busy_wait(ct);
+	}
+
+	tx_total += len;
+	(void)snprintk(detail, cap,
+		       "raw: %u bytes shifted out, control pins untouched\n",
+		       (unsigned)len);
+	return (int)len;
+}
+
 int pmc_rs485_send(const uint8_t *buf, size_t len, char *detail, size_t cap)
 {
 	if (len == 0 || len > PMC_485_TX_MAX) {
@@ -317,7 +443,7 @@ int pmc_rs485_send(const uint8_t *buf, size_t len, char *detail, size_t cap)
 	 * exactly what "Connection timed out" never tells you. Turn it off to
 	 * read a bus the way a quiet listener would.
 	 */
-	(void)pin_set(&p_re, cfg.echo ? 1 : 0);
+	(void)pin_set(&p_re, cfg.echo ? RE_ENABLE : RE_DISABLE);
 
 	/* Driver on, then the bus needs a moment before the first bit. */
 	(void)pin_set(&p_de, 1);
@@ -349,7 +475,7 @@ int pmc_rs485_send(const uint8_t *buf, size_t len, char *detail, size_t cap)
 	k_busy_wait(pmc_rs485_turnaround_us());
 
 	(void)pin_set(&p_de, 0);
-	(void)pin_set(&p_re, 1);
+	(void)pin_set(&p_re, RE_ENABLE);
 
 	tx_total += len;
 	k_mutex_unlock(&cfg_lock);

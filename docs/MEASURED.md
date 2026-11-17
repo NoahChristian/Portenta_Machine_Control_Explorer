@@ -533,3 +533,74 @@ recoverable - there is no serial console on it any more. Until this was found,
 that mechanism could be disabled by *looking at the diagnostic page*. It is the
 kind of fault only a bench instrument finds, because it requires something to
 be watching the board while the board is being updated.
+
+## RS485 end to end, and the baud ceiling (2026-11-17)
+
+With `TXP485` jumpered to `RXP485` and `TXN485` to `RXN485`, the board sends a
+Modbus RTU frame and receives its own bytes back. The whole path is proven at
+once: the UART shifts out, the SP335 drives the pair, the receiver recovers
+it, the ISR fills the ring, and `/rs485.json` returns it.
+
+```
+sent 01 03 00 00 00 01 84 0A   ->   rx 8 : 010300000001840a
+```
+
+### Two control pins were inverted, and the sweep settled four
+
+Polarity was established by experiment, not by reading a pin list. With the
+jumper fitted, every control line was driven directly and the same frame sent
+each time:
+
+```
+rs232 hf de | rx | hex
+------------+----+------------------
+0     0  0  |  1 | 00
+0     0  1  |  0 |
+1     0  1  |  8 | 010300000001840a   <- the frame, exactly
+1     1  1  |  8 | 010300000001840a
+```
+
+| pin | assumed | measured |
+|---|---|---|
+| `/RE` receiver enable | active high | **active LOW** - the board was deaf all session |
+| protocol select | low = RS485 | **HIGH = RS485**; low selects RS232 |
+| `DE` driver enable | active high | active high, correct |
+| `EN` transceiver enable | active high | active high, correct - `en=0` gives no bytes at all |
+
+Driven low "for RS485", the transceiver sat in RS232 and nothing ever reached
+the 485 pair, which is why a transmitter that was working perfectly produced a
+receiver that heard nothing.
+
+**This needed a diagnostic, not more reasoning.** `485tx` asserts `DE` itself,
+so it can never test whether asserting `DE` is correct - the test and the
+assumption are the same line of code. A `485raw` verb that shifts bytes and
+touches no control pin, plus a `485pin` verb to drive each line, separated
+them and answered in seconds what argument had not.
+
+### The baud ceiling, verified by data rather than by configuring
+
+Each rate set over the API and checked by whether the frame survives:
+
+```
+      9600 .. 1000000   INTACT, all 8 bytes
+         1500000        CORRUPT  4020000001840a   (7 bytes)
+         2000000        CORRUPT  00000030f0       (5 bytes)
+    3000000..6000000    CORRUPT, 2-3 bytes
+    8000000 and above   the peripheral refuses the rate
+```
+
+**1 Mbaud is the verified working limit**, 52x the Modbus-typical 19200.
+
+The SP335 is specified to 20 Mbps; that is the transceiver's figure and not
+this link's. UART4 cannot clock past roughly 6 M on this board.
+
+And the corruption at 1.5 M is probably OURS. The tail of the frame comes back
+correct (`01 84 0a`) while the head is lost - bytes dropped at the start, not
+uniformly scrambled. The receive ISR reads ONE byte per interrupt with
+`uart_fifo_read(dev, &b, 1)`, and at 1.5 M a byte arrives every 6.7 us. Fixing
+that before blaming the hardware is the honest next step, if anyone ever needs
+more than 1 Mbaud here - which no industrial bus will.
+
+Caveat worth keeping: this is a six-inch jumper with no termination. Real
+RS485 at these rates is limited by cable length and reflections, not by either
+end of this test.

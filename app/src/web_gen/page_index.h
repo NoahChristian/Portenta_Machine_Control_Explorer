@@ -3,7 +3,7 @@ page_index.h - GENERATED, DO NOT EDIT
 SPDX-License-Identifier: MIT
 
 Source:     ../../../web/index.html
-Regenerate: python tools/mkhtml.py --budget 65536
+Regenerate: python tools/mkhtml.py --budget 98304
 
 This page contains template tags, so its body differs per request
 and it carries NO ETag. Serve it with Cache-Control: no-store.
@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "41e25c29"
-#define PAGE_INDEX_BYTES 64963
+#define PAGE_INDEX_BUILD "4d6bc503"
+#define PAGE_INDEX_BYTES 65543
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -644,6 +644,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       <input type="number" id="mcount" min="0" max="2000" value="1"
              style="width:4.6rem" title="quantity, or the value for 05/06">
       <button type="button" id="mbuild">build</button>
+      <button type="button" id="mdecode">decode</button>
     </div>
 
     <div class="row"><label for="txhex">send</label></div>
@@ -1021,6 +1022,19 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         f.map(hx).join(' ').toUpperCase();
       termNote('built: ' + (func === 5 || func === 6 ? 'write' : 'read') +
            ', ' + f.length + ' bytes, CRC appended');
+    });
+  }
+
+  /* Decode without sending: no token, no bus. A wrong CRC looks exactly
+     like a device that is not there, so checking first is cheap. */
+  var mdec = document.getElementById('mdecode');
+  if (mdec) {
+    mdec.addEventListener('click', function () {
+      var b = hexToBytes(document.getElementById('txhex').value);
+
+      if (!b.length) { termNote('nothing to decode', true); return; }
+      renderFrame(b, 't', '-- decoded, not sent --');
+      termNote('decoded ' + b.length + ' bytes, bus untouched');
     });
   }
 
@@ -1556,5 +1570,5 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
 static_assert(sizeof(PAGE_INDEX) - 1 == PAGE_INDEX_BYTES,
               "PAGE_INDEX length disagrees with its generated size; regenerate");
-static_assert(sizeof(PAGE_INDEX) - 1 <= 65536,
-              "PAGE_INDEX outgrew its budget of 65536 bytes");
+static_assert(sizeof(PAGE_INDEX) - 1 <= 98304,
+              "PAGE_INDEX outgrew its budget of 98304 bytes");

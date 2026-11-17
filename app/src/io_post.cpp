@@ -281,7 +281,8 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 		goto done;
 	}
 
-	if (strcmp(verb, "485tx") == 0 || strcmp(verb, "485rep") == 0) {
+	if (strcmp(verb, "485tx") == 0 || strcmp(verb, "485rep") == 0 ||
+	    strcmp(verb, "485raw") == 0) {
 		/*
 		 * Bytes arrive as hex, because the whole point is sending
 		 * frames a text field cannot express - a Modbus request is
@@ -319,7 +320,10 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 			p += 2;
 		}
 
-		if (strcmp(verb, "485tx") == 0) {
+		if (strcmp(verb, "485raw") == 0) {
+			(void)pmc_rs485_send_raw(raw, len, detail,
+						 sizeof(detail));
+		} else if (strcmp(verb, "485tx") == 0) {
 			(void)pmc_rs485_send(raw, len, detail, sizeof(detail));
 		} else {
 			char ms[12];
@@ -331,6 +335,19 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 			(void)pmc_rs485_repeat_set(raw, len, period, detail,
 						   sizeof(detail));
 		}
+		n = refuse("%s", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "485pin") == 0) {
+		char pn[10], pv[4];
+
+		if (field(s_body, "p", pn, sizeof(pn)) == nullptr ||
+		    field(s_body, "v", pv, sizeof(pv)) == nullptr) {
+			n = refuse("refused: 485pin needs p and v\n");
+			goto done;
+		}
+		(void)pmc_rs485_pin_set(pn, atoi(pv), detail, sizeof(detail));
 		n = refuse("%s", detail);
 		goto done;
 	}
