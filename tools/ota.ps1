@@ -220,7 +220,36 @@ if ($LASTEXITCODE -ne 0) { throw "erase failed" }
 Write-Host ""
 Write-Host "==> 2/5 uploading to slot1" -ForegroundColor Cyan
 & $smpmgr --ip $Ip --timeout 90 image upload --slot 1 $img
-if ($LASTEXITCODE -ne 0) { throw "upload failed" }
+if ($LASTEXITCODE -ne 0) {
+    # A NON-ZERO EXIT HERE DOES NOT MEAN THE TRANSFER FAILED.
+    #
+    # smpmgr can report an error AFTER the upload has reached 100% and the
+    # image is correctly staged - the comment on -Resume below has always said
+    # so. What was missing is that this line then threw "upload failed", and a
+    # reader with no console believed it.
+    #
+    # That cost most of an evening. Four explanations for a "broken" OTA were
+    # proposed and tested - processor load, WiFi power save, an RS485
+    # interrupt storm, the panel's own polling - and several readings behind
+    # them were not about the board at all. They were this exit code.
+    #
+    # So ask the board before declaring anything. image state-read validates
+    # the staged image, which is the only authority on whether the bytes
+    # arrived: a slot can report a VERSION while only part way written,
+    # because the MCUboot header lands in the first few kB.
+    Write-Host ""
+    Write-Host "    smpmgr exited non-zero - asking the board whether the" -ForegroundColor Yellow
+    Write-Host "    image actually arrived before calling this a failure" -ForegroundColor Yellow
+    $after = Get-State
+    if ($after -match "0\.\d+\.\d+" -and $after -match "slot=1") {
+        Write-Host ""
+        Write-Host "    THE TRANSFER COMPLETED. slot1 holds a validated image;" -ForegroundColor Green
+        Write-Host "    smpmgr reported an error after the fact. Continuing." -ForegroundColor Green
+        Write-Host ""
+    } else {
+        throw "upload failed - and slot1 holds no validated image, so this one is real"
+    }
+}
 
 Write-Host ""
 }

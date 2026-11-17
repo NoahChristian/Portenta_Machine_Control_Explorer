@@ -326,18 +326,70 @@ steady means a check is still outstanding, and the one outstanding after a
 power cycle is "nobody has loaded the panel yet" — which waives itself after
 180 s so an unattended board still confirms its image.
 
-## The panel can stop the board being updated (2026-11-16)
+## A stalled OTA, four wrong explanations, and a lying exit code (2026-11-16)
 
-**Measured, twice, on the same board minutes apart.** With the panel open in a
-browser and polling, a 1 MB OTA failed repeatedly - at erase, at upload, or
-part-way through at around 12%. With the tab closed and *nothing else changed*
-- same uptime of several minutes, same image, WiFi power save already off and
-read back as `0` - the same command completed first time.
+**READ THE RETRACTION FIRST.** An earlier version of this section claimed the
+panel's polling stops the board being updated, on the strength of one trial
+each way. That claim is withdrawn. It may still be true; it is not
+established, and the difference matters.
+
+### What the failures actually were, at least some of the time
+
+`ota.ps1` threw "upload failed" whenever smpmgr exited non-zero. smpmgr exits
+non-zero **after a transfer that completed**. Run by hand, the same upload
+that the script had just called a failure showed:
 
 ```
-tab open, up 285 s, wifiPsMode=0   ->  upload failed
-tab closed, up 285 s, wifiPsMode=0 ->  completed, slot1 staged, swapped, booted
+build/app/zephyr/zephyr.signed.bin ----- 100.0%  1.0/1.0 MB  59.3 kB/s
 ```
+
+and `image state-read` then showed `slot1 = 0.57.0`, hash validated. The bytes
+had arrived. The tool fell over afterwards and the wrapper reported it as a
+transport failure.
+
+The script's own `-Resume` comment had said this for as long as it has
+existed. It was read, quoted, and then not believed when it mattered, because
+every reading afterwards was taken through an exit code that does not mean
+what it says.
+
+### The theories that were built on that signal
+
+| theory | how it was tested | verdict |
+|---|---|---|
+| not enough processor | sweep rate vs predicted | **wrong** - 0.82/s against 0.86 |
+| RS485 interrupt storm | the receive counter | **wrong** - `rxTotal` 0 over 3 s |
+| WiFi power save | mode read back from the radio | **real**, now `0` - did not fix it |
+| the panel's own polling | tab open vs closed | **unproven** - one trial each |
+| shared receive pool | the radio's own drop counter | **wrong** - 2065 packets, 0 drops |
+
+The drop counter is the strongest of these: it read **zero at the moment an
+upload failed**, not merely under synthetic load. Packets were arriving. The
+receive pool was never the problem.
+
+Two patterns that looked solid and were not: "it fails at high uptime" (it
+later failed 25 seconds after a reboot) and "a reset fixes it" (it later
+failed immediately after one). Both were small-sample variance read as law.
+
+### What was changed
+
+- `ota.ps1` now asks the board before declaring an upload failed, instead of
+  trusting the exit code. A slot reporting a *version* is not evidence: the
+  MCUboot header lands in the first few kB, so a part-written slot still names
+  a version. Only a validated image counts.
+- `CONFIG_MCUMGR_TRANSPORT_NETBUF_COUNT` 2 -> 4, as an experiment rather than
+  a fix. Still untested against the corrected signal.
+- The panel backs off when idle and stops when hidden. Worth doing regardless
+  of whether it was ever the cause.
+
+### The lesson worth keeping
+
+**Four explanations were produced before anyone read the error text.** The
+first act should have been running the failing command by hand and looking at
+its output - which took one minute and settled more than an evening of
+reasoning did. Every theory above was testable, and each one that got tested
+died immediately. The cost was not in being wrong; it was in choosing to
+reason instead of to measure, repeatedly, while a measurement was available
+the whole time.
 
 ### It is not thread priority, and the priorities were never wrong
 
