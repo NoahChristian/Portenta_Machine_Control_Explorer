@@ -43,6 +43,7 @@
 
 #include "health.h"
 #include "httpd.h"
+#include "io_post.h"
 #include "page_vars.h"
 
 LOG_MODULE_REGISTER(pmc_httpd, LOG_LEVEL_INF);
@@ -163,6 +164,39 @@ static struct http_resource_detail_dynamic state_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
+
+/* ------------------------------------------------------------- /io ------ */
+
+/*
+ * THE ONLY ROUTE THAT CHANGES ANYTHING, and the only one declared POST.
+ *
+ * bitmask_of_supported_http_methods sits in the same struct as the path, so
+ * the method restriction cannot be forgotten separately from the registration.
+ * A GET to /io is refused by the server before any of this code runs.
+ *
+ * The work is in io_post.cpp because it needs the template engine's POST-body
+ * gatherer, which is C++. This file stays C and stays a route table.
+ */
+static int io_handler(struct http_client_ctx *client,
+		      enum http_transaction_status status,
+		      const struct http_request_ctx *request_ctx,
+		      struct http_response_ctx *response_ctx, void *user_data)
+{
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+
+	return pmc_io_post_step(status, request_ctx, response_ctx);
+}
+
+static struct http_resource_detail_dynamic io_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+	},
+	.cb = io_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(io_resource, pmc_service, "/io", &io_detail);
 
 /* --------------------------------------------------------------- start --- */
 

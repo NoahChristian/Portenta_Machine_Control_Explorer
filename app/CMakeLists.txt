@@ -28,10 +28,14 @@ target_sources(app PRIVATE
     src/net.c
     src/clock.c
     src/expander.c
+    src/io_write.c
+    src/auth.c
+    src/ao.c
     src/snapshot.c
     src/status_out.c
     src/httpd.c
     src/page_vars.cpp
+    src/io_post.cpp
 )
 
 # ---------------------------------------------------------------------------
@@ -58,6 +62,8 @@ target_sources(app PRIVATE
     ${HTMLTPL_DIR}/src/HtmlTplEngine.cpp
     ${HTMLTPL_DIR}/src/HtmlTplVars.cpp
     ${HTMLTPL_DIR}/src/HtmlTplCsrf.cpp
+    ${HTMLTPL_DIR}/src/HtmlTplForm.cpp
+    ${HTMLTPL_DIR}/src/HtmlTplEntropyZephyr.cpp
     ${HTMLTPL_DIR}/src/HtmlTplServerZephyr.cpp
 )
 target_include_directories(app PRIVATE ${HTMLTPL_DIR}/src)
@@ -76,7 +82,7 @@ zephyr_compile_definitions(
   # M4 flips this to 1 and adds HtmlTplEntropyZephyr.cpp, which is the file
   # that seeds the token from sys_csrand_get(). With forms off, a registry may
   # hold 255 rows instead of HTMLTPL_MAX_VARS.
-  HTMLTPL_FORMS=0
+  HTMLTPL_FORMS=1
 
   # No filesystem template source: the page is compiled into the image and
   # parsed in place through a const char*. This drops the 256-byte read window

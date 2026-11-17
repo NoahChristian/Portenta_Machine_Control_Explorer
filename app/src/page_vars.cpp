@@ -65,6 +65,10 @@ struct pmc_term {
 	const char *conf;
 	const char *block;
 	bool        led;
+	/* What the channel IS in silicon: an MCU pad, or - for DIN and PDIO -
+	   an expander address and bit, because those are not pads and saying
+	   so is the point. */
+	const char *pad;
 };
 
 struct pmc_block {
@@ -407,8 +411,15 @@ static bool termSelect(uint16_t i)
 		       is_chan ? t.chan : "");
 
 	if (is_chan) {
+		/* THREE NAMES, because they are three different things and the
+		   confusion between them cost a day: the terminal as it is
+		   silkscreened, the software channel name, and what the channel
+		   actually is in silicon. The last is an MCU pad for most
+		   families and an expander bit for DIN and PDIO - never a pad
+		   name invented to look like one. */
 		(void)snprintf(rTTip, sizeof(rTTip),
-			       "%s (%s) on %s - %s - %s", t.chan, t.kind,
+			       "%s = %s [%s] %s on %s - %s - %s",
+			       t.label, t.chan, t.pad, t.kind,
 			       t.block, reading,
 			       measured ? "confirmed at the connector"
 					: "pinout mapping, NOT confirmed at "

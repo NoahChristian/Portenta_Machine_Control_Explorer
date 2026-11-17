@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "d74ae1a4"
-#define PAGE_INDEX_BYTES 20629
+#define PAGE_INDEX_BUILD "6fe85df8"
+#define PAGE_INDEX_BYTES 21467
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -76,13 +76,15 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
      too, and they are not. */
   .silkbox { fill:#e8eaed; }
   .silk.inv { fill:#15181d; }
-  .blocktitle { fill:#f2f4f6; font:12px ui-monospace,monospace;
+  /* Group titles are knocked out of solid white silkscreen, the same
+     inversion GND uses - not white text in an outlined box. */
+  .blocktitle { fill:#15181d; font:12px ui-monospace,monospace;
                 letter-spacing:.11em; }
   /* Each group is screened as a boxed title sitting on a thin rule that runs
      to the end of its connector. The box is filled with the board color so
      it masks the rule behind it instead of needing two line segments. */
   .grouprule { stroke:#cdd3d9; stroke-width:1.1; }
-  .groupbox  { fill:#15181d; stroke:#cdd3d9; stroke-width:1.1; }
+  .groupbox  { fill:#e8eaed; stroke:#e8eaed; stroke-width:1.1; }
   .featlbl { fill:#9aa3ad; font:10px ui-monospace,monospace;
              text-anchor:middle; }
   .ledlbl  { fill:#9aa3ad; font:10px ui-monospace,monospace; }
@@ -91,8 +93,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .badge   { fill:#e8eaed; }
   .badgetx { fill:#15181d; font:9px ui-monospace,monospace;
              text-anchor:middle; letter-spacing:.04em; }
+  /* ARDUINO is bold, PRO is not, and the trademark is a superscript.
+     One <text> with tspans so the pieces stay on one baseline. */
   .gold    { fill:#c9a227; font:18px ui-monospace,monospace;
              letter-spacing:.06em; text-anchor:middle; }
+  .gold-b  { font-weight:700; }
+  .gold-l  { font-weight:400; }
+  .gold-tm { font-size:9px; }
   .fine    { fill:#aeb6bd; font:9px ui-monospace,monospace; }
   .hdrlbl  { fill:#e8eaed; font:9px ui-monospace,monospace; }
   .cavity { fill:#0d1013; } .tongue { fill:#2b2f33; }
@@ -118,8 +125,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   /* The per-channel PCB LED. Dark until the firmware says otherwise, and the
      firmware cannot say otherwise yet - DIN/DO/PDIO are TCA6424A bits and
      nothing reads them until M2, so every one of these renders .off. */
-  .chled { fill:#2a1206; stroke:#000; stroke-width:.5; }
-  .chled.on  { fill:#ff5a1f; filter:drop-shadow(0 0 3px #ff5a1f); }
+  /* An unlit LED is still a visible component on the board, so the dark
+     state is a dim red with a rim rather than something that vanishes into
+     the substrate - at 3.4 units across, near-black reads as absent and the
+     channel looks like it has no indicator at all. */
+  .chled { fill:#7a2f28; stroke:#2a0f0c; stroke-width:.6; }
+  .chled.on  { fill:#ff3b30; stroke:#ff6b61; stroke-width:.6;
+               filter:drop-shadow(0 0 4px #ff3b30); }
 
   .term .screw { fill:var(--live-unk); }
   .term.nochan .screw { fill:var(--nochan); }
@@ -356,7 +368,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 <circle class="smai" cx="1128" cy="336" r="8"/>
 <text class="hdrlbl" x="1158" y="332">WI-FI</text>
 <text class="hdrlbl" x="1158" y="346">BLE</text>
-<text class="gold" x="1120" y="396">ARDUINOPRO</text>
+<text class="gold" x="1120" y="396"><tspan class="gold-b">ARDUINO</tspan><tspan class="gold-l">PRO</tspan><tspan class="gold-tm" dy="-7">&trade;</tspan></text>
 </g>
 
 
@@ -379,11 +391,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
 <p class="legend">
   <span><b>Terminals</b></span>
-  <span><i class="sw" style="background:#38d16a"></i>high / energized</span>
-  <span><i class="sw" style="background:#7d848c"></i>low / off</span>
+  <span><i class="sw" style="background:#38d16a"></i>logic high</span>
+  <span><i class="sw" style="background:#7d848c"></i>logic low</span>
   <span><i class="sw" style="background:#e3c75a"></i>not read yet</span>
   <span><i class="sw" style="background:#8c7118"></i>GND / supply</span>
-  <span><i class="sw" style="background:#ff5a1f"></i>channel LED lit</span>
+  <span><i class="sw" style="background:#ff3b30"></i>channel LED lit &mdash; logic state, not proof of output</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
 </p>

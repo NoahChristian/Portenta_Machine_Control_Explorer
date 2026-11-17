@@ -1,3 +1,4 @@
+#include <zephyr/dt-bindings/pwm/pwm.h>
 /*
  * Arduino Portenta Machine Control (AKX00032) carrier.
  *
@@ -311,6 +312,56 @@
 		enc1a: enc1a { gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>; label = "ENC1 A"; };
 		enc1b: enc1b { gpios = <&gpioi 7  GPIO_ACTIVE_HIGH>; label = "ENC1 B"; };
 		enc1i: enc1i { gpios = <&gpioj 10 GPIO_ACTIVE_HIGH>; label = "ENC1 I"; };
+	};
+};
+
+/*
+ * ANALOG OUT - three of the four channels.
+ *
+ * It is not a DAC. Datasheet 3-7: each channel is a PWM from the Portenta
+ * through a double low-pass filter into a non-inverting amplifier of gain 3.3,
+ * so the terminal voltage is a function of duty cycle and the smoothing is the
+ * filter's job. 20 kHz is well above what that filter passes.
+ *
+ *   AO0  PJ_11  tim1_ch2
+ *   AO1  PK_1   tim1_ch1
+ *   AO3  PC_7   tim3_ch2
+ *
+ * AO2 IS ABSENT AND CANNOT BE ADDED HERE. It is PG_7, which the datasheet says
+ * is driven by HRTIM - a different peripheral that Zephyr models not at all:
+ * no driver, no binding, and PG_7 carries no tim*_ch* function in
+ * stm32h747xihx-pinctrl.dtsi. Driving it needs hand-written LL code, so the
+ * panel reports it unavailable rather than pretending.
+ */
+&timers1 {
+	st,prescaler = <0>;
+	status = "okay";
+
+	pwm_ao01: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch1_pk1 &tim1_ch2_pj11>;
+		pinctrl-names = "default";
+	};
+};
+
+&timers3 {
+	st,prescaler = <0>;
+	status = "okay";
+
+	pwm_ao3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch2_pc7>;
+		pinctrl-names = "default";
+	};
+};
+
+/ {
+	pmc_ao: pmc-ao {
+		compatible = "pwm-leds";
+
+		ao0: ao0 { pwms = <&pwm_ao01 2 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
+		ao1: ao1 { pwms = <&pwm_ao01 1 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
+		ao3: ao3 { pwms = <&pwm_ao3  2 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
 	};
 };
 

@@ -35,6 +35,8 @@
 
 #include "clock.h"
 #include "expander.h"
+#include "ao.h"
+#include "io_write.h"
 #include "page_vars.h"
 
 
@@ -192,6 +194,8 @@ int main(void)
 	/* Configures the expander input pins. A failure here is reported and
 	   not fatal: the rest of the panel still works without DIN. */
 	(void)pmc_io_init();
+	(void)pmc_io_write_init();
+	(void)pmc_ao_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

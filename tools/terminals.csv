@@ -18,85 +18,85 @@
 # NOTHING HERE IS "measured" YET. Every row says so, and the panel renders
 # an unmeasured terminal differently, because a plausible-looking map that
 # energizes the wrong 24 V output is the failure this column exists to stop.
-row,block,order,label,chan,kind,conf
-top,PWR SUPPLY,0,24V IN,,supply_in,pinout
-top,PWR SUPPLY,1,24V IN,,supply_in,pinout
-top,PWR SUPPLY,2,GND,,gnd,pinout
-top,PWR SUPPLY,3,GND,,gnd,pinout
-top,HMI - COMM PROTOCOLS,0,24V OUT,,supply_out,pinout
-top,HMI - COMM PROTOCOLS,1,GND,,gnd,pinout
-top,HMI - COMM PROTOCOLS,2,TXP485,RS485_TXP,rs485,pinout
-top,HMI - COMM PROTOCOLS,3,TXN485,RS485_TXN,rs485,pinout
-top,HMI - COMM PROTOCOLS,4,RXP485,RS485_RXP,rs485,pinout
-top,HMI - COMM PROTOCOLS,5,RXN485,RS485_RXN,rs485,pinout
-top,HMI - COMM PROTOCOLS,6,GND,,gnd,pinout
-top,HMI - COMM PROTOCOLS,7,CANH,CAN_H,can,pinout
-top,HMI - COMM PROTOCOLS,8,CANL,CAN_L,can,pinout
-top,HMI - COMM PROTOCOLS,9,GND,,gnd,pinout
-top,TEMP PROBES,0,TP0,TEMP0_TP,temp,pinout
-top,TEMP PROBES,1,TN0,TEMP0_TN,temp,pinout
-top,TEMP PROBES,2,RTD0,TEMP0_RTD,temp,pinout
-top,TEMP PROBES,3,TP1,TEMP1_TP,temp,pinout
-top,TEMP PROBES,4,TN1,TEMP1_TN,temp,pinout
-top,TEMP PROBES,5,RTD1,TEMP1_RTD,temp,pinout
-top,TEMP PROBES,6,TP2,TEMP2_TP,temp,pinout
-top,TEMP PROBES,7,TN2,TEMP2_TN,temp,pinout
-top,TEMP PROBES,8,RTD2,TEMP2_RTD,temp,pinout
-top,ANALOG IN,0,24V OUT,,supply_out,datasheet
-top,ANALOG IN,1,AI0,AI0,ai,pinout
-top,ANALOG IN,2,GND,,gnd,datasheet
-top,ANALOG IN,3,24V OUT,,supply_out,datasheet
-top,ANALOG IN,4,AI1,AI1,ai,pinout
-top,ANALOG IN,5,GND,,gnd,datasheet
-top,ANALOG IN,6,24V OUT,,supply_out,datasheet
-top,ANALOG IN,7,AI2,AI2,ai,pinout
-top,ANALOG IN,8,GND,,gnd,datasheet
-top,ANALOG OUT,0,AO0,AO0,ao,pinout
-top,ANALOG OUT,1,GND,,gnd,pinout
-top,ANALOG OUT,2,AO1,AO1,ao,pinout
-top,ANALOG OUT,3,GND,,gnd,pinout
-top,ANALOG OUT,4,AO2,AO2,ao,pinout
-top,ANALOG OUT,5,GND,,gnd,pinout
-top,ANALOG OUT,6,AO3,AO3,ao,pinout
-top,ANALOG OUT,7,GND,,gnd,pinout
-bot,DIGITAL INPUTS,0,00,DIN0,din,pinout
-bot,DIGITAL INPUTS,1,01,DIN1,din,pinout
-bot,DIGITAL INPUTS,2,02,DIN2,din,pinout
-bot,DIGITAL INPUTS,3,03,DIN3,din,pinout
-bot,DIGITAL INPUTS,4,04,DIN4,din,pinout
-bot,DIGITAL INPUTS,5,05,DIN5,din,pinout
-bot,DIGITAL INPUTS,6,06,DIN6,din,pinout
-bot,DIGITAL INPUTS,7,07,DIN7,din,pinout
-bot,DIGITAL INPUTS,8,GND,,gnd,pinout
-bot,DIGITAL OUTPUTS,0,24V IN,,supply_in,pinout
-bot,DIGITAL OUTPUTS,1,00,DO0,do,pinout
-bot,DIGITAL OUTPUTS,2,01,DO1,do,measured
-bot,DIGITAL OUTPUTS,3,02,DO2,do,pinout
-bot,DIGITAL OUTPUTS,4,03,DO3,do,pinout
-bot,DIGITAL OUTPUTS,5,04,DO4,do,pinout
-bot,DIGITAL OUTPUTS,6,05,DO5,do,pinout
-bot,DIGITAL OUTPUTS,7,06,DO6,do,pinout
-bot,DIGITAL OUTPUTS,8,07,DO7,do,pinout
-bot,DIGITAL OUTPUTS,9,GND,,gnd,pinout
-bot,PROGRAMMABLE DIGITAL I/O,0,24V IN,,supply_in,pinout
-bot,PROGRAMMABLE DIGITAL I/O,1,00,PDIO0,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,2,01,PDIO1,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,3,02,PDIO2,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,4,03,PDIO3,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,5,04,PDIO4,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,6,05,PDIO5,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,7,06,PDIO6,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,8,07,PDIO7,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,9,08,PDIO8,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,10,09,PDIO9,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,11,10,PDIO10,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,12,11,PDIO11,pdio,pinout
-bot,PROGRAMMABLE DIGITAL I/O,13,GND,,gnd,pinout
-bot,ENCODERS,0,24V OUT,,supply_out,photo
-bot,ENCODERS,1,A0,ENC0_A,enc,pinout
-bot,ENCODERS,2,B0,ENC0_B,enc,pinout
-bot,ENCODERS,3,Z0,ENC0_Z,enc,pinout
-bot,ENCODERS,4,A1,ENC1_A,enc,pinout
-bot,ENCODERS,5,B1,ENC1_B,enc,pinout
-bot,ENCODERS,6,Z1,ENC1_Z,enc,pinout
-bot,ENCODERS,7,GND,,gnd,pinout
+row,block,order,label,chan,kind,conf,pad
+top,PWR SUPPLY,0,24V IN,,supply_in,pinout,
+top,PWR SUPPLY,1,24V IN,,supply_in,pinout,
+top,PWR SUPPLY,2,GND,,gnd,pinout,
+top,PWR SUPPLY,3,GND,,gnd,pinout,
+top,HMI - COMM PROTOCOLS,0,24V OUT,,supply_out,pinout,
+top,HMI - COMM PROTOCOLS,1,GND,,gnd,pinout,
+top,HMI - COMM PROTOCOLS,2,TXP485,RS485_TXP,rs485,pinout,PA_0 tx
+top,HMI - COMM PROTOCOLS,3,TXN485,RS485_TXN,rs485,pinout,PA_0 tx
+top,HMI - COMM PROTOCOLS,4,RXP485,RS485_RXP,rs485,pinout,PI_9 rx
+top,HMI - COMM PROTOCOLS,5,RXN485,RS485_RXN,rs485,pinout,PI_9 rx
+top,HMI - COMM PROTOCOLS,6,GND,,gnd,pinout,
+top,HMI - COMM PROTOCOLS,7,CANH,CAN_H,can,pinout,PB_8 tx
+top,HMI - COMM PROTOCOLS,8,CANL,CAN_L,can,pinout,PH_13 rx
+top,HMI - COMM PROTOCOLS,9,GND,,gnd,pinout,
+top,TEMP PROBES,0,TP0,TEMP0_TP,temp,pinout,mux SEL0-2 PD_6/PI_4/PG_10
+top,TEMP PROBES,1,TN0,TEMP0_TN,temp,pinout,mux SEL0-2
+top,TEMP PROBES,2,RTD0,TEMP0_RTD,temp,pinout,MAX31865 CS PA_6
+top,TEMP PROBES,3,TP1,TEMP1_TP,temp,pinout,mux SEL0-2 PD_6/PI_4/PG_10
+top,TEMP PROBES,4,TN1,TEMP1_TN,temp,pinout,mux SEL0-2
+top,TEMP PROBES,5,RTD1,TEMP1_RTD,temp,pinout,MAX31865 CS PA_6
+top,TEMP PROBES,6,TP2,TEMP2_TP,temp,pinout,mux SEL0-2 PD_6/PI_4/PG_10
+top,TEMP PROBES,7,TN2,TEMP2_TN,temp,pinout,mux SEL0-2
+top,TEMP PROBES,8,RTD2,TEMP2_RTD,temp,pinout,MAX31865 CS PA_6
+top,ANALOG IN,0,24V OUT,,supply_out,datasheet,
+top,ANALOG IN,1,AI0,AI0,ai,pinout,PC_3C
+top,ANALOG IN,2,GND,,gnd,datasheet,
+top,ANALOG IN,3,24V OUT,,supply_out,datasheet,
+top,ANALOG IN,4,AI1,AI1,ai,pinout,PC_2C
+top,ANALOG IN,5,GND,,gnd,datasheet,
+top,ANALOG IN,6,24V OUT,,supply_out,datasheet,
+top,ANALOG IN,7,AI2,AI2,ai,pinout,PA_1C
+top,ANALOG IN,8,GND,,gnd,datasheet,
+top,ANALOG OUT,0,AO0,AO0,ao,pinout,PJ_11 tim1_ch2
+top,ANALOG OUT,1,GND,,gnd,pinout,
+top,ANALOG OUT,2,AO1,AO1,ao,pinout,PK_1 tim1_ch1
+top,ANALOG OUT,3,GND,,gnd,pinout,
+top,ANALOG OUT,4,AO2,AO2,ao,pinout,PG_7 HRTIM - no Zephyr driver
+top,ANALOG OUT,5,GND,,gnd,pinout,
+top,ANALOG OUT,6,AO3,AO3,ao,pinout,PC_7 tim3_ch2
+top,ANALOG OUT,7,GND,,gnd,pinout,
+bot,DIGITAL INPUTS,0,00,DIN0,din,pinout,TCA6424A 0x23 P10
+bot,DIGITAL INPUTS,1,01,DIN1,din,pinout,TCA6424A 0x23 P05
+bot,DIGITAL INPUTS,2,02,DIN2,din,pinout,TCA6424A 0x23 P04
+bot,DIGITAL INPUTS,3,03,DIN3,din,pinout,TCA6424A 0x23 P02
+bot,DIGITAL INPUTS,4,04,DIN4,din,pinout,TCA6424A 0x23 P01
+bot,DIGITAL INPUTS,5,05,DIN5,din,pinout,TCA6424A 0x23 P00
+bot,DIGITAL INPUTS,6,06,DIN6,din,pinout,TCA6424A 0x23 P07
+bot,DIGITAL INPUTS,7,07,DIN7,din,pinout,TCA6424A 0x23 P06
+bot,DIGITAL INPUTS,8,GND,,gnd,pinout,
+bot,DIGITAL OUTPUTS,0,24V IN,,supply_in,pinout,
+bot,DIGITAL OUTPUTS,1,00,DO0,do,pinout,PI_6
+bot,DIGITAL OUTPUTS,2,01,DO1,do,measured,PH_9
+bot,DIGITAL OUTPUTS,3,02,DO2,do,pinout,PJ_9
+bot,DIGITAL OUTPUTS,4,03,DO3,do,pinout,PE_2
+bot,DIGITAL OUTPUTS,5,04,DO4,do,pinout,PI_3
+bot,DIGITAL OUTPUTS,6,05,DO5,do,pinout,PI_2
+bot,DIGITAL OUTPUTS,7,06,DO6,do,pinout,PD_3
+bot,DIGITAL OUTPUTS,8,07,DO7,do,pinout,PA_14
+bot,DIGITAL OUTPUTS,9,GND,,gnd,pinout,
+bot,PROGRAMMABLE DIGITAL I/O,0,24V IN,,supply_in,pinout,
+bot,PROGRAMMABLE DIGITAL I/O,1,00,PDIO0,pdio,pinout,TCA6424A 0x22 w:P00 r:P27
+bot,PROGRAMMABLE DIGITAL I/O,2,01,PDIO1,pdio,pinout,TCA6424A 0x22 w:P01 r:P26
+bot,PROGRAMMABLE DIGITAL I/O,3,02,PDIO2,pdio,pinout,TCA6424A 0x22 w:P02 r:P25
+bot,PROGRAMMABLE DIGITAL I/O,4,03,PDIO3,pdio,pinout,TCA6424A 0x22 w:P03 r:P24
+bot,PROGRAMMABLE DIGITAL I/O,5,04,PDIO4,pdio,pinout,TCA6424A 0x22 w:P07 r:P23
+bot,PROGRAMMABLE DIGITAL I/O,6,05,PDIO5,pdio,pinout,TCA6424A 0x22 w:P06 r:P22
+bot,PROGRAMMABLE DIGITAL I/O,7,06,PDIO6,pdio,pinout,TCA6424A 0x22 w:P05 r:P21
+bot,PROGRAMMABLE DIGITAL I/O,8,07,PDIO7,pdio,pinout,TCA6424A 0x22 w:P04 r:P20
+bot,PROGRAMMABLE DIGITAL I/O,9,08,PDIO8,pdio,pinout,TCA6424A 0x22 w:P10 r:P17
+bot,PROGRAMMABLE DIGITAL I/O,10,09,PDIO9,pdio,pinout,TCA6424A 0x22 w:P11 r:P16
+bot,PROGRAMMABLE DIGITAL I/O,11,10,PDIO10,pdio,pinout,TCA6424A 0x22 w:P12 r:P15
+bot,PROGRAMMABLE DIGITAL I/O,12,11,PDIO11,pdio,pinout,TCA6424A 0x22 w:P13 r:P14
+bot,PROGRAMMABLE DIGITAL I/O,13,GND,,gnd,pinout,
+bot,ENCODERS,0,24V OUT,,supply_out,photo,
+bot,ENCODERS,1,A0,ENC0_A,enc,pinout,PJ_8
+bot,ENCODERS,2,B0,ENC0_B,enc,pinout,PH_12
+bot,ENCODERS,3,Z0,ENC0_Z,enc,pinout,PH_11
+bot,ENCODERS,4,A1,ENC1_A,enc,pinout,PC_13
+bot,ENCODERS,5,B1,ENC1_B,enc,pinout,PI_7
+bot,ENCODERS,6,Z1,ENC1_Z,enc,pinout,PJ_10
+bot,ENCODERS,7,GND,,gnd,pinout,

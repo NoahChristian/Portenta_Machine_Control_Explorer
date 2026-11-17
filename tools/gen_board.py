@@ -133,6 +133,7 @@ def solve(data):
                     "chan": r["chan"],
                     "kind": r["kind"],
                     "conf": r["conf"],
+                    "pad": r.get("pad", ""),
                     "block": name,
                     "led": r["kind"] in LED_KINDS and bool(r["chan"]),
                 })
@@ -172,9 +173,9 @@ def emit(terms, blks, gaps):
     a("/* clang-format off */")
     a("")
     a("static const struct pmc_term pmc_terms[] = {")
-    a("\t/*     x      y   top  label        chan        kind      conf      block                       led */")
+    a("\t/*     x      y   top  label        chan        kind      conf      block                       led   pad */")
     for t in terms:
-        a("\t{ %7.1f, %5.1f, %-5s %-12s %-11s %-9s %-9s %-27s %s }," % (
+        a("\t{ %7.1f, %5.1f, %-5s %-12s %-11s %-9s %-9s %-27s %-6s %s }," % (
             t["x"], t["y"],
             "true," if t["top"] else "false,",
             cstr(t["label"]) + ",",
@@ -182,7 +183,8 @@ def emit(terms, blks, gaps):
             cstr(t["kind"]) + ",",
             cstr(t["conf"]) + ",",
             cstr(t["block"]) + ",",
-            "true" if t["led"] else "false"))
+            ("true," if t["led"] else "false,"),
+            cstr(t["pad"])))
     a("};")
     a("")
     a("static const struct pmc_block pmc_blocks[] = {")
