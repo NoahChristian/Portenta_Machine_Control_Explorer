@@ -73,10 +73,61 @@ enum pmc_clock_state {
 	PMC_CLOCK_HELD,       /* read cleanly: the supercapacitor carried it */
 };
 
+/*
+ * WHAT THE RADIO SAYS ABOUT THE LINK IT IS ON.
+ *
+ * Sampled on a workqueue by net.c and cached, NOT read while a page renders:
+ * the underlying call is an IOCTL over SDIO to the radio, and the panel is
+ * served by one thread. age_ms is therefore published beside the values, so a
+ * stale sample cannot be read as a current one. -1 means no sample has ever
+ * succeeded, which is not the same as a reading of zero.
+ */
+struct pmc_link {
+	int32_t  age_ms;       /* ms since the sample; -1 = never sampled */
+	int32_t  rssi;         /* dBm, as the radio reports it */
+	uint16_t chan;
+	uint16_t rate_tenths;  /* PHY rate x10, in the driver's own units */
+	uint8_t  mode;         /* enum wifi_link_mode */
+	uint8_t  state;        /* enum wifi_iface_state */
+	int16_t  rc;           /* net_mgmt() return of the last attempt */
+};
+
+/*
+ * AND THE SAME FOR THE WIRE.
+ *
+ * The Ethernet analogue of struct pmc_link, sampled by the same poller. A
+ * PHY has no RSSI, so what stands in for it is the negotiated speed and
+ * duplex: an unexpected 10BASE-T half duplex says as much about a bad cable
+ * as a poor RSSI says about a bad antenna.
+ *
+ * carrier and link are kept APART on purpose. carrier is what the MAC driver
+ * believes; link is what the PHY reports through MDIO. They disagree exactly
+ * when something interesting is wrong, and collapsing them into one "up"
+ * would hide it.
+ *
+ * NO ADDRESS AND NO HARDWARE ADDRESS HERE, deliberately - has_addr is a
+ * boolean. This panel is screenshotted into a public repository, and an
+ * address is the one thing in a screenshot that no text scan can catch.
+ */
+struct pmc_eth {
+	int32_t  age_ms;       /* ms since the sample; -1 = never sampled */
+	uint8_t  present;      /* the interface exists in this build at all */
+	uint8_t  carrier;      /* net_if_is_carrier_ok() - the MAC's view */
+	uint8_t  link_up;      /* the PHY's view, over MDIO */
+	uint8_t  full_duplex;
+	uint16_t speed_mbit;   /* 10, 100, 1000; 0 = not reported */
+	uint8_t  has_addr;     /* an IPv4 address is bound. NOT the address. */
+	int16_t  rc;           /* phy_get_link_state() return */
+	int16_t  init_res;     /* the MAC driver's OWN init errno, negated */
+};
+
 struct pmc_snapshot {
 	const char *host;
 	const char *fw;
 	uint32_t    uptime_s;
+
+	struct pmc_link link;  /* the radio link; see struct pmc_link */
+	struct pmc_eth  eth;   /* the wire; see struct pmc_eth */
 
 	uint8_t clock_state;  /* enum pmc_clock_state */
 	int64_t clock_epoch;  /* UTC seconds; 0 unless clock_state is HELD */

@@ -45,7 +45,11 @@
 
 #include <zephyr/mgmt/mcumgr/transport/smp_udp.h>
 
+#include <zephyr/net/dhcpv4.h>
+#include <zephyr/net/phy.h>
+
 #include "clock.h"
+#include "snapshot.h"
 #include "httpd.h"
 #include <zephyr/net/hostname.h>
 #include <zephyr/shell/shell.h>
@@ -232,6 +236,242 @@ static void pmc_net_disable_wifi_ps(void)
 		(after == NO_POWERSAVE_MODE) ? "powersave OFF" : "STILL ON");
 }
 
+/*
+ * THE LINK ITSELF, WHICH THIS PANEL SHOULD HAVE PUBLISHED FROM THE START.
+ *
+ * It did not, and the omission cost real time. A stalled OTA was explained
+ * five different ways from software - processor load, power save, the panel's
+ * own polling, the receive pool, and the radio's access-category queues -
+ * while the signal strength, the negotiated rate and the channel were on no
+ * page and in no log. Every other instrument on this bench reports them in
+ * its connection details.
+ *
+ * Measured on 2026-11-17, from the bench PC and needing nothing from this
+ * firmware: 0% loss on 32-byte frames and 73% on 1000-byte frames, while
+ * another board on the same access point in the same minute lost none. Loss
+ * that rises with frame length is a property of the radio link, and it is
+ * invisible to every counter the application had - a frame lost on the air
+ * never reaches the driver, so no buffer fails to allocate and no queue
+ * overflows. rxDrops and txErrs both read zero throughout.
+ *
+ * Sampled on the workqueue rather than during a render, because
+ * whd_wifi_get_ap_info() is an IOCTL over SDIO and the panel has ONE server
+ * thread. The sample's age is published with it.
+ */
+#define LINK_POLL_MS 2000
+
+static void link_poll(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(link_poll_work, link_poll);
+
+/* Defined below, next to the rest of the Ethernet handling, because it has
+ * two bodies - one real and one empty - depending on whether &mac is enabled.
+ * The poller calls it, and the poller comes first. */
+static void eth_sample(void);
+
+static struct pmc_link s_link = {
+	.age_ms = -1,
+	.rc = -EAGAIN,
+};
+static int64_t s_link_stamp;   /* 0 = no sample has ever succeeded */
+
+static void link_poll(struct k_work *work)
+{
+	struct net_if *iface = net_if_get_first_wifi();
+	struct wifi_iface_status st = { 0 };
+	int rc;
+
+	ARG_UNUSED(work);
+
+	if (iface == NULL) {
+		s_link.rc = -ENODEV;
+		goto again;
+	}
+
+	rc = net_mgmt(NET_REQUEST_WIFI_IFACE_STATUS, iface, &st, sizeof(st));
+	s_link.rc = (int16_t)rc;
+
+	if (rc == 0) {
+		s_link.rssi = (int32_t)st.rssi;
+		s_link.chan = (uint16_t)st.channel;
+		/*
+		 * The driver hands this over as a float and the units are its
+		 * own - it compares the same value against 6, 9, 12 as if
+		 * megabits. Published x10 as an integer, without reinterpreting
+		 * it, because a number passed through unchanged can be checked
+		 * against the datasheet later and a rescaled one cannot. No
+		 * float ever reaches snprintk, which would need
+		 * CBPRINTF_FP_SUPPORT to print it at all.
+		 */
+		s_link.rate_tenths = (uint16_t)(st.current_phy_tx_rate * 10.0f);
+		s_link.mode = (uint8_t)st.link_mode;
+		s_link.state = (uint8_t)st.state;
+		s_link_stamp = k_uptime_get();
+	}
+
+again:
+	eth_sample();
+	k_work_reschedule(&link_poll_work, K_MSEC(LINK_POLL_MS));
+}
+
+void pmc_net_link_read(struct pmc_link *out)
+{
+	*out = s_link;
+	out->age_ms = (s_link_stamp == 0)
+			      ? -1
+			      : (int32_t)(k_uptime_get() - s_link_stamp);
+}
+
+/*
+ * THE WIRE, WHICH EXISTS SO THE UPDATE PATH DOES NOT DEPEND ON THE RADIO.
+ *
+ * Compiled out cleanly when &mac is disabled, so re-disabling it in the
+ * shield overlay still builds and the panel then reports present=0 rather
+ * than a plausible set of zeros.
+ *
+ * THE INTERFACE CANNOT BE FOUND BY L2 TYPE. In Zephyr a WiFi interface is
+ * also an ETHERNET L2 interface, so net_if_get_first_by_type(ETHERNET) can
+ * and does return the radio - which would have this code reporting the PHY
+ * state of a device that has no PHY. Looked up by its devicetree node
+ * instead, which is unambiguous by construction.
+ */
+#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(mac))
+
+#define PMC_HAVE_ETH 1
+
+static const struct device *const s_eth_dev = DEVICE_DT_GET(DT_NODELABEL(mac));
+static const struct device *const s_eth_phy =
+	DEVICE_DT_GET(DT_PHANDLE(DT_NODELABEL(mac), phy_handle));
+
+static struct pmc_eth s_eth = { .age_ms = -1, .present = 1 };
+static int64_t s_eth_stamp;
+static bool s_eth_dhcp_on;
+
+static void eth_sample(void)
+{
+	struct net_if *iface;
+	struct phy_link_state st = { 0 };
+	int rc;
+
+	/*
+	 * THREE DISTINCT FAULTS, THREE DISTINCT CODES. They were all -ENODEV
+	 * once, and that cost a round of guessing: the panel said rc -19 and
+	 * there was no way to tell "the driver never initialized" from "it
+	 * initialized but has no net_if" from "the PHY is not answering". With
+	 * no console on this board the rc IS the diagnostic, so it has to
+	 * carry which one it was.
+	 *
+	 *   -ENODEV  the MAC driver is not ready - its init failed. Check the
+	 *            init priorities against the PHY reset regulator; see the
+	 *            block about this in app/prj.conf.
+	 *   -ENXIO   the driver is ready but has no interface bound.
+	 *   -ENOENT  the MAC is fine and the PHY device is not ready.
+	 */
+	if (!device_is_ready(s_eth_dev)) {
+		s_eth.rc = -ENODEV;
+
+		/*
+		 * WHY THE DRIVER FAILED, FROM THE DRIVER, rather than guessed.
+		 *
+		 * Zephyr keeps every device's init return value in
+		 * dev->state->init_res as a POSITIVE errno (the comment on the
+		 * field says so: init functions return negative, and since no
+		 * Zephyr errno exceeds 255 the positive value is stored in a
+		 * uint8_t). Negated here so it reads like an errno.
+		 *
+		 * This board has no console and no RTT, so a driver that fails
+		 * at init normally produces no evidence at all - which is how
+		 * this one consumed a round of hypotheses: a PHY still in reset,
+		 * a missing RMII reference clock, the SYSCFG interface-select
+		 * bits, a PHY needing a post-reset settling delay. All plausible,
+		 * none measured. The driver knew the answer the whole time.
+		 */
+		if (s_eth_dev->state != NULL) {
+			s_eth.init_res = -(int16_t)s_eth_dev->state->init_res;
+		}
+		return;
+	}
+
+	iface = net_if_lookup_by_dev(s_eth_dev);
+	if (iface == NULL) {
+		s_eth.rc = -ENXIO;
+		return;
+	}
+
+	s_eth.carrier = net_if_is_carrier_ok(iface) ? 1U : 0U;
+	s_eth.has_addr =
+		(net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED) != NULL)
+			? 1U
+			: 0U;
+
+	if (device_is_ready(s_eth_phy)) {
+		rc = phy_get_link_state(s_eth_phy, &st);
+		s_eth.rc = (int16_t)rc;
+		if (rc == 0) {
+			s_eth.link_up = st.is_up ? 1U : 0U;
+			s_eth.full_duplex =
+				PHY_LINK_IS_FULL_DUPLEX(st.speed) ? 1U : 0U;
+			if (PHY_LINK_IS_SPEED_1000M(st.speed)) {
+				s_eth.speed_mbit = 1000U;
+			} else if (PHY_LINK_IS_SPEED_100M(st.speed)) {
+				s_eth.speed_mbit = 100U;
+			} else if (PHY_LINK_IS_SPEED_10M(st.speed)) {
+				s_eth.speed_mbit = 10U;
+			} else {
+				s_eth.speed_mbit = 0U;
+			}
+		}
+	} else {
+		s_eth.rc = -ENOENT;
+	}
+
+	s_eth_stamp = k_uptime_get();
+
+	/*
+	 * DHCP IS STARTED HERE, EXPLICITLY, because nothing else in this image
+	 * starts it. CONFIG_NET_CONFIG_SETTINGS is off, so Zephyr's net_config
+	 * never runs, and the AIROC driver - unlike the esp32 and ameba ones -
+	 * does not call net_dhcpv4_start() either. Whatever gets the radio its
+	 * lease, relying on the same unidentified path for a second interface
+	 * would be guessing.
+	 *
+	 * Bound to the carrier rather than done once at boot, and re-armed on
+	 * unplug, so plugging a cable in later works without a reset - which is
+	 * the whole point of having this as a fallback.
+	 */
+	if (s_eth.carrier && !s_eth_dhcp_on) {
+		LOG_INF("eth: carrier up, starting DHCP");
+		net_dhcpv4_start(iface);
+		s_eth_dhcp_on = true;
+	} else if (!s_eth.carrier && s_eth_dhcp_on) {
+		LOG_INF("eth: carrier lost, stopping DHCP");
+		net_dhcpv4_stop(iface);
+		s_eth_dhcp_on = false;
+	}
+}
+
+void pmc_net_eth_read(struct pmc_eth *out)
+{
+	*out = s_eth;
+	out->age_ms = (s_eth_stamp == 0)
+			      ? -1
+			      : (int32_t)(k_uptime_get() - s_eth_stamp);
+}
+
+#else /* &mac disabled */
+
+#define PMC_HAVE_ETH 0
+
+static void eth_sample(void) { }
+
+void pmc_net_eth_read(struct pmc_eth *out)
+{
+	static const struct pmc_eth absent = { .age_ms = -1, .present = 0 };
+
+	*out = absent;
+}
+
+#endif
+
 static void wifi_event(struct net_mgmt_event_callback *cb,
 		       uint64_t mgmt_event, struct net_if *iface)
 {
@@ -267,6 +507,13 @@ static void wifi_event(struct net_mgmt_event_callback *cb,
 		 * There is nothing to save here and a great deal to lose.
 		 */
 		pmc_net_disable_wifi_ps();
+
+		/*
+		 * Start sampling the link. Rescheduled rather than scheduled,
+		 * because this event fires again on every reconnect and a second
+		 * k_work_schedule() on a pending item would be ignored.
+		 */
+		k_work_reschedule(&link_poll_work, K_MSEC(500));
 	}
 }
 

@@ -90,6 +90,8 @@ static struct pmc_snapshot gSnap;
 
 /* --------------------------------------------------------------- variables */
 
+static char     vLink[64];
+static char     vEth[64];
 static char     vHost[48];
 static char     vFw[24];
 static uint32_t vUptime;
@@ -164,6 +166,59 @@ static void put(char *dst, size_t cap, const char *src)
 }
 
 #define PUT(DST, SRC) put((DST), sizeof(DST), (SRC))
+
+/*
+ * The link as one line of prose, because the page wants to be readable and
+ * /state.json already carries every field numerically for anything that wants
+ * to compute. A sample that has never succeeded says so rather than rendering
+ * a plausible 0 dBm.
+ */
+static void fillLink(void)
+{
+	if (gSnap.link.age_ms < 0) {
+		PUT(vLink, "no link sample yet");
+		return;
+	}
+
+	(void)snprintk(vLink, sizeof(vLink),
+		       "%d dBm, %u.%u rate, ch %u%s",
+		       (int)gSnap.link.rssi,
+		       (unsigned)(gSnap.link.rate_tenths / 10U),
+		       (unsigned)(gSnap.link.rate_tenths % 10U),
+		       (unsigned)gSnap.link.chan,
+		       (gSnap.link.age_ms > 10000) ? " (stale)" : "");
+}
+
+/*
+ * The wire, in the same one line of prose. Each distinct state says which it
+ * is, because "eth down" covers three different situations that want three
+ * different actions: not built, built with no cable, and a cable whose PHY
+ * will not come up.
+ */
+static void fillEth(void)
+{
+	if (!gSnap.eth.present) {
+		PUT(vEth, "eth off in this build");
+		return;
+	}
+	if (gSnap.eth.age_ms < 0) {
+		PUT(vEth, "eth not sampled yet");
+		return;
+	}
+	if (!gSnap.eth.carrier) {
+		PUT(vEth, "eth no cable");
+		return;
+	}
+	if (!gSnap.eth.link_up) {
+		PUT(vEth, "eth cable in, PHY link down");
+		return;
+	}
+
+	(void)snprintk(vEth, sizeof(vEth), "eth %u %s%s",
+		       (unsigned)gSnap.eth.speed_mbit,
+		       gSnap.eth.full_duplex ? "full" : "half",
+		       gSnap.eth.has_addr ? "" : ", no address");
+}
 
 /*
  * THE CLOCK MARKER'S THREE STATES, which must not render alike.
@@ -437,6 +492,8 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	/* System. All read-only: nothing on this page is a form field, and a
 	   variable the firmware owns must say so in the registry rather than
 	   relying on there being no POST route yet. */
+	TPL_STR_RO("link", vLink)
+	TPL_STR_RO("eth", vEth)
 	TPL_STR_RO("host", vHost)
 	TPL_STR_RO("fw", vFw)
 	TPL_VAR_RO("uptime", vUptime)
@@ -653,6 +710,8 @@ extern "C" void pmc_page_init(void)
 	vUptime = gSnap.uptime_s;
 	fillClock();
 	fillRail();
+	fillLink();
+	fillEth();
 
 	const uint16_t faults = gTpl.selfTest(TPL_FROM_FLASH(PAGE_INDEX), sink);
 
@@ -692,8 +751,10 @@ extern "C" int pmc_page_step(enum http_transaction_status status,
 		PUT(vHost, gSnap.host);
 		PUT(vFw, gSnap.fw);
 		vUptime = gSnap.uptime_s;
-	fillClock();
-	fillRail();
+		fillClock();
+		fillRail();
+		fillLink();
+		fillEth();
 		pick(query, qlen);
 	}
 

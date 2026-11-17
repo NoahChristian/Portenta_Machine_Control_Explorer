@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "4d6bc503"
-#define PAGE_INDEX_BYTES 65543
+#define PAGE_INDEX_BUILD "93f7f069"
+#define PAGE_INDEX_BYTES 65594
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -326,6 +326,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <!--#v host--> &middot;
   firmware <!--#v fw--> &middot;
   up <!--#v uptime--> s &middot;
+  <!--#v link--> &middot;
+  <!--#v eth--> &middot;
   every reading on this page was taken when the page was rendered &mdash;
   nothing here polls, so reload to take a fresh set
 </p>

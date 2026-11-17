@@ -35,6 +35,14 @@
  * 0 none, 1 PM1, 2 PM2, 99 never read. */
 uint32_t pmc_net_wifi_ps_mode(void);
 
+/* Same arrangement: the radio link as net.c last sampled it, with the age of
+ * that sample. See struct pmc_link in snapshot.h for why it is cached. */
+void pmc_net_link_read(struct pmc_link *out);
+
+/* And the wire. present is 0 when &mac is disabled in the shield overlay, so
+ * the panel distinguishes "no Ethernet in this build" from "no cable". */
+void pmc_net_eth_read(struct pmc_eth *out);
+
 #define AI_SWITCHES (LL_SYSCFG_ANALOG_SWITCH_PA1 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC2 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC3)
@@ -142,6 +150,9 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	s->host = net_hostname_get();
 	s->fw = CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION;
 	s->uptime_s = (uint32_t)(k_uptime_get() / 1000);
+
+	pmc_net_link_read(&s->link);
+	pmc_net_eth_read(&s->eth);
 
 	read_clock(s);
 	pmc_clock_get(&s->drift);
@@ -334,7 +345,17 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	 * priority-0 SMP thread does not help. If rxDrops climbs while an
 	 * upload stalls, the receive pool is the cause and the fix is pool
 	 * sizing or traffic classes. If it stays at zero while an upload
-	 * fails, every buffer theory on this bench is wrong.
+	 * fails, the RECEIVE pool is cleared - and nothing beyond it.
+	 *
+	 * Read txErrs beside it. It is a different mechanism in the other
+	 * direction, and reading rxDrops alone is how it was missed once
+	 * already. The driver increments errors.tx when WHD refuses the
+	 * buffer, and WHD refuses it when the send queue for that 802.11
+	 * access category already holds 64 packets. Every frame this board
+	 * sends carries DSCP 0, so the small SMP responses and the large
+	 * HTTP responses share one such queue. A dropped SMP response in a
+	 * lockstep protocol is a client timeout - a stall, not a slowdown.
+	 * The trace is in docs/MEASURED.md.
 	 *
 	 * Either answer is worth more than another round of reasoning.
 	 */
@@ -365,6 +386,42 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	 */
 	n += snprintk(out + n, cap - n, "\"wifiPsMode\":%u,",
 		      (unsigned)pmc_net_wifi_ps_mode());
+
+	/*
+	 * THE LINK. rssi is the number that was missing while five software
+	 * theories were argued about a stalled OTA; rateTenths is the one that
+	 * says whether the radio has fallen back to a slow modulation, which is
+	 * what a marginal link does before it starts losing frames outright.
+	 * ageMs of -1 means no sample has ever succeeded - distinct from a
+	 * reading of 0 dBm, which would be a very strong signal indeed.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"link\":{\"ageMs\":%d,\"rc\":%d,\"rssi\":%d,"
+		      "\"chan\":%u,\"rateTenths\":%u,\"mode\":%u,"
+		      "\"state\":%u},",
+		      (int)s->link.age_ms, (int)s->link.rc, (int)s->link.rssi,
+		      (unsigned)s->link.chan, (unsigned)s->link.rate_tenths,
+		      (unsigned)s->link.mode, (unsigned)s->link.state);
+
+	/*
+	 * THE WIRE. carrier and link are both published because they come from
+	 * different places - the MAC driver and the PHY over MDIO - and
+	 * disagree precisely when something is wrong. hasAddr is a boolean and
+	 * not the address: this page gets screenshotted into a public
+	 * repository.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"eth\":{\"present\":%s,\"ageMs\":%d,\"rc\":%d,"
+		      "\"carrier\":%s,\"link\":%s,\"fullDuplex\":%s,"
+		      "\"speedMbit\":%u,\"hasAddr\":%s,\"initRes\":%d},",
+		      s->eth.present ? "true" : "false",
+		      (int)s->eth.age_ms, (int)s->eth.rc,
+		      s->eth.carrier ? "true" : "false",
+		      s->eth.link_up ? "true" : "false",
+		      s->eth.full_duplex ? "true" : "false",
+		      (unsigned)s->eth.speed_mbit,
+		      s->eth.has_addr ? "true" : "false",
+		      (int)s->eth.init_res);
 
 	/*
 	 * TEMPERATURE. The mode is reported beside the readings because a
