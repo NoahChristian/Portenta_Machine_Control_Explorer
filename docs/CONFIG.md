@@ -636,3 +636,79 @@ buffers.
 
 Cost is 2 x CONFIG_MCUMGR_TRANSPORT_NETBUF_SIZE, which is 2048 here: 4 kB of
 a 512 kB SRAM region.
+
+## The application's build definitions
+
+`app/CMakeLists.txt`. These are `-D` definitions rather than Kconfig, and the
+distinction matters.
+
+### Why every one of them uses `zephyr_compile_definitions()`
+
+The `HTMLTPL_*` knobs change the **layout of shared types**. `HtmlTplCursor`
+carries a window sized by `HTMLTPL_WINDOW`, and the registry's form slots are
+sized by `HTMLTPL_MAX_VARS`. A library translation unit compiled with
+different values from the registry's would **link cleanly and then disagree
+about where fields are** - which is the worst available failure mode, because
+nothing reports it. `zephyr_compile_definitions()` reaches every target;
+`target_compile_options()` on `app` alone would not.
+
+### `HTMLTPL_FORMS=1`
+
+Forms, and therefore the CSRF token, are on. `HtmlTplEntropyZephyr.cpp` is the
+file that seeds the token from `sys_csrand_get()`, and it is in the source
+list.
+
+**The comment here used to say the opposite**, and it survived long enough to
+be worth recording: it read "Forms, and therefore the CSRF token, are OFF
+because this panel is READ-ONLY today... M4 flips this to 1 and adds
+HtmlTplEntropyZephyr.cpp". The value beside that paragraph was already `1` and
+the file was already in `target_sources`. So the comment described a state the
+code had left, and it described it confidently, two lines from the evidence.
+
+This is the cost of the comment-to-code ratio these files had: prose that
+nobody re-reads when they change the line underneath it. A comment that
+contradicts its own setting is worse than no comment, because it is read as
+documentation of intent rather than as something out of date.
+
+### `HTMLTPL_SOURCE_FS=0`
+
+No filesystem template source: the page is compiled into the image and parsed
+in place through a `const char *`. That drops the 256-byte read window from
+every `HtmlTplCursor`, and more importantly drops the whole class of "the
+template on the card disagrees with the firmware" problem that a file source
+exists to manage.
+
+### `HTMLTPL_OUTBUF=1460`
+
+One TCP MSS. The render thread publishes a chunk of this size, so it is also
+the peak RAM cost of rendering a page of any length.
+
+### `CONFIG_BOOT_MAX_IMG_SECTORS=512`, in the application
+
+MCUboot's maximum image sector count is needed by the **application** as well
+as by the bootloader, because the application writes the image trailer through
+`img_mgmt` and therefore has to agree about where that trailer begins.
+`CONFIG_BOOT_MAX_IMG_SECTORS` exists only in MCUboot's own Kconfig and never
+in the application's, so without this definition the app silently takes the
+
+```c
+#define MCUBOOT_MAX_IMG_SECTORS 128
+```
+
+fallback in `mcuboot_config.h` and writes the pending magic a long way from
+where the bootloader reads it. The failure is silent and very convincing: the
+upload succeeds, the state reads back as pending, the board resets, and
+MCUboot boots the old image as though nothing had been staged.
+
+512 covers the **secondary** slot's 320 QSPI sectors of 4 KB, not the
+primary's 10 sectors of 128 KB. Deriving it from the first image's partition,
+which is what `CONFIG_BOOT_MAX_IMG_SECTORS_AUTO` does, takes the wrong end of
+an asymmetric layout. It must stay equal to the value in `mcuboot/pmc.conf`.
+
+### Arduino_HTTP_HTML is a dependency by path
+
+Not a vendored copy. The library is a sibling project with its own golden test
+suite, its own versioning and its own history, and the Zephyr port of the
+engine lives there - which is the point: a copy taken into this repository
+would be a second engine, drifting from the one whose tests actually run. It
+is a hard requirement for a build, the same way `ZEPHYR_BASE` is.
