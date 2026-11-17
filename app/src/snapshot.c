@@ -20,6 +20,7 @@
 
 #include <stm32_ll_system.h>
 
+#include "clock.h"
 #include "health.h"
 #include "snapshot.h"
 
@@ -132,6 +133,7 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	s->uptime_s = (uint32_t)(k_uptime_get() / 1000);
 
 	read_clock(s);
+	pmc_clock_get(&s->drift);
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {
@@ -226,10 +228,19 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	/* epoch is 0 unless state is "held", so a reader that only looks at the
 	 * number cannot mistake a lost clock for 1970. */
 	n += snprintk(out + n, cap - n,
-		      "\"clock\":{\"state\":\"%s\",\"epoch\":%lld},",
+		      "\"clock\":{\"state\":\"%s\",\"epoch\":%lld,",
 		      s->clock_state == PMC_CLOCK_HELD ? "held"
 			: s->clock_state == PMC_CLOCK_LOST ? "lost" : "absent",
 		      (long long)s->clock_epoch);
+
+	/* ppm is in tenths and means nothing without its span, so both travel
+	 * together and "measured" says whether either means anything yet. */
+	n += snprintk(out + n, cap - n,
+		      "\"measured\":%s,\"ppmTenths\":%d,\"spanS\":%u,"
+		      "\"setEpoch\":%lld,\"syncs\":%u,\"ntpFailures\":%u},",
+		      s->drift.valid ? "true" : "false", s->drift.ppm_tenths,
+		      s->drift.span_s, (long long)s->drift.set_epoch,
+		      s->drift.syncs, s->drift.failures);
 
 	n += snprintk(out + n, cap - n, "\"health\":[");
 	for (size_t i = 0; i < pmc_health_check_count(); i++) {

@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "84774981"
-#define PAGE_INDEX_BYTES 15015
+#define PAGE_INDEX_BUILD "f1388015"
+#define PAGE_INDEX_BYTES 19902
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -65,14 +65,36 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .screwblk { fill:#c9a227; }
   .screw { fill:#e3c75a; }
   .hit   { fill:transparent; }
-  .silk  { fill:#e8eaed; font:10px ui-monospace,monospace;
+  /* 14px, not 10. The longest terminal label is 7 characters ("24V OUT"),
+     which at this size is about 59 units of the 1300-unit viewBox - well
+     inside the ~80 units between a connector and its block title, so the
+     bigger type costs no collision. */
+  .silk  { fill:#e8eaed; font:14px ui-monospace,monospace;
            letter-spacing:.02em; }
+  /* GND, and only GND, is screened as black-on-white. Datasheet page 10
+     settles it; the product render's glare makes CANH/CANL/RTDn look boxed
+     too, and they are not. */
+  .silkbox { fill:#e8eaed; }
+  .silk.inv { fill:#15181d; }
   .blocktitle { fill:#f2f4f6; font:12px ui-monospace,monospace;
                 letter-spacing:.11em; }
+  /* Each group is screened as a boxed title sitting on a thin rule that runs
+     to the end of its connector. The box is filled with the board color so
+     it masks the rule behind it instead of needing two line segments. */
+  .grouprule { stroke:#cdd3d9; stroke-width:1.1; }
+  .groupbox  { fill:#15181d; stroke:#cdd3d9; stroke-width:1.1; }
   .featlbl { fill:#9aa3ad; font:10px ui-monospace,monospace;
              text-anchor:middle; }
   .ledlbl  { fill:#9aa3ad; font:10px ui-monospace,monospace; }
   .shell { fill:#d6dade; } .shield { fill:#c3c9cf; }
+  /* The screened badges: white boxes with black text, as on the board. */
+  .badge   { fill:#e8eaed; }
+  .badgetx { fill:#15181d; font:9px ui-monospace,monospace;
+             text-anchor:middle; letter-spacing:.04em; }
+  .gold    { fill:#c9a227; font:18px ui-monospace,monospace;
+             letter-spacing:.06em; text-anchor:middle; }
+  .fine    { fill:#aeb6bd; font:9px ui-monospace,monospace; }
+  .hdrlbl  { fill:#e8eaed; font:9px ui-monospace,monospace; }
   .cavity { fill:#0d1013; } .tongue { fill:#2b2f33; }
   .pin { fill:#c9a227; }
   .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
@@ -131,8 +153,21 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .ccw-d:after { content:""; position:absolute; left:0; right:0; top:50%;
                  height:1px; background:#8886; }
   .ccw-c { color:var(--dim); font-size:16px; padding:0 1px; }
-  .ccw-l { color:var(--dim); font-size:12px; letter-spacing:.04em;
-           text-transform:uppercase; margin-top:3px; }
+  /* Bigger than the digits' caption would normally be, because this line
+     is the one that says whether the time above it means anything. A wrap
+     limit keeps a long state off the board drawing on a narrow window. */
+  .ccw-l { color:var(--dim); font-size:15px; letter-spacing:.03em;
+           text-transform:uppercase; margin-top:5px; line-height:1.25;
+           max-width:13rem; margin-left:auto; }
+  /* THE MARKER IS FIXED, SO IT IS OUT OF FLOW AND NOTHING MAKES ROOM FOR IT.
+     The heading ran straight under the label - "nothing here polls" and
+     "UTC - SET FROM NTP" overprinted each other, which looked like a
+     rendering fault rather than two elements in the same place. Reserved
+     here rather than by shrinking the marker, because the marker is the
+     thing that has to stay readable across the room. */
+  @media (min-width:621px) {
+    h1, .sub { padding-right:15rem; }
+  }
   /* Fixed position puts it over the board drawing on a narrow screen, where
      the board is the thing someone came to look at. */
   @media (max-width:620px) {
@@ -176,9 +211,17 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <rect class="connband" x="0" y="30" height="18"
         data-tpl-attr="width bW" width="282"/>
   <!--#if bTop-->
-  <text class="blocktitle" x="1" y="184"><!--#v bName--></text>
+  <line class="grouprule" x1="0" y1="189" y2="189"
+        data-tpl-attr="x2 bW" x2="282"/>
+  <rect class="groupbox" x="-4" y="169" height="20" rx="2"
+        data-tpl-attr="width bTitleW" width="180"/>
+  <text class="blocktitle" x="4" y="183"><!--#v bName--></text>
   <!--#else-->
-  <text class="blocktitle" x="1" y="-100"><!--#v bName--></text>
+  <line class="grouprule" x1="0" y1="-73" y2="-73"
+        data-tpl-attr="x2 bW" x2="282"/>
+  <rect class="groupbox" x="-4" y="-93" height="20" rx="2"
+        data-tpl-attr="width bTitleW" width="180"/>
+  <text class="blocktitle" x="4" y="-79"><!--#v bName--></text>
   <!--#/-->
 </g>
 <!--#/each-->
@@ -189,22 +232,34 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
  <a data-tpl-attr="href tHref" href="?ch=">
   <g data-tpl-attr="class tClass" class="term k-din unverified">
    <title><!--#v tTip--></title>
-   <path class="guide" d="M -6.5 11 a 7 6 0 0 0 13 0 z"/>
-   <rect class="hole" x="-6.5" y="60" width="13" height="15" rx="2"/>
-   <rect class="hit" x="-13.5" y="0" width="27" height="88"/>
-   <rect class="screwblk" x="-7.5" y="31" width="15" height="15" rx="2"/>
-   <circle class="screw" cx="0" cy="38.5" r="4.6"/>
+   
+   <g data-tpl-attr="transform tBody" transform="rotate(180 0 44)">
+    <path class="guide" d="M -6.5 11 a 7 6 0 0 0 13 0 z"/>
+    <rect class="hole" x="-6.5" y="60" width="13" height="15" rx="2"/>
+    <rect class="hit" x="-13.5" y="0" width="27" height="88"/>
+    <rect class="screwblk" x="-7.5" y="31" width="15" height="15" rx="2"/>
+    <circle class="screw" cx="0" cy="38.5" r="4.6"/>
+   </g>
   </g>
  </a>
  <!--#if tTop-->
- <text class="silk" x="0" y="95" text-anchor="start"
-       transform="rotate(-90 0 95)"><!--#v tLabel--></text>
+ 
+ <!--#if tBox-->
+ <rect class="silkbox" x="-30" y="95" width="32" height="15" rx="1.5"
+       transform="rotate(-90 0 106)"/>
+ <!--#/-->
+ <text data-tpl-attr="class tSilkCls" class="silk" x="0" y="106"
+       text-anchor="end" transform="rotate(-90 0 106)"><!--#v tLabel--></text>
  <!--#if tLed-->
- <circle data-tpl-attr="class tLedCls" class="chled" cx="0" cy="97" r="3.4"/>
+ <circle data-tpl-attr="class tLedCls" class="chled" cx="0" cy="96" r="3.4"/>
  <!--#/-->
  <!--#else-->
- <text class="silk" x="0" y="-20" text-anchor="end"
-       transform="rotate(-90 0 -20)"><!--#v tLabel--></text>
+ <!--#if tBox-->
+ <rect class="silkbox" x="-2" y="-31" width="32" height="15" rx="1.5"
+       transform="rotate(-90 0 -20)"/>
+ <!--#/-->
+ <text data-tpl-attr="class tSilkCls" class="silk" x="0" y="-20"
+       text-anchor="start" transform="rotate(-90 0 -20)"><!--#v tLabel--></text>
  <!--#if tLed-->
  <circle data-tpl-attr="class tLedCls" class="chled" cx="0" cy="-9" r="3.4"/>
  <!--#/-->
@@ -214,53 +269,102 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
 
 <g class="feat">
-<rect class="shell" x="222" y="272" width="52" height="132" rx="3"/>
-<rect class="cavity" x="230" y="286" width="36" height="104" rx="2"/>
-<rect class="tongue" x="236" y="300" width="24" height="76"/>
-<text class="featlbl" x="248" y="424">USB A &middot; J15</text>
-<rect class="shield" x="352" y="270" width="136" height="136" rx="4"/>
-<path class="cavity" d="M 368 290 h 86 v 58 h -20 v 30 h -46 v -30 h -20 z"/>
-<rect class="pin" x="375" y="300" width="3" height="40"/>
-<rect class="pin" x="384" y="300" width="3" height="40"/>
-<rect class="pin" x="393" y="300" width="3" height="40"/>
-<rect class="pin" x="402" y="300" width="3" height="40"/>
-<rect class="pin" x="411" y="300" width="3" height="40"/>
-<rect class="pin" x="420" y="300" width="3" height="40"/>
-<rect class="pin" x="429" y="300" width="3" height="40"/>
-<rect class="pin" x="438" y="300" width="3" height="40"/>
-<rect class="ledg" x="462" y="282" width="16" height="20" rx="2"/>
-<rect class="leda" x="462" y="374" width="16" height="20" rx="2"/>
-<text class="featlbl" x="420" y="424">RJ45 &middot; J13</text>
-<path class="shell" d="M 604 306 h 30 l 6 8 v 44 l -6 8 h -30 l -6 -8 v -44 z"/>
-<path class="cavity" d="M 612 316 h 20 l 3 5 v 28 l -3 5 h -20 l -3 -5 v -28 z"/>
-<text class="featlbl" x="619" y="390">micro B &middot; J16</text>
-<rect class="btnbody" x="664" y="326" width="38" height="34" rx="3"/>
-<circle class="btn" cx="683" cy="343" r="11"/>
-<text class="featlbl" x="683" y="378">RST</text>
-<rect class="hdr" x="880" y="312" width="22" height="62" rx="2"/>
-<text class="featlbl" x="891" y="390">I2C</text>
-<circle class="sma" cx="1152" cy="343" r="21"/>
-<circle class="smai" cx="1152" cy="343" r="8"/>
-<text class="featlbl" x="1152" y="388">WiFi / BLE</text>
-<text class="brand" x="800" y="330">PORTENTA MACHINE CONTROL</text>
-<text class="brand2" x="800" y="352">ARDUINO PRO</text>
+<rect class="badge" x="380" y="254" width="52" height="16" rx="2"/>
+<text class="badgetx" x="406" y="265">RS485</text>
+<rect class="badge" x="437" y="254" width="34" height="16" rx="2"/>
+<text class="badgetx" x="454" y="265">CAN</text>
+
+<rect class="badge" x="600" y="254" width="48" height="16" rx="2"/>
+<text class="badgetx" x="624" y="265">PT100</text>
+<rect class="badge" x="654" y="254" width="16" height="16" rx="2"/>
+<text class="badgetx" x="662" y="265">J</text>
+<rect class="badge" x="676" y="254" width="16" height="16" rx="2"/>
+<text class="badgetx" x="684" y="265">K</text>
+
+<rect class="badge" x="870" y="254" width="26" height="16" rx="2"/>
+<text class="badgetx" x="883" y="265">NTC</text>
+<rect class="badge" x="902" y="254" width="40" height="16" rx="2"/>
+<text class="badgetx" x="922" y="265">0-10V</text>
+<rect class="badge" x="948" y="254" width="54" height="16" rx="2"/>
+<text class="badgetx" x="975" y="265">4-20mA</text>
+
+<rect class="badge" x="1199" y="254" width="48" height="16" rx="2"/>
+<text class="badgetx" x="1223" y="265">0-10V</text>
 </g>
 
 
-<circle class="led" cx="46" cy="232" r="4.4"/>
-<text class="ledlbl" x="58" y="235.4">RS485 TX</text>
-<circle class="led" cx="46" cy="252" r="4.4"/>
-<text class="ledlbl" x="58" y="255.4">RS485 RX</text>
-<circle class="led" cx="46" cy="272" r="4.4"/>
-<text class="ledlbl" x="58" y="275.4">CAN TX</text>
-<circle class="led" cx="46" cy="292" r="4.4"/>
-<text class="ledlbl" x="58" y="295.4">CAN RX</text>
-<circle class="led" cx="46" cy="312" r="4.4"/>
-<text class="ledlbl" x="58" y="315.4">3V3</text>
-<circle class="led" cx="46" cy="332" r="4.4"/>
-<text class="ledlbl" x="58" y="335.4">12V</text>
-<circle class="led" cx="46" cy="352" r="4.4"/>
-<text class="ledlbl" x="58" y="355.4">24V</text>
+<g class="feat">
+<rect class="shell" x="222" y="272" width="52" height="124" rx="3"/>
+<rect class="cavity" x="230" y="284" width="36" height="100" rx="2"/>
+<rect class="tongue" x="236" y="300" width="24" height="30"/>
+<text class="featlbl" x="248" y="416">USB A &middot; J15</text>
+
+<rect class="shield" x="348" y="282" width="150" height="116" rx="4"/>
+
+<g transform="rotate(180 423 340)">
+<path class="cavity" d="M 380 294 h 90 v 92 h -90 v -28 h -24 v -36 h 24 z"/>
+<rect class="pin" x="388" y="304" width="34" height="3"/>
+<rect class="pin" x="388" y="314" width="34" height="3"/>
+<rect class="pin" x="388" y="324" width="34" height="3"/>
+<rect class="pin" x="388" y="334" width="34" height="3"/>
+<rect class="pin" x="388" y="344" width="34" height="3"/>
+<rect class="pin" x="388" y="354" width="34" height="3"/>
+<rect class="pin" x="388" y="364" width="34" height="3"/>
+<rect class="pin" x="388" y="374" width="34" height="3"/>
+<rect class="tongue" x="432" y="352" width="30" height="26" rx="2"/>
+</g>
+<rect class="ledg" x="500" y="286" width="14" height="18" rx="2"/>
+<rect class="leda" x="500" y="376" width="14" height="18" rx="2"/>
+<text class="featlbl" x="423" y="416">RJ45 &middot; J13</text>
+
+<rect class="shell" x="600" y="306" width="24" height="64" rx="3"/>
+<rect class="cavity" x="605" y="314" width="14" height="48" rx="2"/>
+<text class="featlbl" x="612" y="388">micro B &middot; J16</text>
+
+<rect class="btnbody" x="664" y="320" width="34" height="32" rx="3"/>
+<circle class="btn" cx="681" cy="336" r="10"/>
+<text class="featlbl" x="681" y="372">RST</text>
+
+<text class="brand" x="878" y="300">PORTENTA MACHINE CONTROL</text>
+<rect class="badge" x="772" y="318" width="40" height="18" rx="2"/>
+<text class="badgetx" x="792" y="331">RoHS</text>
+<rect class="badge" x="818" y="318" width="26" height="18" rx="2"/>
+<text class="badgetx" x="831" y="331">CE</text>
+<rect class="badge" x="850" y="318" width="26" height="18" rx="2"/>
+<text class="badgetx" x="863" y="331">FC</text>
+<text class="fine" x="772" y="356">DESIGNED AND</text>
+<text class="fine" x="772" y="368">ASSEMBLED IN ITALY</text>
+<text class="fine" x="772" y="380">ARDUINO.CC/PRO</text>
+
+<rect class="hdr" x="952" y="306" width="22" height="64" rx="2"/>
+<text class="hdrlbl" x="980" y="318">I2C SCL</text>
+<text class="hdrlbl" x="980" y="332">I2C SDA</text>
+<text class="hdrlbl" x="980" y="346">3V3</text>
+<rect class="badge" x="978" y="352" width="26" height="13" rx="2"/>
+<text class="badgetx" x="991" y="362">GND</text>
+
+<circle class="sma" cx="1128" cy="336" r="21"/>
+<circle class="smai" cx="1128" cy="336" r="8"/>
+<text class="hdrlbl" x="1158" y="332">WI-FI</text>
+<text class="hdrlbl" x="1158" y="346">BLE</text>
+<text class="gold" x="1120" y="396">ARDUINOPRO</text>
+</g>
+
+
+<circle class="led" cx="46" cy="282" r="4.4"/>
+<text class="ledlbl" x="58" y="285.4">RS485 TX</text>
+<circle class="led" cx="46" cy="302" r="4.4"/>
+<text class="ledlbl" x="58" y="305.4">RS485 RX</text>
+<circle class="led" cx="46" cy="322" r="4.4"/>
+<text class="ledlbl" x="58" y="325.4">CAN TX</text>
+<circle class="led" cx="46" cy="342" r="4.4"/>
+<text class="ledlbl" x="58" y="345.4">CAN RX</text>
+<circle class="led" cx="46" cy="362" r="4.4"/>
+<text class="ledlbl" x="58" y="365.4">3V3</text>
+<circle class="led" cx="46" cy="382" r="4.4"/>
+<text class="ledlbl" x="58" y="385.4">12V</text>
+<circle class="led" cx="46" cy="402" r="4.4"/>
+<text class="ledlbl" x="58" y="405.4">24V</text>
 </svg>
 </div>
 

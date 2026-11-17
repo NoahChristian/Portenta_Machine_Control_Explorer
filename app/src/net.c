@@ -41,6 +41,7 @@
 
 #include <zephyr/mgmt/mcumgr/transport/smp_udp.h>
 
+#include "clock.h"
 #include "httpd.h"
 #include <zephyr/net/hostname.h>
 #include <zephyr/shell/shell.h>
@@ -209,6 +210,13 @@ static void servers_start(struct k_work *work)
 
 	LOG_INF("address assigned; starting the panel and the update transport");
 	pmc_httpd_init();
+
+	/*
+	 * Only gives a semaphore. The sync itself blocks on a socket for
+	 * seconds and must not do that here - this is the system workqueue, and
+	 * what happens when something heavy runs on it is recorded in httpd.c.
+	 */
+	pmc_clock_net_up();
 
 	/*
 	 * SMP has the SAME bind-before-address problem, and it matters more:

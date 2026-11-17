@@ -42,13 +42,15 @@ top,TEMP PROBES,5,RTD1,TEMP1_RTD,temp,pinout
 top,TEMP PROBES,6,TP2,TEMP2_TP,temp,pinout
 top,TEMP PROBES,7,TN2,TEMP2_TN,temp,pinout
 top,TEMP PROBES,8,RTD2,TEMP2_RTD,temp,pinout
-top,ANALOG IN,0,24V OUT,,supply_out,photo
+top,ANALOG IN,0,24V OUT,,supply_out,datasheet
 top,ANALOG IN,1,AI0,AI0,ai,pinout
-top,ANALOG IN,2,24V OUT,,supply_out,photo
-top,ANALOG IN,3,AI1,AI1,ai,pinout
-top,ANALOG IN,4,24V OUT,,supply_out,photo
-top,ANALOG IN,5,AI2,AI2,ai,pinout
-top,ANALOG IN,6,GND,,gnd,pinout
+top,ANALOG IN,2,GND,,gnd,datasheet
+top,ANALOG IN,3,24V OUT,,supply_out,datasheet
+top,ANALOG IN,4,AI1,AI1,ai,pinout
+top,ANALOG IN,5,GND,,gnd,datasheet
+top,ANALOG IN,6,24V OUT,,supply_out,datasheet
+top,ANALOG IN,7,AI2,AI2,ai,pinout
+top,ANALOG IN,8,GND,,gnd,datasheet
 top,ANALOG OUT,0,AO0,AO0,ao,pinout
 top,ANALOG OUT,1,GND,,gnd,pinout
 top,ANALOG OUT,2,AO1,AO1,ao,pinout

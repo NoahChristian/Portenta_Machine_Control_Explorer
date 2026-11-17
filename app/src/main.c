@@ -33,6 +33,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/drivers/flash.h>
 
+#include "clock.h"
 #include "page_vars.h"
 
 
@@ -179,6 +180,13 @@ int main(void)
 	 * workqueue stack and faulted the board on its first boot.
 	 */
 	pmc_page_init();
+
+	/*
+	 * Started here rather than from the network event, because it owns a
+	 * thread and a thread is created once, from a stack that is known. It
+	 * blocks until an address exists, so starting it early costs nothing.
+	 */
+	pmc_clock_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

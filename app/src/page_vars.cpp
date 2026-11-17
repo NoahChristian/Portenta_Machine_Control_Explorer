@@ -132,6 +132,7 @@ static char  rBXform[40];
 static float rBW;
 static char  rBName[32];
 static bool  rBTop;
+static uint16_t rBTitleW;
 
 static char rTXform[40];
 static char rTClass[72];
@@ -139,6 +140,9 @@ static char rTHref[28];
 static char rTLabel[12];
 static char rTTip[176];
 static bool rTTop;
+static char rTBody[20];
+static bool rTBox;
+static char rTSilkCls[12];
 static bool rTLed;
 static char rTLedCls[20];
 
@@ -178,12 +182,39 @@ static void fillClock(void)
 		vClkEpoch = (uint32_t)e;
 		snprintk(vClkTime, sizeof(vClkTime), "%02u:%02u:%02u",
 			 tod / 3600U, (tod / 60U) % 60U, tod % 60U);
-		PUT(vClkLabel, "UTC - held through power-off");
+
+		/*
+		 * THREE DIFFERENT THINGS A WORKING CLOCK CAN MEAN, and the
+		 * label is the only place they are distinguishable: a rate
+		 * that has actually been measured, a clock NTP set but has
+		 * not yet had time to measure, and one the supercapacitor
+		 * carried with nothing having checked it against UTC at all.
+		 */
+		if (gSnap.drift.valid) {
+			const int32_t t10 = gSnap.drift.ppm_tenths;
+			const int32_t mag = (t10 < 0) ? -t10 : t10;
+
+			snprintk(vClkLabel, sizeof(vClkLabel),
+				 "UTC - %s%d.%d ppm over %u h",
+				 (t10 < 0) ? "-" : "+", (int)(mag / 10),
+				 (int)(mag % 10), gSnap.drift.span_s / 3600U);
+		} else if (gSnap.drift.set_epoch != 0) {
+			PUT(vClkLabel, "UTC - set from NTP");
+		} else {
+			PUT(vClkLabel, "UTC - held through power-off");
+		}
 		break;
 	}
 	case PMC_CLOCK_LOST:
+		/*
+		 * "Lost power" was the old wording and it claimed too much.
+		 * The VL bit is set at power-on and cleared only by a write,
+		 * so it means "the time in me is not trustworthy" - which
+		 * covers a clock that was never set at all, the state every
+		 * board is in until the first NTP query lands.
+		 */
 		PUT(vClkTime, "--:--:--");
-		PUT(vClkLabel, "RTC lost power - no time");
+		PUT(vClkLabel, "no time yet - waiting for NTP");
 		break;
 	default:
 		PUT(vClkTime, "--:--:--");
@@ -286,6 +317,9 @@ static bool blkSelect(uint16_t i)
 		       (double)pmc_blocks[i].x, (double)pmc_blocks[i].y);
 	rBW = pmc_blocks[i].w;
 	rBTop = pmc_blocks[i].top;
+	/* 12px monospace with .11em tracking is about 8.5 units a character;
+	   the box wants a little air either side of the title. */
+	rBTitleW = (uint16_t)(strlen(pmc_blocks[i].name) * 85U / 10U + 12U);
 	PUT(rBName, pmc_blocks[i].name);
 	return true;
 }
@@ -311,6 +345,11 @@ static bool termSelect(uint16_t i)
 	(void)snprintf(rTXform, sizeof(rTXform), "translate(%.1f %.1f)",
 		       (double)t.x, (double)t.y);
 	rTTop = t.top;
+	PUT(rTBody, t.top ? "rotate(180 0 44)" : "translate(0 0)");
+	/* Derived, not a table column: the box is a property of the
+	   label and GND is the only label that carries one. */
+	rTBox = (strcmp(t.label, "GND") == 0);
+	PUT(rTSilkCls, rTBox ? "silk inv" : "silk");
 	rTLed = t.led;
 	PUT(rTLabel, t.label);
 
@@ -397,6 +436,7 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_ROW("bW", rBW, 1)
 	TPL_ROW_STR("bName", rBName)
 	TPL_ROW("bTop", rBTop, 0)
+	TPL_ROW("bTitleW", rBTitleW, 1)
 
 	TPL_EACH("term", termCount, termSelect)
 	TPL_ROW_STR("tXform", rTXform)
@@ -405,6 +445,9 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_ROW_STR("tLabel", rTLabel)
 	TPL_ROW_STR("tTip", rTTip)
 	TPL_ROW("tTop", rTTop, 0)
+	TPL_ROW_STR("tBody", rTBody)
+	TPL_ROW("tBox", rTBox, 0)
+	TPL_ROW_STR("tSilkCls", rTSilkCls)
 	TPL_ROW("tLed", rTLed, 0)
 	TPL_ROW_STR("tLedCls", rTLedCls)
 TPL_REGISTRY_END(gPmcVars)
