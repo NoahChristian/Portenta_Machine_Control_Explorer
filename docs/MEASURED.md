@@ -582,12 +582,38 @@ them and answered in seconds what argument had not.
 Each rate set over the API and checked by whether the frame survives:
 
 ```
-      9600 .. 1000000   INTACT, all 8 bytes
-         1500000        CORRUPT  4020000001840a   (7 bytes)
-         2000000        CORRUPT  00000030f0       (5 bytes)
-    3000000..6000000    CORRUPT, 2-3 bytes
-    8000000 and above   the peripheral refuses the rate
+The link's real ceiling: 1 Mbaud intact, corruption from 1.5 M,
+peripheral refuses above 6 M.
+
+┌──────────────────┬─────────────────────────────────────────┐
+│       baud       │                 result                  │
+├──────────────────┼─────────────────────────────────────────┤
+│ 9600 → 1,000,000 │ INTACT, all 8 bytes                     │
+├──────────────────┼─────────────────────────────────────────┤
+│ 1,500,000        │ corrupt — 7 bytes, 4020000001840a       │
+├──────────────────┼─────────────────────────────────────────┤
+│ 2–6 M            │ progressively worse                     │
+├──────────────────┼─────────────────────────────────────────┤
+│ 8 M and above    │ peripheral refuses to generate the rate │
+└──────────────────┴─────────────────────────────────────────┘
+
+So 20 Mbps is the SP335's figure, not this link's — UART4 can't
+clock past about 6 M.
 ```
+
+The refusals come from two different places, which is the point of having
+handed the ceiling to the hardware:
+
+```
+ 6000000 : accepted, turnaround 3 us
+ 7000000 : uart_configure refused 7000000 8N1 (-134)   <- the peripheral
+20000000 : uart_configure refused 20000000 8N1 (-134)  <- the peripheral
+25000000 : refused: baud 25000000 outside 1200..20000000  <- our range check
+```
+
+`-134` is -ENOTSUP from the STM32 driver. 20 Mbaud was requested and the
+hardware declined it; the range check only fires above 20 M, which is why
+25 M reads differently.
 
 **1 Mbaud is the verified working limit**, 52x the Modbus-typical 19200.
 
