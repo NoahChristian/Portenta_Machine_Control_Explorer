@@ -46,7 +46,15 @@
 [CmdletBinding()]
 param(
     [switch]$Mcuboot,
-    [switch]$Pristine
+    [switch]$Pristine,
+
+    # Extra -D arguments passed straight through to the application build, for
+    # trying a Kconfig value WITHOUT editing app/prj.conf. A temporary edit to
+    # a committed file is the kind of experiment that gets committed by
+    # accident; this leaves no trace in the tree.
+    #
+    #   tools/build.ps1 -ExtraArgs '-DCONFIG_PMC_OPEN_PA1_ANALOG_SWITCH=n'
+    [string[]]$ExtraArgs = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -147,6 +155,11 @@ Documents/Arduino/mcuboot-signing/. See mcuboot/README.md.
 "@
 }
 $appArgs += "-DEXTRA_CONF_FILE=$appKeyConf"
+
+if ($ExtraArgs.Count -gt 0) {
+    Write-Host "  extra: $($ExtraArgs -join ' ')" -ForegroundColor Yellow
+    $appArgs += $ExtraArgs
+}
 
 & $west build @pristineArgs -b $board (Join-Path $repo 'app') -d (Join-Path $repo 'build\app') -- @appArgs
 if ($LASTEXITCODE -ne 0) { throw "application build failed" }

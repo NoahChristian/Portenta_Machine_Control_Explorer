@@ -46,7 +46,8 @@ param(
     [string]$Ip,
     [string]$Serial,
     [switch]$Confirm,
-    [switch]$Resume
+    [switch]$Resume,
+    [int]$Mtu = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -215,11 +216,58 @@ if ($Resume) {
 
 Write-Host "==> 1/5 erasing slot1" -ForegroundColor Cyan
 & $smpmgr --ip $Ip --timeout 150 image erase 1
-if ($LASTEXITCODE -ne 0) { throw "erase failed" }
+if ($LASTEXITCODE -ne 0) {
+    # A NON-ZERO EXIT HERE DOES NOT MEAN THE ERASE FAILED.
+    #
+    # The same lesson as the upload below, and it was learned twice because
+    # only the upload got the fix the first time. Measured 2026-11-17: this
+    # step exited 1 with "Timeout (150.0s) waiting for request", and slot1
+    # was empty when the board was asked - the erase had run to completion.
+    #
+    # Two things make it look like a failure. Erasing 1280 kB of QSPI in
+    # 4 kB sectors takes a long time, and while the flash driver holds the
+    # mcumgr workqueue nothing else on the SMP transport is answered either -
+    # so even image state-read times out, which reads as a dead board. It is
+    # not: the panel keeps serving on its own thread throughout. And on a
+    # lossy link the erase RESPONSE can simply be dropped, in a protocol with
+    # no retransmission, leaving the client waiting for a reply that was sent.
+    #
+    # So ask the board. It is the only authority on whether slot1 is empty,
+    # and the generous timeout here is deliberate - it is waiting out an
+    # erase that may still be in progress, not polling a reboot.
+    Write-Host "    smpmgr exited non-zero - asking the board whether slot1" -ForegroundColor Yellow
+    Write-Host "    is actually empty before calling this a failure" -ForegroundColor Yellow
+    $afterErase = Get-State -TimeoutSec 180
+    if ($afterErase -notmatch 'slot=') {
+        throw "erase failed - the board did not answer at all, so slot1's state is unknown"
+    }
+    if ($afterErase -match 'slot=1') {
+        throw "erase failed - slot1 still holds an image"
+    }
+    Write-Host "    slot1 is empty: the erase completed. Continuing." -ForegroundColor Green
+}
 
 Write-Host ""
 Write-Host "==> 2/5 uploading to slot1" -ForegroundColor Cyan
-& $smpmgr --ip $Ip --timeout 90 image upload --slot 1 $img
+
+# -Mtu SHRINKS THE FRAMES, WHICH IS A FIX FOR A LOSSY LINK AND NOTHING ELSE.
+#
+# The upload is the only step that sends full-size frames; erase, state-read,
+# state-write and reset are all short exchanges, which is why they kept working
+# on this bench while uploads did not. Measured here on 2026-11-17: 0% loss at
+# 32-byte frames, 20% at 500 and 73% at 1000, with a sibling board on the same
+# access point losing none. SMP over UDP is lockstep with no window, so a lost
+# frame is not retransmitted by the protocol - it becomes a client timeout, and
+# the transfer presents as a stall rather than as a slowdown.
+#
+# So a smaller MTU trades throughput for the chance of finishing at all. Leave
+# it unset on a healthy link; the default is whatever smpmgr negotiates.
+$upArgs = @('--ip', $Ip, '--timeout', '90')
+if ($Mtu -gt 0) {
+    Write-Host "    --mtu $Mtu (frames shrunk deliberately)" -ForegroundColor Yellow
+    $upArgs += @('--mtu', "$Mtu")
+}
+& $smpmgr @upArgs image upload --slot 1 $img
 if ($LASTEXITCODE -ne 0) {
     # A NON-ZERO EXIT HERE DOES NOT MEAN THE TRANSFER FAILED.
     #
