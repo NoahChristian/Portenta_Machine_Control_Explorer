@@ -75,7 +75,7 @@ static const struct pmc_term pmc_terms[] = {
 	{   280.5, 512.0, false, "GND",       "",         "gnd",    "pinout", "DIGITAL INPUTS",           false },
 	{   344.5, 512.0, false, "24V IN",    "",         "supply_in", "pinout", "DIGITAL OUTPUTS",          false },
 	{   371.5, 512.0, false, "00",        "DO0",      "do",     "pinout", "DIGITAL OUTPUTS",          true },
-	{   398.5, 512.0, false, "01",        "DO1",      "do",     "pinout", "DIGITAL OUTPUTS",          true },
+	{   398.5, 512.0, false, "01",        "DO1",      "do",     "measured", "DIGITAL OUTPUTS",          true },
 	{   425.5, 512.0, false, "02",        "DO2",      "do",     "pinout", "DIGITAL OUTPUTS",          true },
 	{   452.5, 512.0, false, "03",        "DO3",      "do",     "pinout", "DIGITAL OUTPUTS",          true },
 	{   479.5, 512.0, false, "04",        "DO4",      "do",     "pinout", "DIGITAL OUTPUTS",          true },

@@ -40,6 +40,21 @@ static const char *swap_type_str(int t)
 }
 
 /*
+ * THE SAME FACTS, FOR THE PANEL. With the serial port gone this is the only
+ * way to see a revert armed or a swap that failed - and a failed swap is the
+ * one condition that silently disables every future update.
+ */
+const char *pmc_swap_type_name(void)
+{
+	return swap_type_str(mcuboot_swap_type());
+}
+
+bool pmc_img_confirmed(void)
+{
+	return boot_is_img_confirmed();
+}
+
+/*
  * Geometry, which is what boot_slots_compatible() actually walks.
  *
  * Printed for every area because the whole reason this layout needs

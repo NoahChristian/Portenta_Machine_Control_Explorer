@@ -70,7 +70,7 @@ bot,DIGITAL INPUTS,7,07,DIN7,din,pinout
 bot,DIGITAL INPUTS,8,GND,,gnd,pinout
 bot,DIGITAL OUTPUTS,0,24V IN,,supply_in,pinout
 bot,DIGITAL OUTPUTS,1,00,DO0,do,pinout
-bot,DIGITAL OUTPUTS,2,01,DO1,do,pinout
+bot,DIGITAL OUTPUTS,2,01,DO1,do,measured
 bot,DIGITAL OUTPUTS,3,02,DO2,do,pinout
 bot,DIGITAL OUTPUTS,4,03,DO3,do,pinout
 bot,DIGITAL OUTPUTS,5,04,DO4,do,pinout

@@ -318,6 +318,14 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      s->rail.present ? "true" : "false",
 		      s->rail.wired ? "true" : "false", s->rail.highs);
 
+	/* The swap state. With no console this is the only place a REVERT or a
+	 * FAIL is visible, and a FAIL disables every future update until the
+	 * trailer is cleared. */
+	n += snprintk(out + n, cap - n,
+		      "\"boot\":{\"swapType\":\"%s\",\"confirmed\":%s},",
+		      pmc_swap_type_name(),
+		      pmc_img_confirmed() ? "true" : "false");
+
 	n += snprintk(out + n, cap - n, "\"slots\":[");
 	for (size_t i = 0; i < s->n_slot; i++) {
 		n += snprintk(out + n, cap - n,

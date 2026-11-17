@@ -90,6 +90,11 @@ struct pmc_snapshot {
 	size_t               n_slot;
 };
 
+/* From shell_mcuboot.c - the swap state, which the panel is now the only
+   way to see. */
+const char *pmc_swap_type_name(void);
+bool pmc_img_confirmed(void);
+
 /* Reads everything once. Call it before rendering, never during. */
 void pmc_snapshot_take(struct pmc_snapshot *s);
 

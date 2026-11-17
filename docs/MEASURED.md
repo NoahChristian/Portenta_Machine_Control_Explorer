@@ -294,3 +294,34 @@ decision currently resting on something other than observation.
   inherits `2FE3:0004` from the Giga and that is almost certainly wrong here.
 - **Whether a full scratch swap completes**, and how long 1280 KB through the
   QSPI takes.
+
+## 2026-11-16 — DO1 is the terminal silkscreened 01
+
+The boot indicator drives `MC_DO_DO1_PIN PH_9` through the shared latch
+`PB_2`. With the board powered and the panel healthy it blinks, and the LED
+that blinks is the one above the terminal marked **01** on J6 — observed
+directly, not read out of a header.
+
+That settles the only thing about the digital-output table that was actually
+in doubt. The channel-to-pin wiring is PCB traces, so `pins_mc.h` is recording
+hardware rather than choosing it; what could not be read off a header was
+whether mbed's `DO0..DO7` line up with the connector's `00..07` or sit one
+apart. They line up.
+
+So `DO1` is `measured` and the other seven are ordered by construction from
+it. They are still `pinout` in tools/terminals.csv, because one observation is
+one observation — `d1 walk` lights all eight in turn and would settle the
+rest in about ten seconds, which is worth doing before the serial port is
+removed.
+
+Observed state at the time:
+
+```
+fw 0.34.0  slot0 confirmed   D1 steady at power-up, blinking after the first
+                             HTTP request satisfied the panel health check
+```
+
+The steady-then-blinking transition is itself the health gate made visible:
+steady means a check is still outstanding, and the one outstanding after a
+power cycle is "nobody has loaded the panel yet" — which waives itself after
+180 s so an unattended board still confirms its image.
