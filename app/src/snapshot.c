@@ -14,6 +14,9 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/rtc.h>
 #include <zephyr/dfu/mcuboot.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_mgmt.h>
+#include <zephyr/net/net_stats.h>
 #include <zephyr/net/hostname.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/timeutil.h>
@@ -26,6 +29,11 @@
 #include "health.h"
 #include "snapshot.h"
 #include "temp.h"
+
+/* net.c is self-contained behind a SYS_INIT and has no header; this is its
+ * only caller. Returns the WHD power save mode READ BACK from the radio:
+ * 0 none, 1 PM1, 2 PM2, 99 never read. */
+uint32_t pmc_net_wifi_ps_mode(void);
 
 #define AI_SWITCHES (LL_SYSCFG_ANALOG_SWITCH_PA1 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC2 | \
@@ -310,6 +318,53 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "", s->io.pdio[i]);
 	}
 	n += snprintk(out + n, cap - n, "]},");
+
+	/*
+	 * THE RADIO'S OWN DROP COUNTER, and the reason it is here.
+	 *
+	 * Three explanations for a stalled OTA have been proposed on this
+	 * bench - processor load, WiFi power save, and the panel's own
+	 * polling - and the board refuted or complicated all three. Each was
+	 * reasoned rather than measured. This is the measurement.
+	 *
+	 * The AIROC driver increments errors.rx on exactly one path: it could
+	 * not get a net buffer for an arriving frame, logs "Failed to get net
+	 * buffer", and drops it. That happens in interrupt context, before any
+	 * thread priority can express a preference - which is precisely why a
+	 * priority-0 SMP thread does not help. If rxDrops climbs while an
+	 * upload stalls, the receive pool is the cause and the fix is pool
+	 * sizing or traffic classes. If it stays at zero while an upload
+	 * fails, every buffer theory on this bench is wrong.
+	 *
+	 * Either answer is worth more than another round of reasoning.
+	 */
+	{
+		struct net_stats_wifi ws = { 0 };
+		struct net_if *wifi = net_if_get_first_wifi();
+		int rc = -ENODEV;
+
+		if (wifi != NULL) {
+			rc = net_mgmt(NET_REQUEST_STATS_GET_WIFI, wifi, &ws,
+				      sizeof(ws));
+		}
+		n += snprintk(out + n, cap - n,
+			      "\"wifi\":{\"ok\":%s,\"rxPkts\":%u,"
+			      "\"rxDrops\":%u,\"txPkts\":%u,"
+			      "\"txErrs\":%u},",
+			      (rc == 0) ? "true" : "false",
+			      (unsigned)ws.pkts.rx, (unsigned)ws.errors.rx,
+			      (unsigned)ws.pkts.tx, (unsigned)ws.errors.tx);
+	}
+
+	/*
+	 * The WiFi power save mode, read back from the radio rather than
+	 * inferred from the return code of the call that set it. 2 means PM2
+	 * is still on, and a large inbound transfer will stall; 0 means it is
+	 * genuinely off. This board has no console, so this is the only place
+	 * the answer can be seen - which is the entire point of publishing it.
+	 */
+	n += snprintk(out + n, cap - n, "\"wifiPsMode\":%u,",
+		      (unsigned)pmc_net_wifi_ps_mode());
 
 	/*
 	 * TEMPERATURE. The mode is reported beside the readings because a

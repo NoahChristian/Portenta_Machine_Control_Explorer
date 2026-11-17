@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "e78ec849"
-#define PAGE_INDEX_BYTES 53351
+#define PAGE_INDEX_BUILD "41e25c29"
+#define PAGE_INDEX_BYTES 64963
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -278,6 +278,14 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .term .t { color:#ffb020; }      /* bytes this board sent             */
   .term .r { color:#7cc4ff; }      /* bytes that arrived                */
   .term .meta { color:var(--dim); }
+  /* The CRC is the two bytes everyone gets wrong and nobody can read at a
+     glance, so it gets its own color: orange when it checks out, red when
+     it does not. */
+  .term .crc    { color:#ff9500; font-weight:600; }
+  .term .crcbad { color:#ff3b30; font-weight:600; text-decoration:underline; }
+  .term .interp { color:#8fa0b4; }
+  .term .ok     { color:#30d158; }
+  .term .warn   { color:#ff9500; }
   .termgrid { display:grid; grid-template-columns:1fr 20rem; gap:1.2rem;
               align-items:start; }
   @media (max-width:860px) { .termgrid { grid-template-columns:1fr; } }
@@ -616,8 +624,30 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
     <hr style="border:0;border-top:1px solid #8884;margin:.9rem 0">
 
+    
+    <div class="row"><label>Modbus</label>
+      <input type="number" id="mslave" min="0" max="247" value="1"
+             style="width:3.2rem" title="slave address">
+      <select id="mfunc" title="function code">
+        <option value="3">03 read holding</option>
+        <option value="4">04 read input</option>
+        <option value="1">01 read coils</option>
+        <option value="2">02 read discrete</option>
+        <option value="6">06 write register</option>
+        <option value="5">05 write coil</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>addr / n</label>
+      <input type="number" id="maddr" min="0" max="65535" value="0"
+             style="width:4.6rem" title="starting address">
+      <input type="number" id="mcount" min="0" max="2000" value="1"
+             style="width:4.6rem" title="quantity, or the value for 05/06">
+      <button type="button" id="mbuild">build</button>
+    </div>
+
     <div class="row"><label for="txhex">send</label></div>
-    <div class="row"><input type="text" id="txhex" value="01 03 00 00 00 01"
+    <div class="row"><input type="text" id="txhex" value="01 03 00 00 00 01 84 0A"
         placeholder="hex bytes"></div>
     <div class="row">
       <button type="button" id="bsend">send once</button>
@@ -930,8 +960,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   var termEl = document.getElementById('term');
   var termSay = document.getElementById('termsay');
   var termFrom = 0, termFirst = true;
+  var lastSent = null;   /* to recognize our own echo coming back */
 
-  function tsay(t, bad) {
+  /* NOT `tsay`. The temperature section below binds `var tsay` to a DOM
+     element in this same scope, and a variable assignment at run time beats
+     a hoisted function declaration - so every serial handler died with
+     "tsay is not a function" the moment that line executed. */
+  function termNote(t, bad) {
     if (!termSay) { return; }
     termSay.textContent = t;
     termSay.className = bad ? 'bad' : '';
@@ -942,14 +977,59 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     for (var k in fields) {
       body += '&' + k + '=' + encodeURIComponent(fields[k]);
     }
-    tsay(label + ' ...');
+    termNote(label + ' ...');
     return fetch('/io', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body
     }).then(function (r) { return r.text(); })
-      .then(function (t) { tsay(t.trim(), /^refused/.test(t)); })
-      .catch(function (e) { tsay('request failed: ' + e, true); });
+      .then(function (t) { termNote(t.trim(), /^refused/.test(t)); return t; })
+      .catch(function (e) { termNote('request failed: ' + e, true); return ''; });
+  }
+
+  /*
+   * MODBUS RTU CRC: polynomial 0xA001, seeded all ones, least significant
+   * byte transmitted first. The reversed polynomial and the byte order are
+   * the two things people get wrong, and a wrong CRC is indistinguishable
+   * from a wrong address at the far end - both produce silence.
+   */
+  function modbusCrc(bytes) {
+    var crc = 0xFFFF;
+    for (var i = 0; i < bytes.length; i++) {
+      crc ^= bytes[i];
+      for (var b = 0; b < 8; b++) {
+        crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
+      }
+    }
+    return [crc & 0xFF, (crc >> 8) & 0xFF];
+  }
+
+  function hx(n) { return ('0' + n.toString(16)).slice(-2); }
+
+  var mb = document.getElementById('mbuild');
+  if (mb) {
+    mb.addEventListener('click', function () {
+      var slave = +document.getElementById('mslave').value;
+      var func = +document.getElementById('mfunc').value;
+      var addr = +document.getElementById('maddr').value;
+      var cnt = +document.getElementById('mcount').value;
+      var f = [slave, func, (addr >> 8) & 0xFF, addr & 0xFF,
+               (cnt >> 8) & 0xFF, cnt & 0xFF];
+
+      f = f.concat(modbusCrc(f));
+      document.getElementById('txhex').value =
+        f.map(hx).join(' ').toUpperCase();
+      termNote('built: ' + (func === 5 || func === 6 ? 'write' : 'read') +
+           ', ' + f.length + ' bytes, CRC appended');
+    });
+  }
+
+  /* What was asked for, shown as asked-for. The receive window is what the
+     wire actually carried; these are not the same claim, so they are not
+     the same color and not the same words. */
+  function termEcho(hex, label) {
+    if (!termEl || !hex) { return; }
+    renderFrame(hexToBytes(hex), 't', '>> ' + label);
   }
 
   function applyCfg() {
@@ -984,8 +1064,24 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   }); }
   el = document.getElementById('bsend');
   if (el) { el.addEventListener('click', function () {
-    post485({ do: '485tx', hex: document.getElementById('txhex').value },
-            'sending');
+    var h = document.getElementById('txhex').value;
+
+    /*
+     * SEPARATORS STRIPPED BEFORE SENDING, and that is not cosmetic.
+     * io_post.cpp's field parser deliberately does no percent-decoding,
+     * because every value that route accepts is [A-Za-z0-9_-] by
+     * construction and a decoder's bugs would all point at a 24 V output.
+     * Spaces broke that invariant: the browser encodes them as %20 and the
+     * firmware read them literally. Stripping here restores the invariant
+     * rather than overriding the decision - and keeps a 64-byte frame inside
+     * the 130-byte field buffer, which spaces would have overflowed.
+     */
+    post485({ do: '485tx', hex: hexOnly(h) }, 'sending').then(function (reply) {
+      if (reply && reply.indexOf('sent') === 0) {
+        lastSent = hexToBytes(h);
+        termEcho(h, 'sent, ' + reply.trim());
+      }
+    });
   }); }
   el = document.getElementById('brep');
   if (el) { el.addEventListener('click', function () {
@@ -994,10 +1090,144 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
     b.classList.toggle('on', on);
     post485({ do: '485rep',
-              hex: document.getElementById('txhex').value,
+              hex: hexOnly(document.getElementById('txhex').value),
               ms: on ? document.getElementById('repms').value : 0 },
             on ? 'starting repeat' : 'stopping repeat');
   }); }
+
+  function setSel(id, v) {
+    var e = document.getElementById(id);
+    if (!e) { return; }
+    for (var i = 0; i < e.options.length; i++) {
+      if (e.options[i].value === v || e.options[i].text === v) {
+        e.selectedIndex = i;
+        return;
+      }
+    }
+  }
+  function setOn(id, on) {
+    var e = document.getElementById(id);
+    if (e) { e.classList.toggle('on', !!on); }
+  }
+
+  /* ---- Modbus RTU interpretation ------------------------------------
+     A decode layer, not a stack. It names the fields and checks the CRC,
+     which is all that is needed to tell "my frame was malformed" from "the
+     slave never answered" - two failures that look identical when all you
+     have is a timeout. */
+  var MB_FUNC = {
+    1: 'read coils', 2: 'read discrete inputs',
+    3: 'read holding registers', 4: 'read input registers',
+    5: 'write single coil', 6: 'write single register',
+    15: 'write multiple coils', 16: 'write multiple registers'
+  };
+  var MB_EXC = {
+    1: 'illegal function', 2: 'illegal data address',
+    3: 'illegal data value', 4: 'slave device failure',
+    5: 'acknowledge', 6: 'slave device busy', 11: 'gateway target failed'
+  };
+
+  function mbDecode(b) {
+    if (b.length < 4) {
+      return { text: 'too short to be a Modbus RTU frame (' + b.length +
+                     ' bytes; the CRC alone is 2)', crcAt: -1 };
+    }
+    var body = b.slice(0, b.length - 2);
+    var given = b[b.length - 2] | (b[b.length - 1] << 8);
+    var calc = modbusCrc(body);
+    var calcV = calc[0] | (calc[1] << 8);
+    var slave = b[0], func = b[1];
+    var parts = [];
+
+    parts.push(slave === 0 ? 'broadcast (slave 0)' : 'slave ' + slave);
+
+    if (func & 0x80) {
+      var base = func & 0x7F;
+      parts.push('EXCEPTION to ' + (MB_FUNC[base] || ('function ' + base)));
+      parts.push(MB_EXC[b[2]] || ('exception code ' + b[2]));
+    } else {
+      parts.push((MB_FUNC[func] || ('function ' + func)) +
+                 ' (0x' + hx(func) + ')');
+
+      if ((func >= 1 && func <= 6) && b.length === 8) {
+        var addr = (b[2] << 8) | b[3];
+        var val = (b[4] << 8) | b[5];
+
+        parts.push('address ' + addr + ' (0x' + hx(b[2]) + hx(b[3]) + ')');
+        parts.push((func === 5 || func === 6)
+          ? 'value ' + val + ' (0x' + hx(b[4]) + hx(b[5]) + ')'
+          : 'quantity ' + val);
+      } else if ((func === 1 || func === 2 || func === 3 || func === 4) &&
+                 b.length >= 5 && b[2] === b.length - 5) {
+        parts.push('response, ' + b[2] + ' data bytes');
+      } else {
+        parts.push(body.length - 2 + ' data bytes');
+      }
+    }
+
+    return { text: parts.join(' \u00b7 '), crcAt: b.length - 2,
+             crcOk: given === calcV, given: given, calc: calcV };
+  }
+
+  function renderFrame(bytes, dirClass, header) {
+    if (!termEl) { return; }
+    var d = mbDecode(bytes);
+    var wrap = document.createElement('div');
+    var h = document.createElement('span');
+
+    h.className = 'meta';
+    h.textContent = header + '\n';
+    wrap.appendChild(h);
+
+    for (var i = 0; i < bytes.length; i++) {
+      var s = document.createElement('span');
+      var isCrc = (d.crcAt >= 0 && i >= d.crcAt);
+
+      s.className = isCrc ? (d.crcOk ? 'crc' : 'crcbad') : dirClass;
+      s.textContent = hx(bytes[i]).toUpperCase() + ' ';
+      wrap.appendChild(s);
+    }
+
+    var asc = document.createElement('span');
+    asc.className = 'meta';
+    asc.textContent = ' |' + bytes.map(function (v) {
+      return (v >= 32 && v < 127) ? String.fromCharCode(v) : '.';
+    }).join('') + '\n';
+    wrap.appendChild(asc);
+
+    var ip = document.createElement('span');
+    ip.className = 'interp';
+    ip.textContent = '   ' + d.text + '\n';
+    wrap.appendChild(ip);
+
+    if (d.crcAt >= 0) {
+      var c = document.createElement('span');
+      var g = ('000' + d.given.toString(16)).slice(-4).toUpperCase();
+
+      c.className = d.crcOk ? 'ok' : 'crcbad';
+      c.textContent = d.crcOk
+        ? '   CRC 0x' + g + ' checks out\n'
+        : '   CRC 0x' + g + ' is WRONG - computed 0x' +
+          ('000' + d.calc.toString(16)).slice(-4).toUpperCase() + '\n';
+      wrap.appendChild(c);
+    }
+
+    termEl.appendChild(wrap);
+    termEl.scrollTop = termEl.scrollHeight;
+  }
+
+  function hexOnly(h) {
+    return (h || '').replace(/[^0-9a-fA-F]/g, '');
+  }
+
+  function hexToBytes(h) {
+    var s = hexOnly(h);
+    var out = [];
+    for (var i = 0; i + 1 < s.length; i += 2) {
+      out.push(parseInt(s.substr(i, 2), 16));
+    }
+    return out;
+  }
 
   function hexDump(hex) {
     /* Hex and printable ASCII side by side, 16 to a line - the layout every
@@ -1038,11 +1268,30 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         }
 
         if (termFirst) {
-          /* First poll only syncs the cursor - otherwise opening the page
-             replays whatever happened to be in the ring. */
+          /*
+           * First poll syncs the cursor - otherwise opening the page
+           * replays whatever is in the ring - AND adopts the board's actual
+           * line settings. Leaving the selectors on their HTML defaults
+           * meant the box read 1200 while the port ran at 19200, so the
+           * first press of `apply` would have silently reconfigured it to
+           * something nobody chose. Same rule as the mode lamps: a control
+           * shows what the hardware is doing, not what the markup guessed.
+           */
           termFrom = j.next; termFirst = false;
+          setSel('baud', String(j.baud));
+          setSel('fmt', '' + j.bits + j.parity + j.stop);
+          setSel('dmode', j.mode);
+          setOn('bterm', j.term);
+          setOn('bslew', j.slew);
+          setOn('becho', j.echo);
+          if (j.repMs) {
+            setOn('brep', true);
+            var r = document.getElementById('repms');
+            if (r) { r.value = j.repMs; }
+          }
           termEl.innerHTML = '<span class="meta">listening at ' + j.baud +
-            ' ' + j.bits + j.parity + j.stop + '</span>\n';
+            ' ' + j.bits + j.parity + j.stop + ', ' + j.mode +
+            (j.echo ? ', echo on' : '') + '</span>\n';
           return;
         }
         if (j.lost) {
@@ -1052,19 +1301,62 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                           'this window was read ---\n';
           termEl.appendChild(w);
         }
+        /* Quiet line -> ask less often. Any byte snaps straight back to
+           the fast rate, so interactive use never feels throttled. */
         if (j.hex && j.hex.length) {
-          var s = document.createElement('span');
-          s.className = 'r';
-          s.textContent = hexDump(j.hex);
-          termEl.appendChild(s);
-          termEl.scrollTop = termEl.scrollHeight;
+          quiet = 0;
+          pollMs = POLL_FAST;
+        } else if (++quiet > 8 && pollMs < POLL_SLOW) {
+          pollMs = POLL_SLOW;
+        }
+
+        if (j.hex && j.hex.length) {
+          /*
+           * Each poll's batch is treated as one frame. At any normal baud a
+           * Modbus frame is a few milliseconds and the poll is 400, so a
+           * batch is almost always exactly one - but it is an assumption,
+           * not a frame boundary: real RTU framing is 3.5 character times
+           * of silence, which this cannot see from here. Two frames inside
+           * one poll decode as one and the CRC then fails, which is at
+           * least a visible wrong answer rather than a quiet one.
+           */
+          var rx = hexToBytes(j.hex);
+          var same = lastSent && lastSent.length === rx.length &&
+                     lastSent.every(function (v, i) { return v === rx[i]; });
+
+          renderFrame(rx, 'r', same
+            ? '<< returned by our own driver - the pair was driven'
+            : '<< received');
         }
         termFrom = j.next;
       })
       .catch(function () { /* a missed poll is not worth a line */ });
   }
+  /* THE PANEL YIELDS: backs off when the line is quiet, stops entirely
+     when the tab is hidden. This page polling at 400 ms was measured to
+     stop a 1 MB OTA completing; see docs/MEASURED.md. A diagnostic nobody
+     is looking at must not break the recovery mechanism. */
+  var POLL_FAST = 400, POLL_SLOW = 3000;
+  var pollMs = POLL_FAST, pollTimer = null, quiet = 0;
+
+  function schedule485() {
+    clearTimeout(pollTimer);
+    if (document.hidden) { return; }   /* resumed by visibilitychange */
+    pollTimer = setTimeout(function () { poll485(); schedule485(); }, pollMs);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      clearTimeout(pollTimer);
+    } else {
+      pollMs = POLL_FAST; quiet = 0;
+      poll485();
+      schedule485();
+    }
+  });
+
   poll485();
-  setInterval(poll485, 400);
+  schedule485();
 
   /* --- temperature ------------------------------------------------- */
   var slider = document.getElementById('tslider');
@@ -1211,8 +1503,17 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   function set(el, v) {
     if (el.textContent !== String(v)) { el.textContent = v; }
   }
+  /* Same rule for the state poll: a hidden tab asks for nothing. */
+  var stateTimer = null;
+
+  function scheduleState() {
+    clearInterval(stateTimer);
+    stateTimer = setInterval(function () {
+      if (!document.hidden) { poll(); }
+    }, 2000);
+  }
   poll();
-  setInterval(poll, 2000);
+  scheduleState();
 })();
 </script>
 <script>

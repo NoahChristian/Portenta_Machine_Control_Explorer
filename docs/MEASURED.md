@@ -325,3 +325,159 @@ The steady-then-blinking transition is itself the health gate made visible:
 steady means a check is still outstanding, and the one outstanding after a
 power cycle is "nobody has loaded the panel yet" — which waives itself after
 180 s so an unattended board still confirms its image.
+
+## The panel can stop the board being updated (2026-11-16)
+
+**Measured, twice, on the same board minutes apart.** With the panel open in a
+browser and polling, a 1 MB OTA failed repeatedly - at erase, at upload, or
+part-way through at around 12%. With the tab closed and *nothing else changed*
+- same uptime of several minutes, same image, WiFi power save already off and
+read back as `0` - the same command completed first time.
+
+```
+tab open, up 285 s, wifiPsMode=0   ->  upload failed
+tab closed, up 285 s, wifiPsMode=0 ->  completed, slot1 staged, swapped, booted
+```
+
+### It is not thread priority, and the priorities were never wrong
+
+This was the first assumption and it is incorrect. The build already orders
+things the way anyone would choose:
+
+| thread | priority |
+|---|---|
+| mcumgr UDP, the SMP receive path | 0, highest preemptible |
+| net TCP worker | 2 |
+| mcumgr workqueue, which writes flash | 3 |
+| AIROC WiFi event task | 4 |
+| application threads | 7-8 |
+| socket service, where the HTTP server runs | 15, lowest |
+
+The update path is already at the top and the web server already at the
+bottom, and it starved anyway.
+
+### THE RECEIVE POOL THEORY WAS TESTED AND IS WRONG
+
+Everything in the next two sections was written before it was measured, and
+the measurement refuted it. It is kept rather than deleted because the
+reasoning was plausible, was argued at length, and was still wrong - which is
+the useful part.
+
+With `CONFIG_NET_STATISTICS_WIFI` the AIROC driver publishes its own drop
+counter. It increments on exactly one path: it could not get a net buffer for
+an arriving frame, logs "Failed to get net buffer", and discards it. So it
+measures receive pool exhaustion directly.
+
+120 requests fired as fast as the client could issue them:
+
+```
+before : rxPkts=2439  rxDrops=0
+after  : rxPkts=4504  rxDrops=0     +2065 packets, +0 drops, 0 client failures
+```
+
+**No drops under load.** Panel traffic does not exhaust the receive pool. The
+frames arrive; whatever fails, fails above the driver.
+
+The surviving suspect is the SMP transport's own pool:
+
+```
+CONFIG_MCUMGR_TRANSPORT_NETBUF_COUNT = 2
+```
+
+Two buffers for the entire update transport. That fits what the pool theory
+could not: HTTP is unaffected because it uses different buffers; a small
+`image state-read` always works because it needs one buffer briefly; a
+megabyte upload fails because it needs sustained turnover; the failure worsens
+with uptime, which is what a slow leak looks like; and a reset always cures it,
+because the pool is reinitialized.
+
+### What was originally argued, and why it was believable
+
+A shared receive pool, allocated before any of those threads can have an
+opinion:
+
+```
+CONFIG_NET_PKT_RX_COUNT  16
+CONFIG_NET_BUF_RX_COUNT  32 x 128 bytes   ~4 kB of receive data in total
+CONFIG_NET_MAX_CONTEXTS  16               one per TCP connection
+CONFIG_MCUMGR_TRANSPORT_NETBUF_COUNT  2
+```
+
+When a frame arrives the WiFi driver takes an interrupt and must put the bytes
+somewhere **before anything has parsed a port number** - so before the stack
+could possibly know whether this is a firmware update or a status poll. It
+takes a buffer from the one global pool. By the time scheduling could express
+a preference, the allocation has already succeeded or already failed, and a
+dropped packet never reaches a thread at all.
+
+A browser polling two or three times a second holds buffers and a net context
+per connection, each lingering after close. **A priority-0 thread with no
+buffer to receive into is still stuck.** Scheduling does not allocate memory.
+
+### Zephyr CAN be told to prefer the update - this build simply does not
+
+The first version of this note claimed the opposite, reasoning that a packet
+must be allocated before it can be classified and therefore cannot be ranked.
+That is wrong, and it is wrong in a way worth recording because it sounds
+convincing.
+
+Zephyr implements multiple receive queues:
+
+```
+CONFIG_NET_TC_RX_COUNT       1     <- the default, and what this build runs
+CONFIG_NET_TC_NUM_PRIORITIES 16
+CONFIG_NET_TC_MAPPING_STRICT y
+CONFIG_NET_IP_DSCP_ECN       y     <- on by default
+```
+
+> "Define how many Rx traffic classes (queues) the system should have when
+> receiving a network packet. The network packet priority can then be mapped
+> to this traffic class so that higher prioritized packets can be processed
+> before lower prioritized ones. Each queue is handled by a separate thread."
+
+Up to eight queues, each with its own thread and its own priority. And
+classification does not need a socket lookup: DSCP lives in byte 1 of the IPv4
+header, before anything else is parsed, and `NET_IP_DSCP_ECN` already decodes
+it. So the chain runs end to end - DSCP, to packet priority, to traffic class,
+to a queue with its own thread.
+
+**One queue is a configuration default here, not a limitation of the stack and
+not a property of the radio.** The WiFi part has WMM access categories; this is
+not a single-queue MAC.
+
+What genuinely is not available on receive is *reservation*.
+`CONFIG_NET_CONTEXT_NET_PKT_POOL` ties a packet pool to a socket, but its help
+text says "when **sending** network data" - transmit only. The receive pool
+stays common, so queues prioritize *processing* (and therefore how fast
+buffers are returned), not allocation. If the pool is fully drained, a
+high-priority queue still has nothing to receive into.
+
+The complete lever is therefore two-sided, and neither half is sufficient
+alone:
+
+| intent | mechanism | state here |
+|---|---|---|
+| process the update first | `NET_TC_RX_COUNT` > 1 plus DSCP marking | not done, queue count is 1 |
+| stop the panel hoarding | `SO_RCVBUF` via `NET_CONTEXT_RCVBUF` | not enabled |
+| give the pools headroom | `NET_PKT_RX_COUNT`, `NET_BUF_RX_COUNT` | at defaults |
+| make the panel ask less | adaptive poll, pause when hidden | **done** |
+
+Only the last was needed to clear the symptom, which is why it was done first.
+The rest are the real fix and remain open.
+
+### What was done
+
+The page now backs off to one request every 3 s when the serial line is quiet,
+returns to 400 ms the moment a byte arrives, and **stops polling entirely when
+the tab is hidden**. Both are free when they matter.
+
+Still open, and both cheap: the receive pools are at their defaults with 512 kB
+of SRAM on the part, and `MCUMGR_TRANSPORT_NETBUF_COUNT` is 2.
+
+### Why this matters more than it looks
+
+OTA is the mechanism that makes every other mistake on this board
+recoverable - there is no serial console on it any more. Until this was found,
+that mechanism could be disabled by *looking at the diagnostic page*. It is the
+kind of fault only a bench instrument finds, because it requires something to
+be watching the board while the board is being updated.

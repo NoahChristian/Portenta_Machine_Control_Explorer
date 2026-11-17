@@ -34,6 +34,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/wifi_mgmt.h>
+
+/* Under the Zephyr API on purpose - see the power save note below. */
+#include <whd_wifi_api.h>
+#include <whd_types.h>
 #include <zephyr/net/wifi_credentials.h>
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/conn_mgr_monitor.h>
@@ -157,6 +161,77 @@ static void net_start(struct k_work *work)
  * wait out whatever the backoff had grown to, or never retry at all once the
  * work item had stopped rescheduling.
  */
+/*
+ * WIFI POWER SAVE, AND WHY net_mgmt CANNOT DO IT HERE.
+ *
+ * The radio wakes only on DTIM beacons once PM2 is on. Outbound traffic is
+ * unaffected, so a board that answers happily can still be slow to reach, and
+ * a large INBOUND transfer stalls - which is exactly how this presented: a
+ * megabyte of OTA repeatedly dying part-way while small requests always
+ * worked, and a first HTTP request after an idle moment taking 1467 ms
+ * against 63-102 ms for the same document once the link was awake.
+ *
+ * THE OBVIOUS FIX IS A NO-OP ON THIS DRIVER. Zephyr defines
+ * NET_REQUEST_WIFI_PS, and calling it looks right and compiles, but the AIROC
+ * driver's wifi_mgmt_ops table has no .set_power_save and no
+ * .get_power_save - it offers scan, connect, disconnect, ap_enable,
+ * ap_disable, iface_status and get_stats, and nothing else. The request
+ * therefore returns -ENOTSUP and changes nothing. With no console on this
+ * board the warning that said so was never seen, and the call sat there
+ * looking like a fix for an entire version.
+ *
+ * So this goes under the Zephyr API to WHD itself, which is where the setting
+ * actually lives. whd_management.c enables PM2 unconditionally on radio
+ * bring-up:
+ *
+ *     whd_wifi_enable_powersave_with_throughput(ifp, DEFAULT_PM2_SLEEP_RET_TIME);
+ *
+ * with DEFAULT_PM2_SLEEP_RET_TIME 200. A sibling project on this bench found
+ * the identical call, with the identical 200 ms, by disassembling a
+ * completely different vendor stack for the same radio - and recorded that
+ * whether it applied under Zephyr had never been measured and must not be
+ * assumed. It applies: same WHD sources, same constant, same unconditional
+ * else branch.
+ *
+ * THE MODE IS READ BACK, not assumed. That discipline is borrowed wholesale
+ * from the same place, and it is the only reason the net_mgmt version above
+ * was caught: a fix you cannot observe is a fix you are only hoping for. The
+ * value is published in the state document so it can be checked from a
+ * browser rather than from a console this board does not have.
+ *
+ * Call it AFTER the join. Powering the radio up re-arms PM2, so anything that
+ * cycles the radio undoes this.
+ */
+whd_interface_t airoc_wifi_get_whd_interface(void);
+
+static uint32_t s_wifi_ps_mode = 99;   /* 99 = never read */
+
+uint32_t pmc_net_wifi_ps_mode(void)
+{
+	return s_wifi_ps_mode;
+}
+
+static void pmc_net_disable_wifi_ps(void)
+{
+	whd_interface_t ifp = airoc_wifi_get_whd_interface();
+	uint32_t before = 99, after = 99;
+
+	if (ifp == NULL) {
+		LOG_WRN("WiFi PS: no WHD interface, left alone");
+		return;
+	}
+
+	(void)whd_wifi_get_powersave_mode(ifp, &before);
+	const uint32_t rc = whd_wifi_disable_powersave(ifp);
+
+	(void)whd_wifi_get_powersave_mode(ifp, &after);
+	s_wifi_ps_mode = after;
+
+	LOG_INF("WiFi PS: mode %u -> %u (rc %u) - %s",
+		(unsigned)before, (unsigned)after, (unsigned)rc,
+		(after == NO_POWERSAVE_MODE) ? "powersave OFF" : "STILL ON");
+}
+
 static void wifi_event(struct net_mgmt_event_callback *cb,
 		       uint64_t mgmt_event, struct net_if *iface)
 {
@@ -169,6 +244,29 @@ static void wifi_event(struct net_mgmt_event_callback *cb,
 		k_work_reschedule(&net_start_work, K_MSEC(PMC_NET_RETRY_MIN_MS));
 	} else if (mgmt_event == NET_EVENT_WIFI_CONNECT_RESULT) {
 		s_retry_ms = PMC_NET_RETRY_MIN_MS;
+
+		/*
+		 * POWER SAVE OFF.
+		 *
+		 * Measured on this board before this existed: the first HTTP
+		 * request after an idle moment took 1467 ms and the next three
+		 * took 308, 315 and 455 - for 1.3 kB of JSON, on a 480 MHz M7.
+		 * That shape is a radio asleep between beacons, not a busy
+		 * processor, and the few-hundred-millisecond floor under every
+		 * request is the beacon interval showing through. It was
+		 * nearly misdiagnosed as the board being short of horsepower,
+		 * which it conspicuously is not.
+		 *
+		 * It is also the likeliest reason a megabyte would not upload.
+		 * A stream of SMP writes needs the receiver awake
+		 * continuously; with power save on, the gaps between wakeups
+		 * are where requests go to die - which presents exactly as
+		 * "the receiver is not ready", because that is what it is.
+		 *
+		 * This is a mains-powered bench instrument fed from 24 V.
+		 * There is nothing to save here and a great deal to lose.
+		 */
+		pmc_net_disable_wifi_ps();
 	}
 }
 
