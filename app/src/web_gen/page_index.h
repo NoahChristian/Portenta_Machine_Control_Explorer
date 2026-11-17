@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "dabee84e"
-#define PAGE_INDEX_BYTES 33326
+#define PAGE_INDEX_BUILD "8fc7b455"
+#define PAGE_INDEX_BYTES 34424
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -465,6 +465,9 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <div class="row"><label>DO</label><span id="dobtns"></span></div>
   <div class="row"><label>pulse</label><span id="pulsebtns"></span>
     <span class="dim" style="font-size:.75rem">200 ms</span></div>
+  <div class="row"><label>PDIO</label><span id="pdiobtns"></span>
+    <span class="dim" style="font-size:.75rem">reads back - says
+    <em>verified</em>, not <em>commanded</em></span></div>
   <div class="row">
     <label for="aoch">AO</label>
     <select id="aoch"><option>AO0</option><option>AO1</option><option>AO3</option></select>
@@ -696,6 +699,27 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     window.pmcLinkDynamic(aoch, function () { return aoch.value; });
     window.pmcLinkDynamic(document.getElementById('aoset'),
                           function () { return aoch.value; });
+  }
+
+  /* PDIO. Same verb as DO, different family - and a different answer: this
+     path pulses the latch and reads the channel back as an input, so the
+     board can say "verified" or name the missing supply instead of only
+     "commanded". Twelve channels, so the row wraps. */
+  var pdb = document.getElementById('pdiobtns');
+  for (var m = 0; m < 12; m++) {
+    (function (n) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = (n < 10 ? '0' : '') + n;
+      btn.addEventListener('click', function () {
+        var on = btn.getAttribute('data-on') !== '1';
+        btn.setAttribute('data-on', on ? '1' : '0');
+        btn.style.borderColor = on ? '#ff3b30' : '';
+        post({ do: 'set', chan: 'PDIO' + n, v: on ? 1 : 0 }, 'PDIO' + n);
+      });
+      pdb.appendChild(btn);
+      if (window.pmcLink) { window.pmcLink(btn, 'PDIO' + n); }
+    })(m);
   }
 
   document.getElementById('aoset').addEventListener('click', function () {
