@@ -25,6 +25,14 @@ is tagged by how much it is worth trusting — see
 
 ## Status
 
+![The panel, with a connector line from a PDIO control to its terminal](docs/images/drive-panel-link.png)
+
+Hovering a control draws a line to the terminal it drives, so the association
+between a button and a screw terminal is visible rather than remembered. The
+terminals are found by the same `?ch=<name>` key the firmware's allow-list
+uses, so a channel that can be clicked can be linked, with no second list to
+keep in step.
+
 Working on hardware:
 
 | | |
@@ -33,12 +41,24 @@ Working on hardware:
 | Flash map | Custom, dual-slot, confirmed against the running image with `pmc parts` |
 | OTA | Upload, swap and boot over WiFi, proven end to end |
 | Discovery | `portentaexplorer.local` |
-| I/O | Both I2C expanders enumerate; the three analog inputs read |
+| Reads | 8 digital in, 12 programmable digital I/O, 3 analog in updating every 2 s |
+| Writes | 8 digital out (level and pulse), 12 PDIO, 3 analog out — token-gated |
+| Supply | 24 V presence inferred from the encoder pull-ups; 3V3 and 12 V indicated |
+| Clock | PCF8563 set from NTP, carried through power-off by the on-board supercap |
 | Panel | Rendered on the board from `web/index.html`, with a drawing of the carrier whose terminals carry live state |
 
-Not built yet: the channel table, every output driver beyond the boot
-indicator, and the write path. Nothing on the board drawing has been confirmed
-at the connector yet, so every channel renders dashed.
+**Each write says only what it can prove.** A digital output reports
+`commanded`, because that family has no sense path and nothing on the board
+can confirm it. A programmable channel reports `verified`, having pulsed the
+latch and read the same channel back as an input — or `no supply`, when it
+reads low with no fault flag, which means the `24V IN` terminal is unfed
+rather than that anything failed. An analog output reports the value it set,
+and says the volts-per-count is derived rather than measured.
+
+Not built yet: temperature, encoder counts, RS485 and CAN. Only one channel
+has been confirmed at the connector with a meter, so the rest of the board
+drawing renders dashed — the expander channel maps are transcribed, not yet
+proven here.
 
 ### The panel is a template the board renders, not a page a script assembles
 
