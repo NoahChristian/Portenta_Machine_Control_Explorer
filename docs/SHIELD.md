@@ -1,0 +1,695 @@
+# Why the shield overlay says what it says
+
+`boards/shields/arduino_portenta_machine_control/arduino_portenta_machine_control.overlay` describes the carrier.
+This holds the reasoning behind it, moved out of that file unedited.
+
+Three sibling pages carry the hardware facts themselves, split by how
+well they are known: `HARDWARE_FROM_MANUAL.md` for what the datasheets
+say, `INFERRED_FROM_MBED.md` for what the mbed library believes, and
+`MEASURED.md` for what this board actually did. This page is about the
+devicetree, not about the hardware - when a claim here is really a
+hardware fact, it belongs on one of those three instead.
+
+## Root-level nodes (1)
+
+Arduino Portenta Machine Control (AKX00032) carrier.
+
+Copyright (c) 2026 Noah Christian
+SPDX-License-Identifier: Apache-2.0
+
+NAMES ARE THE POINT. Every nodelabel and alias here is the name an Arduino
+user already knows, taken from the Arduino_PortentaMachineControl library's
+pins_mc.h and from the product datasheet: DIN0..7, DO0..7, AI0..2, AO0..3,
+ENC0..1. Someone arriving from the Arduino documentation should recognize
+every identifier, because this carrier is otherwise undocumented and that
+recognition is the only foothold they have.
+
+PROVENANCE. Nothing in this file has been confirmed on hardware yet. Pin
+assignments are read out of pins_mc.h at the upstream repository's main
+branch - which is what another program believes, not what the silicon says -
+and the analog channel mapping is from ST's documentation. Both are recorded
+with their sources in docs/INFERRED_FROM_MBED.md and
+docs/HARDWARE_FROM_MANUAL.md, and each fact moves to docs/MEASURED.md only
+when it has been observed here. Treat every number below as a hypothesis.
+
+```dts
+/ {
+```
+
+## The three analog inputs as ADC channels
+
+The three analog inputs, as ADC channels.
+
+ONE zephyr,user NODE, NOT ONE PER CHANNEL. The obvious-looking
+structure - a parent with an ai0/ai1/ai2 child each carrying its own
+io-channels and label - does not compile. A child node with no
+compatible has no binding, so devicetree never names the phandle
+cells, and ADC_DT_SPEC_GET then fails on a missing
+..._io_channels_IDX_0_VAL_input macro - an error that mentions
+neither bindings nor the real cause. Channel and pad names live in C
+instead, in app/src/shell_analog.c.
+
+ORDER IS THE CONTRACT: index 0 = AI0, 1 = AI1, 2 = AI2.
+
+CHANNEL NUMBERS, confirmed from the vendor HAL rather than inferred.
+stm32h747xihx-pinctrl.dtsi defines exactly these nodes for the three
+pads this carrier uses:
+
+    adc1_inp1_pa1_c   adc2_inp1_pa1_c      -> PA1_C is ADC1/2 INP1
+    adc3_inp0_pc2_c   adc3_inn1_pc2_c      -> PC2_C is ADC3 INP0
+    adc3_inp1_pc3_c                        -> PC3_C is ADC3 INP1
+
+so AI0=PC_3C is adc3 channel 1, AI1=PC_2C is adc3 channel 0, and
+AI2=PA_1C is adc1 channel 1. ADC2 could serve AI2 equally; ADC1 is
+chosen because ADC3 already has both other channels, so splitting
+them means one conversion does not wait on the other.
+
+Each channel is ALSO a 4-bit mode selector in hardware - 0-10 V,
+4-20 mA or NTC is chosen by four GPIOs per channel, not by a
+register - so a channel is not fully described by its ADC node. The
+mode pins belong in the channel table, because devicetree has no way
+to say "these four pins together mean 4-20 mA on this channel".
+
+None of this reads anything meaningful until the SYSCFG analog
+switches are open - see pmc_syscfg.c, which is the whole reason this
+shield carries source.
+
+```dts
+	zephyr,user {
+		io-channels = <&adc3 1>, <&adc3 0>, <&adc1 1>;
+	};
+};
+```
+
+## ADC1 and ADC3, which the board enables neither of
+
+ADC1 and ADC3. The Portenta H7 board definition enables NO ADC at all, so
+both are turned on here.
+
+The st,adc-prescaler and acquisition settings are deliberately left at their
+defaults until a measurement justifies changing them: a settling time chosen
+before anything has been measured is a guess wearing a number's clothes.
+
+## `&adc12_common`
+
+THE COMMON BLOCKS HAVE TO BE ENABLED TOO, and this is not obvious.
+
+On the STM32H7 each ADC node is a CHILD of a shared peripheral block:
+adc1 and adc2 live inside adc12_common, and adc3 inside adc3_common
+(zephyr/dts/arm/st/h7/stm32h7.dtsi:885 and :1330). Both parents are
+status = "disabled" by default, and `compatible = "st,stm32-adc"` is on the
+PARENT, not on the child.
+
+Enabling only the children therefore does two invisible things at once:
+DT_HAS_ST_STM32_ADC_ENABLED stays false so CONFIG_ADC_STM32 is never
+selected and the driver is not built, and a child of a disabled parent gets
+no device struct either way. Nothing complains about any of that. What
+actually fails is the LINK, much later and somewhere else:
+
+  libdrivers__adc.a(adc_shell.c.obj): undefined reference to
+  `__device_dts_ord_134'
+
+pointing at the ADC shell rather than at the ADC, because the shell is
+simply the first thing that referenced a device that was never created.
+
+```dts
+&adc12_common {
+```
+
+## `&adc3_common`
+
+st,adc-clock-source and st,adc-prescaler are REQUIRED by
+dts/bindings/adc/st,stm32-adc.yaml and the SoC dtsi does not supply
+them, so a missing one is a devicetree error rather than a default.
+
+SYNC with /4 is the conservative starting point: derived from the bus
+clock, no separate kernel clock to get wrong, and slow enough that
+nothing here depends on sample timing. These are placeholders in the
+honest sense - nothing has been measured, so there is no basis yet
+for choosing anything cleverer. Revisit only with a measurement.
+
+```dts
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+&adc3_common {
+	st,adc-clock-source = "SYNC";
+	st,adc-prescaler = <4>;
+	status = "okay";
+};
+&adc1 {
+```
+
+## `&adc3`
+
+CHANNEL MAPPING, confirmed from the vendor HAL rather than inferred.
+stm32h747xihx-pinctrl.dtsi defines exactly these nodes for the three
+pads this carrier uses:
+
+    adc1_inp1_pa1_c   adc2_inp1_pa1_c      -> PA1_C is ADC1/2 INP1
+    adc3_inp0_pc2_c   adc3_inn1_pc2_c      -> PC2_C is ADC3 INP0
+    adc3_inp1_pc3_c                        -> PC3_C is ADC3 INP1
+
+so AI0=PC_3C is adc3 channel 1, AI1=PC_2C is adc3 channel 0, and
+AI2=PA_1C is adc1 channel 1. ADC2 could serve AI2 equally; ADC1 is
+chosen because ADC3 already has both other channels and splitting
+them means one conversion does not have to wait on the other.
+
+```dts
+	pinctrl-0 = <&adc1_inp1_pa1_c>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+};
+&adc3 {
+	pinctrl-0 = <&adc3_inp0_pc2_c &adc3_inp1_pc3_c>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,resolution = <16>;
+	};
+};
+```
+
+## The two TCA6424A port expanders
+
+The two TCA6424A I2C port expanders, which is where the digital inputs and
+the programmable digital channels actually live. They are NOT MCU pads, and
+pins_mc.h does not mention them at all.
+
+TWO devices, not one, distinguished by their ADDR pin:
+
+    0x22 (ADDR low)   the 12 programmable digital channels
+    0x23 (ADDR high)  the 8 digital inputs
+
+Both addresses are 7-bit here. TI's datasheet quotes 0x22/0x23 as 8-bit
+forms including the R/W bit, so a reader comparing against the datasheet
+should expect the shift. UNVERIFIED on this bench: `i2c scan` at M2 is what
+turns these into measured facts, and it is the first thing to check if
+nothing responds.
+
+The channel-to-port-bit maps are scrambled three different ways and are
+deliberately NOT encoded here - devicetree cannot express them, and open-
+coding them at a call site is how a panel ends up confidently driving the
+wrong channel. They live in tools/channels.csv. See
+docs/INFERRED_FROM_MBED.md.
+
+EXPECT THREE DEVICES ON THIS BUS, not two. i2c1 is the node the board
+aliases as `zephyr_i2c`, and the Portenta H7's own PF1550 PMIC hangs off it
+at pmic@8 (arduino_portenta_h7_stm32h747xx_m7.dts:101). So a healthy
+`i2c scan` should report 0x08 as well as 0x22 and 0x23 - and 0x08 appearing
+alone is the useful negative result, because it proves the bus works and
+that the expanders are somewhere else.
+
+i2c1 is the one the Portenta datasheet calls I2C1, and it already carries
+pinctrl and bus-recovery GPIOs from arduino_portenta_h7-common.dtsi. (The
+board file says so in a comment; quoting that comment verbatim here nested a
+block comment inside a block comment and ended this one 40 lines early,
+which devicetree reported as a parse error at the closing brace.)
+
+## The expanders are on i2c3, not i2c1
+
+THE EXPANDERS ARE ON i2c3, MEASURED 2026-11-15.
+
+The addresses inferred from the mbed library were right; the bus was a guess
+and it was wrong. Scans of all three:
+
+    i2c1  PB6/PB7    0x08, 0x36, 0x51   the Portenta's internal bus
+    i2c3  PH7/PH8    0x22, 0x23         <- the carrier's two expanders
+    i2c4  PH11/PH12  nothing
+
+0x08 is the PF1550 PMIC the board declares at pmic@8. 0x51 is the PCF8563
+RTC, and that is no longer a guess: datasheet section 3-20 names the part as
+PCF8563T/F4 on its own 32.768 kHz crystal, backed by a 100 mF supercapacitor
+good for at least 48 hours, with its interrupt on MC_RTC_INT_PIN PB_9. 0x36
+is
+unidentified and is on the module's internal bus rather than the carrier's,
+so it is more likely part of the H7 than of the Machine Control.
+
+Note the board file names these buses from the DATASHEET's point of view
+rather than the MCU's, which is its own small trap:
+i2c1 = "I2C1 in datasheet", i2c4 = "I2C2", i2c3 = "I2C3".
+
+i2c4 is deliberately left disabled: nothing answered on it, and an enabled
+bus that nothing uses is a pin assignment nobody asked for. i2c1 stays
+enabled because the PMIC is on it and the board's regulator drivers need it.
+
+TWO TCA6424A DEVICES, NOT ONE, distinguished by their ADDR pin:
+
+    0x22 (ADDR low)   the 12 programmable digital channels
+    0x23 (ADDR high)  the 8 digital inputs
+
+Both 7-bit. TI's datasheet quotes 0x22/0x23 as 8-bit forms including the R/W
+bit, so a reader comparing against the datasheet should expect the shift.
+Which of the two carries which function is still [LIB] - inferred from
+ArduinoIOExpander.h naming IO_ADD as ADDR_LOW and DIN_ADD as ADDR_HIGH - and
+is not yet confirmed here.
+
+The channel-to-port-bit maps are scrambled three different ways and are
+deliberately NOT encoded here: devicetree cannot express them, and
+open-coding them at a call site is how a panel ends up confidently driving
+the wrong channel. They belong in tools/channels.csv. See
+docs/INFERRED_FROM_MBED.md.
+
+## `&i2c1`
+
+THE CARRIER'S REAL-TIME CLOCK, and it is the carrier's rather than the
+module's even though it answers on the module's bus.
+
+Datasheet section 3-20 names the part: a PCF8563T/F4 on a dedicated
+32.768 kHz crystal (Q13FC1350000400), held up by a 100 mF supercapacitor
+(FC0V104ZFTBR24) for "at least 48 hours" after board power is removed. That
+backup is why this is the clock to use and not the SoC's own RTC, which has
+no battery or supercapacitor on this board: switch the bench on in the
+morning and this part already knows the time, with no network involved.
+
+THE PART REPORTS ITS OWN TRUSTWORTHINESS, which is better than any heuristic
+an application could apply. The VL bit in its seconds register means the
+oscillator stopped, and Zephyr's driver turns that into -ENODATA from
+rtc_get_time(). So "the supercapacitor held" and "this board has been off
+too long" are distinguishable at boot without guessing from an epoch floor.
+Note that rtc_pcf8563.c's comment on that test reads "if the first bit is 1
+it is ok" while the code returns -ENODATA when bit 7 is set; the CODE is
+right and matches the part.
+
+int1-gpios IS DELIBERATELY ABSENT. The carrier routes the interrupt to
+MC_RTC_INT_PIN PB_9, and the binding accepts it, but the driver only
+compiles the interrupt path when alarms or update callbacks are configured.
+Nothing here uses either yet, and a property wired in advance of its first
+user is a claim that something was tested.
+
+```dts
+&i2c1 {
+	pmc_rtc: pcf8563@51 {
+		compatible = "nxp,pcf8563";
+		reg = <0x51>;
+		status = "okay";
+	};
+};
+```
+
+## `pmc_encoder_in`
+
+THE ENCODER INPUTS, READ AS PLAIN GPIO - and the reason is power, not
+encoders.
+
+Datasheet section 3-13: "Each channel is pulled-up to the board 24V supply
+with a 10 k pull-up resistor." That is the BOARD rail, not a connector's
+external 24V IN, and it is the only thing on this carrier whose state
+depends on it in a way the MCU can see. The power tree (section 3-21) has
+no divider to any ADC, so 24 V cannot be measured at all - only inferred,
+and this is the strongest inference available: with nothing plugged into
+J10, all six channels read high if and only if the rail is up, and all six
+falling together is something a real encoder cannot do.
+
+It is an inference and the panel says so. A wired encoder drives these, so
+the reading means "24 V present" only while J10 is idle.
+
+NOTE PH_11 AND PH_12: the board devicetree maps those to i2c4, which this
+shield disables. That is not tidiness - enabling i2c4 would take encoder 0's
+B and I channels with it.
+
+```dts
+/ {
+	pmc_encoder_in: pmc-encoder-in {
+		compatible = "gpio-keys";
+		enc0a: enc0a { gpios = <&gpioj 8  GPIO_ACTIVE_HIGH>; label = "ENC0 A"; };
+		enc0b: enc0b { gpios = <&gpioh 12 GPIO_ACTIVE_HIGH>; label = "ENC0 B"; };
+		enc0i: enc0i { gpios = <&gpioh 11 GPIO_ACTIVE_HIGH>; label = "ENC0 I"; };
+		enc1a: enc1a { gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>; label = "ENC1 A"; };
+		enc1b: enc1b { gpios = <&gpioi 7  GPIO_ACTIVE_HIGH>; label = "ENC1 B"; };
+		enc1i: enc1i { gpios = <&gpioj 10 GPIO_ACTIVE_HIGH>; label = "ENC1 I"; };
+	};
+};
+```
+
+## `&timers1`
+
+ANALOG OUT - three of the four channels.
+
+It is not a DAC. Datasheet 3-7: each channel is a PWM from the Portenta
+through a double low-pass filter into a non-inverting amplifier of gain 3.3,
+so the terminal voltage is a function of duty cycle and the smoothing is the
+filter's job. 20 kHz is well above what that filter passes.
+
+  AO0  PJ_11  tim1_ch2
+  AO1  PK_1   tim1_ch1
+  AO3  PC_7   tim3_ch2
+
+AO2 IS ABSENT AND CANNOT BE ADDED HERE. It is PG_7, which the datasheet says
+is driven by HRTIM - a different peripheral that Zephyr models not at all:
+no driver, no binding, and PG_7 carries no tim*_ch* function in
+stm32h747xihx-pinctrl.dtsi. Driving it needs hand-written LL code, so the
+panel reports it unavailable rather than pretending.
+
+```dts
+&timers1 {
+	st,prescaler = <0>;
+	status = "okay";
+	pwm_ao01: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch1_pk1 &tim1_ch2_pj11>;
+		pinctrl-names = "default";
+	};
+};
+&timers3 {
+	st,prescaler = <0>;
+	status = "okay";
+	pwm_ao3: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch2_pc7>;
+		pinctrl-names = "default";
+	};
+};
+/ {
+	pmc_ao: pmc-ao {
+		compatible = "pwm-leds";
+		ao0: ao0 { pwms = <&pwm_ao01 2 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
+		ao1: ao1 { pwms = <&pwm_ao01 1 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
+		ao3: ao3 { pwms = <&pwm_ao3  2 PWM_USEC(50) PWM_POLARITY_NORMAL>; };
+	};
+};
+&i2c3 {
+	status = "okay";
+	pmc_pdio_expander: tca6424a@22 {
+		compatible = "ti,tca6424a";
+		reg = <0x22>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <24>;
+		status = "okay";
+	};
+	pmc_din_expander: tca6424a@23 {
+		compatible = "ti,tca6424a";
+		reg = <0x23>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		ngpios = <24>;
+		status = "okay";
+	};
+};
+```
+
+## `&spi2`
+
+TEMPERATURE: two front ends on one bus, fed by analog switches.
+
+Datasheet 3-9, quoted because the pin names mislead. There are exactly two
+converters:
+
+    MAX31855KASA+T   dedicated to thermocouples
+    MAX31865ATP+T    dedicated to PT100
+
+and the three channels reach them through
+
+    "A single low-ohmic single-pole double-throw analog switch NX3L4053HR
+     which is switching between one front end or the other"
+    "Three quadruple single pole single throw analog switches TMUX1511RSVR
+     which are switching the active channel between the three available"
+
+So SEL0/SEL1/SEL2 are ONE-HOT CHANNEL ENABLES, not a 3-bit binary code.
+This repo previously recorded them as a "shared 3-bit channel mux", which
+was inferred from the pin names and is wrong. Writing 0b011 to mean
+"channel 3" closes two switches and parallels two sensors onto one front
+end - it does not select a fourth channel, which does not exist.
+
+The converters are always addressable on SPI; what the switches move is
+which SENSOR is wired to which converter. That is why a mux change needs a
+dwell before the next read: the MAX31855 free-runs, so the register still
+holds a conversion of the PREVIOUS channel. See temp.c - it is the one
+detail that turns this family into a confident liar.
+
+The bus is spi2, identified because PI_0 is spi2_nss in the Portenta board
+definition. Note PC2/PC3 carry spi2 miso/mosi while PC2_C/PC3_C carry two
+of the analog inputs: they coexist only because the shield opens the SYSCFG
+analog switches at PRE_KERNEL_1. With those closed, this bus and the analog
+front end are tied together.
+
+```dts
+&spi2 {
+```
+
+## Why NSS is dropped from spi2's pinctrl
+
+NSS DROPPED ON PURPOSE. The board definition lists spi2_nss_pi0, but
+PI_0 is the thermocouple converter's chip select and has to be a
+GPIO this driver can drive per transfer. Leaving it in pinctrl puts
+the pin in alternate function and cs-gpios would never move it.
+
+```dts
+	pinctrl-0 = <&spi2_sck_pi1 &spi2_miso_pc2 &spi2_mosi_pc3>;
+	pinctrl-names = "default";
+```
+
+## Why PA6 appears twice in cs-gpios
+
+PA6 APPEARS TWICE, ON PURPOSE. There is one MAX31865 on this board
+and two devicetree instances of it - see pmc_rtd_3w below - so index
+1 and index 2 are deliberately the same chip select. cs-gpios is
+indexed by a child's `reg`, and nothing requires the entries to be
+distinct.
+
+```dts
+	cs-gpios = <&gpioi 0 GPIO_ACTIVE_LOW>,
+```
+
+## `pmc_tc`: the MAX31855 thermocouple converter
+
+ MC_TC_CS  - MAX31855
+
+```dts
+		   <&gpioa 6 GPIO_ACTIVE_LOW>,
+```
+
+## `pmc_rtd`: the MAX31865 RTD converter
+
+ MC_RTD_CS - MAX31865
+
+```dts
+		   <&gpioa 6 GPIO_ACTIVE_LOW>;
+```
+
+## `pmc_tc`
+
+ MC_RTD_CS - same chip
+
+```dts
+	status = "okay";
+	pmc_tc: max31855@0 {
+		compatible = "maxim,max31855";
+		reg = <0>;
+```
+
+## `pmc_rtd`
+
+ Datasheet maximum is 5 MHz; 4 is the usual safe step down.
+
+```dts
+		spi-max-frequency = <4000000>;
+		status = "okay";
+	};
+	pmc_rtd: max31865@1 {
+		compatible = "maxim,max31865";
+		reg = <1>;
+		spi-max-frequency = <4000000>;
+```
+
+## PT100 and its 400 ohm reference
+
+ PT100, and the 400 ohm reference the MAX31865 datasheet
+recommends for it. Both are properties of this carrier, not
+of whatever probe someone screws on.
+
+```dts
+		resistance-at-zero = <100>;
+		resistance-reference = <400>;
+```
+
+## Two-or-four wire, not three
+
+TWO-OR-FOUR WIRE, NOT THREE. This has to match how the probe
+is actually wired, and getting it wrong gives a plausible
+WRONG NUMBER rather than a fault - there is no way for
+software to tell. The carrier offers both: datasheet 3-11
+wires a two-wire RTD across TPn/TNn, and 3-12 adds the third
+wire on RTDn. Nothing is connected here yet, so this takes
+the simpler wiring; add `maxim,3-wire;` when a three-wire
+probe goes on, and record it in MEASURED.md.
+
+## The 60 Hz notch, selected by omitting filter-50hz
+
+60 Hz NOTCH, BY OMITTING filter-50hz. The MAX31865's filter
+rejects mains hum coupled into a long probe lead, and the
+wrong one rejects nothing: it is a notch, not a low-pass.
+The symptom is a reading that wanders by a fraction of a
+degree in step with nothing, which looks like noise rather
+than like a setting. 60 Hz is the assumption for this bench;
+add `filter-50hz;` on a 50 Hz supply.
+
+Note the property has NO vendor prefix while `maxim,3-wire`
+in the same binding does. Guessing costs a build.
+
+```dts
+		status = "okay";
+	};
+```
+
+## `pmc_rtd_3w`
+
+THE SAME CHIP AGAIN, WIRED FOR THREE.
+
+Lead resistance is the whole problem an RTD has. A PT100 moves about
+0.385 ohms per degree, so a couple of ohms of copper in a two-wire
+run reads as several degrees - steady, plausible, and wrong. The
+MAX31865 cancels it when told the probe has three wires, and that
+instruction is one bit of its configuration register.
+
+Zephyr's driver takes that bit from devicetree at init and then
+REWRITES THE WHOLE CONFIGURATION REGISTER FROM ITS OWN SHADOW ON
+EVERY FETCH - max31865_get_temperature() raises VBIAS through
+configure_device() before each conversion. So setting the bit behind
+the driver's back survives less than one sweep: the next fetch puts
+the devicetree value back, and the reading goes quietly wrong again.
+
+Hence two instances of one chip. They share a chip select and differ
+in exactly one property, and because each fetch writes that
+instance's shadow, choosing which device to read from IS choosing
+the wire count. No register poking, no fighting the driver, and the
+driver's tested Callendar-Van Dusen inverse is kept in both cases.
+
+Only one is ever used at a time; temp.c owns that choice.
+
+```dts
+	pmc_rtd_3w: max31865@2 {
+		compatible = "maxim,max31865";
+		reg = <2>;
+		spi-max-frequency = <4000000>;
+		resistance-at-zero = <100>;
+		resistance-reference = <400>;
+		maxim,3-wire;
+		status = "okay";
+	};
+};
+```
+
+## `&uart4`
+
+RS485 / RS232 on uart4.
+
+The board definition already routes uart4 to PA_0 and PI_9, which is what
+the carrier's transceiver is wired to; this only has to switch it on.
+
+NO `de-enable` HERE, AND THAT IS THE POINT. Zephyr's STM32 driver can run
+RS485 turnaround entirely in hardware - DEM drives a driver-enable pin and
+DEAT/DEDT set its lead and lag in register fields - but UART4's DE exists
+only on PA15 or PB14 in this package, and this carrier routes DE to PI_13
+and RE to PI_10. Those are ordinary GPIOs, so the turnaround has to be done
+in software, which is the single most reported cause of a silent Modbus bus
+on this board. rs485.c explains what that costs and how it is handled.
+
+```dts
+&uart4 {
+	status = "okay";
+	current-speed = <19200>;
+};
+```
+
+## `&mac`
+
+ETHERNET IS ON, AS A SECOND PATH AND NOT A PREFERENCE.
+
+It was off, and the block that disabled it named two specific harms. Both
+are now fixed in app/prj.conf, which is why this is being turned back on
+rather than left alone:
+
+  - "it took the single IPv4 config struct"
+      CONFIG_NET_IF_MAX_IPV4_COUNT=2 - each interface holds its own.
+  - "it is interface 1 and therefore the default", breaking every bind to
+    INADDR_ANY because the default interface had no address
+      CONFIG_NET_DEFAULT_IF_WIFI=y - WiFi is the default regardless of
+      enumeration order.
+
+WHY IT IS WORTH THE RISK NOW. Measured 2026-11-17: this board's radio loses
+0% of 32-byte frames and 73% of 1000-byte ones, while another board on the
+same access point in the same minute loses none. Short SMP commands work
+and bulk transfer does not, so an OTA upload managed 0.1% at 7.1 kB/s -
+about two and a half hours for a megabyte. The update path is what makes
+every other mistake on this board recoverable, and it currently depends on
+the one link that does not work. A wire does not care about frame length.
+
+THE OLD WARNING STILL APPLIES, so it is kept: with no cable this is an
+interface with no address. Check `net iface` shows eth0 with an address
+before assuming anything else works, and read ethCarrier/ethLink on the
+panel rather than inferring either.
+
+NO CONFLICT WITH THE ANALOG INPUTS, which is worth stating because it looks
+like there should be one. The RMII reference clock is on PA1
+(eth_ref_clk_pa1) and AI0 is on PA_1C - a SEPARATE pad, joined to PA1 only
+by the SYSCFG analog switch. This project already opens that switch, which
+is what lets both work: closed, the 50 MHz clock and the analog front end
+are shorted together and BOTH are wrong. See the SYSCFG section of
+docs/MEASURED.md.
+
+```dts
+&mac {
+	status = "okay";
+};
+```
+
+## `&ethernet_phy_en`
+
+THE PHY NEEDS TIME AFTER ITS RESET IS RELEASED. MEASURED, NOT GUESSED.
+
+With the init priorities fixed so the reset regulator runs before the MAC,
+the MAC driver still failed. The board reported the reason itself, which is
+the only way it could have been found here - there is no console on this
+assembly and no RTT, so a driver that fails during init normally leaves no
+evidence at all:
+
+    eth: {"present":true,"rc":-19,"initRes":-5}
+
+rc -19 is this application saying the device is not ready; initRes -5 is
+-EIO out of eth_initialize(), read back from dev->state->init_res, which
+Zephyr keeps for every device. In eth_stm32_hal_common.c that is
+HAL_ETH_Init() failing, and HAL_ETH_Init() fails here for one reason: it
+performs a MAC software reset and spins until the DMA SWR bit clears, and
+that bit cannot clear without the RMII receive clock.
+
+On this board that 50 MHz reference clock arrives on PA1 FROM the LAN8742 -
+the MCU does not generate it. Releasing the PHY's reset line does not make
+the clock appear; the PHY's PLL has to lock first. Releasing reset and
+resetting the MAC in the same init pass leaves no time for that at all.
+
+50 ms is generous on purpose. It is paid once, at boot, on a mains-powered
+bench instrument, and the failure it prevents costs an entire interface
+with no log line to explain it. regulator_fixed.c honors this with a
+k_usleep() after it enables the line, and the regulator runs at priority 75
+against the MAC's 80, so the wait lands in the gap between them.
+
+```dts
+&ethernet_phy_en {
+	startup-delay-us = <50000>;
+};
+```
