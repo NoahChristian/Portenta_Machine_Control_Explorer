@@ -281,6 +281,39 @@
 	};
 };
 
+/*
+ * THE ENCODER INPUTS, READ AS PLAIN GPIO - and the reason is power, not
+ * encoders.
+ *
+ * Datasheet section 3-13: "Each channel is pulled-up to the board 24V supply
+ * with a 10 k pull-up resistor." That is the BOARD rail, not a connector's
+ * external 24V IN, and it is the only thing on this carrier whose state
+ * depends on it in a way the MCU can see. The power tree (section 3-21) has
+ * no divider to any ADC, so 24 V cannot be measured at all - only inferred,
+ * and this is the strongest inference available: with nothing plugged into
+ * J10, all six channels read high if and only if the rail is up, and all six
+ * falling together is something a real encoder cannot do.
+ *
+ * It is an inference and the panel says so. A wired encoder drives these, so
+ * the reading means "24 V present" only while J10 is idle.
+ *
+ * NOTE PH_11 AND PH_12: the board devicetree maps those to i2c4, which this
+ * shield disables. That is not tidiness - enabling i2c4 would take encoder 0's
+ * B and I channels with it.
+ */
+/ {
+	pmc_encoder_in: pmc-encoder-in {
+		compatible = "gpio-keys";
+
+		enc0a: enc0a { gpios = <&gpioj 8  GPIO_ACTIVE_HIGH>; label = "ENC0 A"; };
+		enc0b: enc0b { gpios = <&gpioh 12 GPIO_ACTIVE_HIGH>; label = "ENC0 B"; };
+		enc0i: enc0i { gpios = <&gpioh 11 GPIO_ACTIVE_HIGH>; label = "ENC0 I"; };
+		enc1a: enc1a { gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>; label = "ENC1 A"; };
+		enc1b: enc1b { gpios = <&gpioi 7  GPIO_ACTIVE_HIGH>; label = "ENC1 B"; };
+		enc1i: enc1i { gpios = <&gpioj 10 GPIO_ACTIVE_HIGH>; label = "ENC1 I"; };
+	};
+};
+
 &i2c3 {
 	status = "okay";
 

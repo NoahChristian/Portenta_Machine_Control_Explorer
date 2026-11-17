@@ -6,6 +6,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -21,6 +22,7 @@
 #include <stm32_ll_system.h>
 
 #include "clock.h"
+#include "expander.h"
 #include "health.h"
 #include "snapshot.h"
 
@@ -134,6 +136,8 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 
 	read_clock(s);
 	pmc_clock_get(&s->drift);
+	pmc_io_read(&s->io);
+	pmc_rail_read(&s->rail);
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {
@@ -209,9 +213,48 @@ int pmc_snapshot_reading(const struct pmc_snapshot *s, const char *chan,
 	}
 
 	/*
-	 * Everything else. DIN, DO and PDIO live on the two TCA6424A expanders
-	 * and nothing in this image reads them yet; TEMP, ENC, RS485 and CAN
-	 * have no reader either. Saying so is the point - see the header.
+	 * DIN and PDIO now come off the expanders. The level is real; the
+	 * MAPPING is not yet - every channel map here is transcribed from the
+	 * mbed library and has not been confirmed at the connector, so the
+	 * text says which bit was read and the panel keeps the dashed border
+	 * until tools/terminals.csv says `measured`.
+	 */
+	if (strncmp(chan, "DIN", 3) == 0) {
+		const int n = atoi(chan + 3);
+
+		if (n >= 0 && n < PMC_DIN_COUNT) {
+			if (!s->io.din_ok) {
+				(void)snprintk(out, cap,
+					       "DIN expander did not answer (%d)",
+					       s->io.din_err);
+				return -1;
+			}
+			(void)snprintk(out, cap, "%s (map unverified)",
+				       s->io.din[n] ? "HIGH" : "LOW");
+			return s->io.din[n];
+		}
+	}
+
+	if (strncmp(chan, "PDIO", 4) == 0) {
+		const int n = atoi(chan + 4);
+
+		if (n >= 0 && n < PMC_PDIO_COUNT) {
+			if (!s->io.pdio_ok) {
+				(void)snprintk(out, cap,
+					       "PDIO expander did not answer (%d)",
+					       s->io.pdio_err);
+				return -1;
+			}
+			(void)snprintk(out, cap, "%s (map unverified)",
+				       s->io.pdio[n] ? "HIGH" : "LOW");
+			return s->io.pdio[n];
+		}
+	}
+
+	/*
+	 * DO is H7 GPIOs behind a shared latch rather than expander bits, so it
+	 * arrives with the write path. TEMP, ENC, RS485 and CAN have no reader
+	 * either. Saying so is the point - see the header.
 	 */
 	(void)snprintk(out, cap, "no reader in this image yet");
 	return -1;
@@ -253,6 +296,27 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 			      ok ? "true" : "false", detail);
 	}
 	n += snprintk(out + n, cap - n, "],");
+
+	n += snprintk(out + n, cap - n,
+		      "\"io\":{\"dinOk\":%s,\"pdioOk\":%s,\"din\":[",
+		      s->io.din_ok ? "true" : "false",
+		      s->io.pdio_ok ? "true" : "false");
+	for (size_t i = 0; i < PMC_DIN_COUNT; i++) {
+		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "", s->io.din[i]);
+	}
+	n += snprintk(out + n, cap - n, "],\"pdio\":[");
+	for (size_t i = 0; i < PMC_PDIO_COUNT; i++) {
+		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "", s->io.pdio[i]);
+	}
+	n += snprintk(out + n, cap - n, "]},");
+
+	/* "inferred" is in the name on purpose: nothing here measures a rail. */
+	n += snprintk(out + n, cap - n,
+		      "\"rail24Inferred\":{\"sensed\":%s,\"present\":%s,"
+		      "\"encoderWired\":%s,\"highs\":%u},",
+		      s->rail.sensed ? "true" : "false",
+		      s->rail.present ? "true" : "false",
+		      s->rail.wired ? "true" : "false", s->rail.highs);
 
 	n += snprintk(out + n, cap - n, "\"slots\":[");
 	for (size_t i = 0; i < s->n_slot; i++) {

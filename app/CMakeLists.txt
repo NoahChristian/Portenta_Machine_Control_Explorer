@@ -27,6 +27,7 @@ target_sources(app PRIVATE
     src/health.c
     src/net.c
     src/clock.c
+    src/expander.c
     src/snapshot.c
     src/status_out.c
     src/httpd.c

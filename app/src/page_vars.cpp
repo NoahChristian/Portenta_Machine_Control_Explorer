@@ -95,6 +95,9 @@ static uint32_t vUptime;
    makes those cells tick. vClkEpoch is 0 whenever the time is not real, which
    is what the script tests before it starts ticking at all. */
 static uint32_t vClkEpoch;
+static char     vRail24[20];
+static char     vRail12[20];
+static char     vRailNote[72];
 static char     vClkTime[12];
 static char     vClkLabel[56];
 
@@ -170,6 +173,34 @@ static void put(char *dst, size_t cap, const char *src)
  * the renderer would make every timestamp on this page a claim about a setting
  * nobody chose. The label says UTC so the reader is not guessing.
  */
+/*
+ * THE RAIL LAMPS. 24 V is lit only when all six encoder pulls read high; if
+ * anything is plugged into J10 the inference is void, the lamp goes dark and
+ * the note says why. 12 V follows 24 V and nothing else - an LDO off the same
+ * rail with no sense path of its own - so it is lit on the same evidence and
+ * never on its own.
+ */
+static void fillRail(void)
+{
+	const bool up = gSnap.rail.sensed && gSnap.rail.present;
+
+	PUT(vRail24, up ? "led green on" : "led green");
+	PUT(vRail12, up ? "led amber on" : "led amber");
+
+	if (!gSnap.rail.sensed) {
+		PUT(vRailNote, "24V/12V not sensed - encoder pins unreadable");
+	} else if (gSnap.rail.wired) {
+		(void)snprintk(vRailNote, sizeof(vRailNote),
+			       "24V unknown - %u of 6 encoder pins high, so "
+			       "something is wired to J10",
+			       (unsigned)gSnap.rail.highs);
+	} else if (up) {
+		PUT(vRailNote, "24V inferred present from the encoder pull-ups");
+	} else {
+		PUT(vRailNote, "24V inferred ABSENT - all encoder pulls are low");
+	}
+}
+
 static void fillClock(void)
 {
 	vClkEpoch = 0;
@@ -400,6 +431,9 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_VAR_RO("uptime", vUptime)
 	TPL_VAR_RO("clkEpoch", vClkEpoch)
 	TPL_STR_RO("clkLabel", vClkLabel)
+	TPL_STR_RO("rail24", vRail24)
+	TPL_STR_RO("rail12", vRail12)
+	TPL_STR_RO("railNote", vRailNote)
 
 	/* The clicked terminal. */
 	TPL_VAR_RO("pickOn", vPickOn)
@@ -607,6 +641,7 @@ extern "C" void pmc_page_init(void)
 	PUT(vFw, gSnap.fw);
 	vUptime = gSnap.uptime_s;
 	fillClock();
+	fillRail();
 
 	const uint16_t faults = gTpl.selfTest(TPL_FROM_FLASH(PAGE_INDEX), sink);
 
@@ -647,6 +682,7 @@ extern "C" int pmc_page_step(enum http_transaction_status status,
 		PUT(vFw, gSnap.fw);
 		vUptime = gSnap.uptime_s;
 	fillClock();
+	fillRail();
 		pick(query, qlen);
 	}
 

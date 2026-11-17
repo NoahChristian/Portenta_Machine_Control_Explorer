@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "f1388015"
-#define PAGE_INDEX_BYTES 19902
+#define PAGE_INDEX_BUILD "d74ae1a4"
+#define PAGE_INDEX_BYTES 20629
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -100,7 +100,16 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
   .btnbody { fill:#aeb6bd; } .btn { fill:#3d454e; }
   .hdr { fill:#e9ecee; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
+  /* The indicator LEDs in their real colors: 3V3 red, 12V yellow, 24V
+     green. Unlit is the color darkened, not gray, so an off LED still reads
+     as the right lamp. */
   .led { fill:#333b45; }
+  .led.red   { fill:#3f1512; } .led.red.on   { fill:#ff3b30;
+                                               filter:drop-shadow(0 0 3px #ff3b30); }
+  .led.amber { fill:#3f3310; } .led.amber.on { fill:#f5c35c;
+                                               filter:drop-shadow(0 0 3px #f5c35c); }
+  .led.green { fill:#123a1c; } .led.green.on { fill:#38d16a;
+                                               filter:drop-shadow(0 0 3px #38d16a); }
   .brand  { fill:#cfd4da; font:14px ui-monospace,monospace;
             text-anchor:middle; letter-spacing:.15em; }
   .brand2 { fill:#8d959e; font:10px ui-monospace,monospace;
@@ -359,11 +368,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 <text class="ledlbl" x="58" y="325.4">CAN TX</text>
 <circle class="led" cx="46" cy="342" r="4.4"/>
 <text class="ledlbl" x="58" y="345.4">CAN RX</text>
-<circle class="led" cx="46" cy="362" r="4.4"/>
+<circle class="led red on" cx="46" cy="362" r="4.4"/>
 <text class="ledlbl" x="58" y="365.4">3V3</text>
-<circle class="led" cx="46" cy="382" r="4.4"/>
+<circle data-tpl-attr="class rail12" class="led amber" cx="46" cy="382" r="4.4"/>
 <text class="ledlbl" x="58" y="385.4">12V</text>
-<circle class="led" cx="46" cy="402" r="4.4"/>
+<circle data-tpl-attr="class rail24" class="led green" cx="46" cy="402" r="4.4"/>
 <text class="ledlbl" x="58" y="405.4">24V</text>
 </svg>
 </div>
@@ -376,6 +385,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <span><i class="sw" style="background:#8c7118"></i>GND / supply</span>
   <span><i class="sw" style="background:#ff5a1f"></i>channel LED lit</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
+  <span><!--#v railNote--></span>
 </p>
 
 <div id="pick">

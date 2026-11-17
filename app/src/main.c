@@ -34,6 +34,7 @@
 #include <zephyr/drivers/flash.h>
 
 #include "clock.h"
+#include "expander.h"
 #include "page_vars.h"
 
 
@@ -187,6 +188,10 @@ int main(void)
 	 * blocks until an address exists, so starting it early costs nothing.
 	 */
 	pmc_clock_init();
+
+	/* Configures the expander input pins. A failure here is reported and
+	   not fatal: the rest of the panel still works without DIN. */
+	(void)pmc_io_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

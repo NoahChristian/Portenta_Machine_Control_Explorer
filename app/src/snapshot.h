@@ -27,6 +27,7 @@
 #include <stdint.h>
 
 #include "clock.h"
+#include "expander.h"
 
 #define PMC_SNAP_AI   3
 #define PMC_SNAP_SLOT 2
@@ -80,6 +81,8 @@ struct pmc_snapshot {
 	uint8_t clock_state;  /* enum pmc_clock_state */
 	int64_t clock_epoch;  /* UTC seconds; 0 unless clock_state is HELD */
 	struct pmc_clock_drift drift;  /* what NTP has measured, if anything */
+	struct pmc_io_state    io;     /* DIN and PDIO off the expanders */
+	struct pmc_rail        rail;   /* 24 V, inferred - never measured */
 
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;
