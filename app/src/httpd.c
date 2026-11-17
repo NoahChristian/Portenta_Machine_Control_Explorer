@@ -43,6 +43,7 @@
 
 #include "health.h"
 #include "httpd.h"
+#include "rs485.h"
 #include "io_post.h"
 #include "page_vars.h"
 
@@ -164,6 +165,110 @@ static struct http_resource_detail_dynamic state_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
+
+/* ---------------------------------------------------------- /rs485.json ---
+ * Its own route rather than a corner of /state.json, because a terminal wants
+ * to poll fast and the rest of the snapshot touches every expander on the
+ * board to answer. The query carries ?from=<absolute byte position>, so the
+ * browser asks only for what it has not seen - and the reply says plainly
+ * when the window it asked for has already been overwritten.
+ */
+static char rs485_buf[2600];
+
+static int rs485_handler(struct http_client_ctx *client,
+			 enum http_transaction_status status,
+			 const struct http_request_ctx *request_ctx,
+			 struct http_response_ctx *response_ctx, void *user_data)
+{
+	static const struct http_header hdrs[] = {
+		{ .name = "Content-Type", .value = "application/json" },
+		{ .name = "Cache-Control", .value = "no-store" },
+	};
+	uint8_t bytes[768];
+	uint64_t from = 0, next = 0;
+	bool lost = false;
+	size_t n;
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	/* On a GET, request_ctx->data is the query string. */
+	if (request_ctx != NULL && request_ctx->data != NULL &&
+	    request_ctx->data_len > 0) {
+		const char *q = (const char *)request_ctx->data;
+		const char *p = strstr(q, "from=");
+
+		if (p != NULL) {
+			from = (uint64_t)strtoull(p + 5, NULL, 10);
+		}
+	}
+
+	n = pmc_rs485_rx_read(from, bytes, sizeof(bytes), &next, &lost);
+
+	struct pmc_485_cfg c;
+	uint8_t rep[PMC_485_TX_MAX];
+	size_t rep_len = 0;
+	uint32_t rep_ms = 0;
+	size_t w = 0;
+
+	pmc_rs485_cfg_get(&c);
+	pmc_rs485_repeat_get(rep, sizeof(rep), &rep_len, &rep_ms);
+
+	w += snprintk(rs485_buf + w, sizeof(rs485_buf) - w,
+		      "{\"baud\":%u,\"bits\":%u,\"parity\":\"%c\","
+		      "\"stop\":%u,\"mode\":\"%s\",\"term\":%s,"
+		      "\"slew\":%s,\"echo\":%s,\"charUs\":%u,"
+		      "\"turnaroundUs\":%u,\"rxTotal\":%llu,"
+		      "\"txTotal\":%llu,\"errors\":%u,\"repMs\":%u,"
+		      "\"lost\":%s,\"next\":%llu,\"hex\":\"",
+		      (unsigned)c.baud, (unsigned)c.data_bits, c.parity,
+		      (unsigned)c.stop_bits,
+		      c.mode == PMC_485_RS232 ? "rs232" :
+		      c.mode == PMC_485_FULL ? "full" : "half",
+		      c.term ? "true" : "false", c.slew ? "true" : "false",
+		      c.echo ? "true" : "false",
+		      (unsigned)pmc_rs485_char_us(),
+		      (unsigned)pmc_rs485_turnaround_us(),
+		      (unsigned long long)pmc_rs485_rx_total(),
+		      (unsigned long long)pmc_rs485_tx_total(),
+		      (unsigned)pmc_rs485_errors(), (unsigned)rep_ms,
+		      lost ? "true" : "false", (unsigned long long)next);
+
+	for (size_t i = 0; i < n && w + 3 < sizeof(rs485_buf); i++) {
+		w += snprintk(rs485_buf + w, sizeof(rs485_buf) - w, "%02x",
+			      bytes[i]);
+	}
+	w += snprintk(rs485_buf + w, sizeof(rs485_buf) - w, "\",\"rep\":\"");
+	for (size_t i = 0; i < rep_len && w + 3 < sizeof(rs485_buf); i++) {
+		w += snprintk(rs485_buf + w, sizeof(rs485_buf) - w, "%02x",
+			      rep[i]);
+	}
+	w += snprintk(rs485_buf + w, sizeof(rs485_buf) - w, "\"}");
+
+	response_ctx->status = HTTP_200_OK;
+	response_ctx->headers = hdrs;
+	response_ctx->header_count = ARRAY_SIZE(hdrs);
+	response_ctx->body = (const uint8_t *)rs485_buf;
+	response_ctx->body_len = w;
+	response_ctx->final_chunk = true;
+
+	pmc_health_note_http_200();
+	return 0;
+}
+
+static struct http_resource_detail_dynamic rs485_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+	},
+	.cb = rs485_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(rs485_resource, pmc_service, "/rs485.json", &rs485_detail);
 
 /* ------------------------------------------------------------- /io ------ */
 

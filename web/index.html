@@ -282,6 +282,36 @@
                     background:transparent; color:inherit; }
   .wirerow button.on { border-color:#ffb020; color:#ffb020; }
   .wirerow.off { opacity:.4; }
+
+  /* --- serial terminal -------------------------------------------------- */
+  .term { background:#0b0e13; border:1px solid #8884; border-radius:6px;
+          padding:.7rem .9rem; height:15rem; overflow-y:auto;
+          font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+          white-space:pre; color:#c8d4e0; }
+  .term .t { color:#ffb020; }      /* bytes this board sent             */
+  .term .r { color:#7cc4ff; }      /* bytes that arrived                */
+  .term .meta { color:var(--dim); }
+  .termgrid { display:grid; grid-template-columns:1fr 20rem; gap:1.2rem;
+              align-items:start; }
+  @media (max-width:860px) { .termgrid { grid-template-columns:1fr; } }
+  .cfgbox { border:1px solid #8884; border-radius:6px; padding:.8rem 1rem; }
+  .cfgbox .row { display:flex; gap:.4rem; align-items:center; margin:.4rem 0;
+                 font-size:.78rem; flex-wrap:wrap; }
+  .cfgbox label { color:var(--dim); min-width:4.2rem; }
+  .cfgbox select, .cfgbox input { font:inherit; font-size:.78rem;
+      padding:.2rem .35rem; border-radius:4px; border:1px solid #8886;
+      background:transparent; color:inherit; }
+  .cfgbox input[type=text] { width:100%; font-family:ui-monospace,monospace; }
+  .cfgbox button { font:inherit; font-size:.78rem; padding:.22rem .6rem;
+      border-radius:4px; border:1px solid #8886; cursor:pointer;
+      background:transparent; color:inherit; }
+  .cfgbox button.on { border-color:#ff3b30; color:#ff3b30; }
+  #termsay { font-size:.78rem; color:var(--dim); margin-top:.5rem;
+             min-height:1.1em; }
+  #termsay.bad { color:var(--bad); }
+  .turn { font-size:.75rem; color:var(--dim); margin-top:.6rem;
+          line-height:1.45; }
+  .turn b { color:#ffb020; font-weight:600; }
 </style></head><body>
 <svg id="links" aria-hidden="true"></svg>
 
@@ -611,6 +641,73 @@
 </div>
 
 <h2 style="font-size:.9rem;letter-spacing:.06em;color:var(--dim);
+           text-transform:uppercase;margin:2rem 0 .8rem">Serial &middot; RS485 / RS232</h2>
+
+<div class="termgrid">
+  <div>
+    <div class="term" id="term"><span class="meta">waiting for bytes...</span></div>
+    <div id="termsay"></div>
+    <p class="turn" id="turninfo"></p>
+  </div>
+
+  <div class="cfgbox">
+    <div class="row">
+      <label for="baud">baud</label>
+      <select id="baud">
+        <option>1200</option><option>2400</option><option>4800</option>
+        <option>9600</option><option>19200</option><option>38400</option>
+        <option>57600</option><option>115200</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="fmt">format</label>
+      <select id="fmt">
+        <option>8N1</option><option>8E1</option><option>8O1</option>
+        <option>8N2</option><option>7E1</option><option>7O1</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="dmode">wiring</label>
+      <select id="dmode">
+        <option value="half">RS485 half</option>
+        <option value="full">RS485 full</option>
+        <option value="rs232">RS232</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>bus</label>
+      <button type="button" id="bterm">120R</button>
+      <button type="button" id="bslew">slew</button>
+      <button type="button" id="becho">echo</button>
+    </div>
+    <div class="row"><button type="button" id="bapply">apply</button>
+      <button type="button" id="bclear">clear</button></div>
+
+    <hr style="border:0;border-top:1px solid #8884;margin:.9rem 0">
+
+    <div class="row"><label for="txhex">send</label></div>
+    <div class="row"><input type="text" id="txhex" value="01 03 00 00 00 01"
+        placeholder="hex bytes"></div>
+    <div class="row">
+      <button type="button" id="bsend">send once</button>
+      <input type="number" id="repms" min="0" max="60000" step="10" value="1000"
+             style="width:5rem"><span class="dim">ms</span>
+      <button type="button" id="brep">repeat</button>
+    </div>
+  </div>
+</div>
+
+<p class="note" style="margin-top:.9rem">
+  <b>This is a wire-level terminal, not a Modbus stack.</b> The usual
+  complaint about Modbus on this carrier is not that the protocol is wrong
+  &mdash; it is a library returning <code>Connection timed out</code> with no
+  way to tell whether a single byte ever left the board. So this shows the
+  bytes. Leave <em>echo</em> on and a half-duplex bus returns your own frame:
+  seeing it in the window proves the driver actually drove the pair, which is
+  the one thing a timeout never tells you.
+</p>
+
+<h2 style="font-size:.9rem;letter-spacing:.06em;color:var(--dim);
            text-transform:uppercase;margin:2rem 0 .8rem">Temperature</h2>
 
 <div class="tempwrap">
@@ -897,6 +994,149 @@
      server thread for every service and every client, so an event-stream
      would occupy it forever and starve the panel and the write route. Two
      seconds, one small document, and only the numbers are touched. */
+  /* --- serial terminal ------------------------------------------------
+     Its own poll, on its own route. /state.json touches every expander on
+     the board to answer, which is far too much work to do four times a
+     second just to see whether a byte arrived. */
+  var termEl = document.getElementById('term');
+  var termSay = document.getElementById('termsay');
+  var termFrom = 0, termFirst = true;
+
+  function tsay(t, bad) {
+    if (!termSay) { return; }
+    termSay.textContent = t;
+    termSay.className = bad ? 'bad' : '';
+  }
+
+  function post485(fields, label) {
+    var body = 'token=' + encodeURIComponent(tok.value);
+    for (var k in fields) {
+      body += '&' + k + '=' + encodeURIComponent(fields[k]);
+    }
+    tsay(label + ' ...');
+    return fetch('/io', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    }).then(function (r) { return r.text(); })
+      .then(function (t) { tsay(t.trim(), /^refused/.test(t)); })
+      .catch(function (e) { tsay('request failed: ' + e, true); });
+  }
+
+  function applyCfg() {
+    var f = document.getElementById('fmt').value;
+    post485({
+      do: '485cfg',
+      baud: document.getElementById('baud').value,
+      bits: f[0], parity: f[1], stop: f[2],
+      mode: document.getElementById('dmode').value,
+      term: document.getElementById('bterm').classList.contains('on') ? 1 : 0,
+      slew: document.getElementById('bslew').classList.contains('on') ? 1 : 0,
+      echo: document.getElementById('becho').classList.contains('on') ? 1 : 0
+    }, 'applying');
+  }
+
+  function toggleBtn(id) {
+    var b = document.getElementById(id);
+    if (b) { b.addEventListener('click', function () {
+      b.classList.toggle('on');
+    }); }
+  }
+  toggleBtn('bterm'); toggleBtn('bslew'); toggleBtn('becho');
+
+  var el;
+  el = document.getElementById('bapply');
+  if (el) { el.addEventListener('click', applyCfg); }
+  el = document.getElementById('bclear');
+  if (el) { el.addEventListener('click', function () {
+    termFrom = 0; termFirst = true;
+    if (termEl) { termEl.textContent = ''; }
+    post485({ do: '485clear' }, 'clearing');
+  }); }
+  el = document.getElementById('bsend');
+  if (el) { el.addEventListener('click', function () {
+    post485({ do: '485tx', hex: document.getElementById('txhex').value },
+            'sending');
+  }); }
+  el = document.getElementById('brep');
+  if (el) { el.addEventListener('click', function () {
+    var b = document.getElementById('brep');
+    var on = !b.classList.contains('on');
+
+    b.classList.toggle('on', on);
+    post485({ do: '485rep',
+              hex: document.getElementById('txhex').value,
+              ms: on ? document.getElementById('repms').value : 0 },
+            on ? 'starting repeat' : 'stopping repeat');
+  }); }
+
+  function hexDump(hex) {
+    /* Hex and printable ASCII side by side, 16 to a line - the layout every
+       protocol person already reads without being taught it. */
+    var out = '';
+    for (var i = 0; i < hex.length; i += 32) {
+      var row = hex.substr(i, 32);
+      var h = '', a = '';
+      for (var j = 0; j < row.length; j += 2) {
+        var v = parseInt(row.substr(j, 2), 16);
+        h += row.substr(j, 2) + ' ';
+        a += (v >= 32 && v < 127) ? String.fromCharCode(v) : '.';
+      }
+      while (h.length < 48) { h += ' '; }
+      out += h + ' |' + a + '\n';
+    }
+    return out;
+  }
+
+  function poll485() {
+    if (!termEl) { return; }
+    fetch('/rs485.json?from=' + termFrom, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var ti = document.getElementById('turninfo');
+        if (ti) {
+          /* The turnaround is shown, not buried. Getting it wrong is the
+             most reported cause of silence on this bus, and on this carrier
+             it has to be done in software - the UART's own driver-enable
+             pin is not routed. */
+          ti.innerHTML = 'one character takes <b>' + j.charUs +
+            ' us</b> at ' + j.baud + ' ' + j.bits + j.parity + j.stop +
+            ', so the driver is held an extra <b>' + j.turnaroundUs +
+            ' us</b> each side of a frame (3.5 character times, the Modbus ' +
+            'RTU frame boundary). rx ' + j.rxTotal + ' &middot; tx ' +
+            j.txTotal + (j.repMs ? ' &middot; repeating every ' + j.repMs +
+            ' ms' : '');
+        }
+
+        if (termFirst) {
+          /* First poll only syncs the cursor - otherwise opening the page
+             replays whatever happened to be in the ring. */
+          termFrom = j.next; termFirst = false;
+          termEl.innerHTML = '<span class="meta">listening at ' + j.baud +
+            ' ' + j.bits + j.parity + j.stop + '</span>\n';
+          return;
+        }
+        if (j.lost) {
+          var w = document.createElement('span');
+          w.className = 'meta';
+          w.textContent = '--- bytes were dropped: they arrived faster than ' +
+                          'this window was read ---\n';
+          termEl.appendChild(w);
+        }
+        if (j.hex && j.hex.length) {
+          var s = document.createElement('span');
+          s.className = 'r';
+          s.textContent = hexDump(j.hex);
+          termEl.appendChild(s);
+          termEl.scrollTop = termEl.scrollHeight;
+        }
+        termFrom = j.next;
+      })
+      .catch(function () { /* a missed poll is not worth a line */ });
+  }
+  poll485();
+  setInterval(poll485, 400);
+
   /* --- temperature ------------------------------------------------- */
   var slider = document.getElementById('tslider');
   var tsay = document.getElementById('tsay');

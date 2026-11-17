@@ -523,6 +523,25 @@
 };
 
 /*
+ * RS485 / RS232 on uart4.
+ *
+ * The board definition already routes uart4 to PA_0 and PI_9, which is what
+ * the carrier's transceiver is wired to; this only has to switch it on.
+ *
+ * NO `de-enable` HERE, AND THAT IS THE POINT. Zephyr's STM32 driver can run
+ * RS485 turnaround entirely in hardware - DEM drives a driver-enable pin and
+ * DEAT/DEDT set its lead and lag in register fields - but UART4's DE exists
+ * only on PA15 or PB14 in this package, and this carrier routes DE to PI_13
+ * and RE to PI_10. Those are ordinary GPIOs, so the turnaround has to be done
+ * in software, which is the single most reported cause of a silent Modbus bus
+ * on this board. rs485.c explains what that costs and how it is handled.
+ */
+&uart4 {
+	status = "okay";
+	current-speed = <19200>;
+};
+
+/*
  * ETHERNET IS OFF, DELIBERATELY AND TEMPORARILY.
  *
  * The carrier has an RJ45 on J13 and the plan is to use it. But with no cable

@@ -32,6 +32,7 @@ target_sources(app PRIVATE
     src/auth.c
     src/ao.c
     src/temp.c
+    src/rs485.c
     src/snapshot.c
     src/status_out.c
     src/httpd.c

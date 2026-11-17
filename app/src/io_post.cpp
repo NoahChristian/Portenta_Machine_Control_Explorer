@@ -27,6 +27,9 @@ extern "C" {
 #include "io_post.h"
 #include "io_write.h"
 #include "temp.h"
+#include "rs485.h"
+
+#include <ctype.h>
 
 LOG_MODULE_REGISTER(pmc_post, LOG_LEVEL_INF);
 
@@ -235,6 +238,106 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 		}
 		(void)pmc_temp_wires_set((uint8_t)atoi(w), detail, sizeof(detail));
 		n = refuse("%s", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "485cfg") == 0) {
+		struct pmc_485_cfg c;
+		char v[16];
+
+		pmc_rs485_cfg_get(&c);
+		if (field(s_body, "baud", v, sizeof(v)) != nullptr) {
+			c.baud = (uint32_t)atol(v);
+		}
+		if (field(s_body, "bits", v, sizeof(v)) != nullptr) {
+			c.data_bits = (uint8_t)atoi(v);
+		}
+		if (field(s_body, "parity", v, sizeof(v)) != nullptr) {
+			c.parity = v[0];
+		}
+		if (field(s_body, "stop", v, sizeof(v)) != nullptr) {
+			c.stop_bits = (uint8_t)atoi(v);
+		}
+		if (field(s_body, "mode", v, sizeof(v)) != nullptr) {
+			if (strcmp(v, "full") == 0) {
+				c.mode = PMC_485_FULL;
+			} else if (strcmp(v, "rs232") == 0) {
+				c.mode = PMC_485_RS232;
+			} else {
+				c.mode = PMC_485_HALF;
+			}
+		}
+		if (field(s_body, "term", v, sizeof(v)) != nullptr) {
+			c.term = (v[0] == '1');
+		}
+		if (field(s_body, "slew", v, sizeof(v)) != nullptr) {
+			c.slew = (v[0] == '1');
+		}
+		if (field(s_body, "echo", v, sizeof(v)) != nullptr) {
+			c.echo = (v[0] == '1');
+		}
+		(void)pmc_rs485_cfg_set(&c, detail, sizeof(detail));
+		n = refuse("%s", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "485tx") == 0 || strcmp(verb, "485rep") == 0) {
+		/*
+		 * Bytes arrive as hex, because the whole point is sending
+		 * frames a text field cannot express - a Modbus request is
+		 * mostly non-printable and ends in a CRC.
+		 */
+		char hex[2 * PMC_485_TX_MAX + 2];
+		uint8_t raw[PMC_485_TX_MAX];
+		size_t len = 0;
+
+		if (field(s_body, "hex", hex, sizeof(hex)) == nullptr) {
+			n = refuse("refused: needs hex\n");
+			goto done;
+		}
+		for (const char *p = hex; *p != '\0'; ) {
+			while (*p == ' ' || *p == ',' || *p == ':') {
+				p++;
+			}
+			if (*p == '\0') {
+				break;
+			}
+			if (!isxdigit((unsigned char)p[0]) ||
+			    !isxdigit((unsigned char)p[1])) {
+				n = refuse("refused: '%s' is not hex byte "
+					   "pairs\n", hex);
+				goto done;
+			}
+			if (len >= sizeof(raw)) {
+				n = refuse("refused: more than %u bytes\n",
+					   (unsigned)PMC_485_TX_MAX);
+				goto done;
+			}
+			char pair[3] = { p[0], p[1], '\0' };
+
+			raw[len++] = (uint8_t)strtoul(pair, nullptr, 16);
+			p += 2;
+		}
+
+		if (strcmp(verb, "485tx") == 0) {
+			(void)pmc_rs485_send(raw, len, detail, sizeof(detail));
+		} else {
+			char ms[12];
+			uint32_t period = 0;
+
+			if (field(s_body, "ms", ms, sizeof(ms)) != nullptr) {
+				period = (uint32_t)atol(ms);
+			}
+			(void)pmc_rs485_repeat_set(raw, len, period, detail,
+						   sizeof(detail));
+		}
+		n = refuse("%s", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "485clear") == 0) {
+		pmc_rs485_clear();
+		n = refuse("cleared\n");
 		goto done;
 	}
 

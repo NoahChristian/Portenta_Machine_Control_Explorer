@@ -37,6 +37,7 @@
 #include "expander.h"
 #include "ao.h"
 #include "temp.h"
+#include "rs485.h"
 #include "io_write.h"
 #include "page_vars.h"
 
@@ -200,6 +201,7 @@ int main(void)
 	/* Temperature starts its own sweep thread; a failure here is
 	 * reported by the health check rather than stopping boot. */
 	(void)pmc_temp_init();
+	(void)pmc_rs485_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)
