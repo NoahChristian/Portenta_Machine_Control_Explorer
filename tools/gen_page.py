@@ -4,6 +4,11 @@
     python tools/gen_page.py            regenerate
     python tools/gen_page.py --check    fail if the header is stale
 
+The generated header is COMMITTED, deliberately, and so is not in .gitignore:
+--check can only compare against a file in the tree, so ignoring it would
+disable the drift guard that is the reason for generating it - and a committed
+copy means the firmware builds on a machine with no Python.
+
 WHAT THIS IS NOW. A thin wrapper around tools/mkhtml.py in the
 Arduino_HTTP_HTML repository, which is the generator for the HtmlTpl SSI
 engine this panel renders with. The real work is there: it strips the
