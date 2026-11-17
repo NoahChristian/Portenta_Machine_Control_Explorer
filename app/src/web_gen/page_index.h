@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "6fe85df8"
-#define PAGE_INDEX_BYTES 21467
+#define PAGE_INDEX_BUILD "a28a83d2"
+#define PAGE_INDEX_BYTES 28666
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -36,7 +36,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     --live-unk:#e3c75a;  /* a channel with no reading yet     */
     --nochan:#8c7118;    /* not a channel: GND, a supply pin  */
   }
-  body { font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0;
+  body { position:relative;
+         font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; margin:0;
          padding:1.25rem; max-width:84rem; }
   h1 { font-size:1.1rem; margin:0 0 .25rem; }
   .sub { color:var(--dim); margin:0 0 1rem; font-size:.85rem; }
@@ -162,7 +163,10 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
      without a digit being a variable. The seam across each card at half
      height is the whole trick: it is what makes a box read as a flip card
      rather than as a bordered letter. */
-  .ccw { position:fixed; top:10px; right:12px; z-index:50; text-align:right;
+  /* ABSOLUTE, NOT FIXED. Fixed kept it pinned to the viewport, so scrolling
+     dragged it down over the board drawing - it sat on the ENCODERS block.
+     It belongs beside the heading, so it scrolls away with it. */
+  .ccw { position:absolute; top:10px; right:12px; z-index:50; text-align:right;
          pointer-events:none;
          font:19px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace; }
   .ccw-row { display:flex; gap:2px; justify-content:flex-end;
@@ -195,6 +199,29 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     .ccw { position:static; text-align:left; margin:0 0 .75rem; }
     .ccw-row { justify-content:flex-start; }
   }
+
+  /* --- controls ----------------------------------------------------------
+     The token is typed here, kept in sessionStorage, and never rendered by
+     the board: a token in the served HTML would hand write access to anyone
+     who can load the page, which is the opposite of gating it. */
+  .ctl { border:1px solid #8884; border-radius:6px; padding:.8rem 1rem;
+         margin:1.25rem 0; }
+  .ctl h2 { font-size:.8rem; color:var(--dim); margin:0 0 .6rem;
+            text-transform:uppercase; letter-spacing:.05em; font-weight:600; }
+  .ctl .row { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;
+              margin:.35rem 0; }
+  .ctl label { font-size:.8rem; color:var(--dim); min-width:4.5rem; }
+  .ctl button { font:inherit; font-size:.8rem; padding:.25rem .6rem;
+                border-radius:4px; border:1px solid #8886; cursor:pointer;
+                background:transparent; color:inherit; }
+  .ctl button:hover { border-color:currentColor; }
+  .ctl input { font:inherit; font-size:.8rem; padding:.25rem .4rem;
+               border-radius:4px; border:1px solid #8886;
+               background:transparent; color:inherit; width:7rem; }
+  #ctlsay { font-size:.8rem; color:var(--dim); margin-top:.6rem;
+            min-height:1.2em; white-space:pre-wrap; }
+  #ctlsay.bad { color:var(--bad); }
+  #ctlsay.ok  { color:var(--ok); }
 </style></head><body>
 
 
@@ -410,6 +437,31 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <br><span class="meta"><!--#v pickConf--></span>
 <!--#else-->
   <span class="dim">Click a terminal on the board to read what it is.</span>
+</p>
+
+
+<div class="ctl">
+  <h2>Drive</h2>
+  <div class="row">
+    <label for="tok">token</label>
+    <input id="tok" type="password" placeholder="write token" autocomplete="off">
+    <button id="tokclear" type="button">forget</button>
+    <span class="dim" style="font-size:.75rem">kept in this tab only</span>
+  </div>
+  <div class="row"><label>DO</label><span id="dobtns"></span></div>
+  <div class="row"><label>pulse</label><span id="pulsebtns"></span>
+    <span class="dim" style="font-size:.75rem">200 ms</span></div>
+  <div class="row">
+    <label for="aoch">AO</label>
+    <select id="aoch"><option>AO0</option><option>AO1</option><option>AO3</option></select>
+    <input id="aomv" type="number" min="0" max="10000" step="100" value="5000">
+    <span class="dim" style="font-size:.75rem">mV</span>
+    <button id="aoset" type="button">set</button>
+  </div>
+  <div id="ctlsay"></div>
+</div>
+
+<p class="legend" style="margin-top:0">
 <!--#/-->
 </div>
 
@@ -438,16 +490,16 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </table>
 </div>
 
-<table>
-  <caption>Analog inputs</caption>
+<table id="aitable">
+  <caption>Analog inputs &middot; <span class="dim" style="font-weight:400;font-size:.8rem">updating every 2 s</span></caption>
   <thead><tr><th>channel</th><th>pad</th><th>raw</th><th>mV</th>
     <th>switch</th></tr></thead>
   <tbody>
   <!--#each ai-->
     <tr><td><!--#v aName--></td><td class="dim"><!--#v aPad--></td>
-      <td><!--#v aRaw--></td><td><!--#v aMv--></td>
-      <!--#if aOpen--><td class="ok">open</td>
-      <!--#else--><td class="bad">CLOSED</td><!--#/--></tr>
+      <td class="aiv"><!--#v aRaw--></td><td class="aiv"><!--#v aMv--></td>
+      <!--#if aOpen--><td class="ok aiv">open</td>
+      <!--#else--><td class="bad aiv">CLOSED</td><!--#/--></tr>
   <!--#/each-->
   </tbody>
 </table>
@@ -465,6 +517,118 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   analog switches are open.
 </p>
 
+<script>
+/* Controls and the AI poll. Both talk to the board; neither re-renders the
+   page. The clock script below is separate and talks to nobody. */
+(function () {
+  var say = document.getElementById('ctlsay');
+  var tok = document.getElementById('tok');
+  if (!say || !tok) { return; }
+
+  try { tok.value = sessionStorage.getItem('pmctok') || ''; } catch (e) {}
+  tok.addEventListener('change', function () {
+    try { sessionStorage.setItem('pmctok', tok.value); } catch (e) {}
+  });
+  document.getElementById('tokclear').addEventListener('click', function () {
+    tok.value = '';
+    try { sessionStorage.removeItem('pmctok'); } catch (e) {}
+    note('token forgotten', '');
+  });
+
+  function note(text, cls) { say.textContent = text; say.className = cls; }
+
+  function post(fields, label) {
+    var body = 'token=' + encodeURIComponent(tok.value);
+    for (var k in fields) {
+      body += '&' + k + '=' + encodeURIComponent(fields[k]);
+    }
+    note(label + ' ...', '');
+    fetch('/io', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    }).then(function (r) { return r.text(); })
+      .then(function (t) {
+        /* The board's own words, refusal included. Nothing is reworded here:
+           a control that paraphrases the device is a control that can lie
+           about it. */
+        note(t.trim(), /^refused|MISMATCH|error/.test(t) ? 'bad' : 'ok');
+      })
+      .catch(function (e) { note('request failed: ' + e, 'bad'); });
+  }
+
+  var dob = document.getElementById('dobtns');
+  var pub = document.getElementById('pulsebtns');
+  for (var i = 0; i < 8; i++) {
+    (function (n) {
+      /* `btn` is declared INSIDE the closure. It was a single var outside the
+         loop, so every handler shared one reference - the last button made.
+         The channel posted was right, because n is captured here, but the
+         on/off state and the red rim were always read from and written to 07.
+         A control that shows a different channel's state than the one it
+         drove is worse than one that shows nothing. */
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '0' + n;
+      btn.addEventListener('click', function () {
+        var on = btn.getAttribute('data-on') !== '1';
+        btn.setAttribute('data-on', on ? '1' : '0');
+        btn.style.borderColor = on ? '#ff3b30' : '';
+        post({ do: 'set', chan: 'DO' + n, v: on ? 1 : 0 }, 'DO' + n);
+      });
+      dob.appendChild(btn);
+
+      var p = document.createElement('button');
+      p.type = 'button';
+      p.textContent = '0' + n;
+      p.addEventListener('click', function () {
+        post({ do: 'pulse', chan: 'DO' + n, ms: 200 }, 'DO' + n + ' pulse');
+      });
+      pub.appendChild(p);
+    })(i);
+  }
+
+  document.getElementById('aoset').addEventListener('click', function () {
+    post({ do: 'ao',
+           chan: document.getElementById('aoch').value,
+           mv: document.getElementById('aomv').value }, 'AO');
+  });
+
+  /* --- the AI poll ------------------------------------------------------
+     Short requests that complete, NOT a held-open stream. Zephyr runs one
+     server thread for every service and every client, so an event-stream
+     would occupy it forever and starve the panel and the write route. Two
+     seconds, one small document, and only the numbers are touched. */
+  var aiTable = document.getElementById('aitable');
+  if (!aiTable) { return; }
+
+  function poll() {
+    fetch('/state.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ai) { return; }
+        /* Row order is the registry's order, which is the order the board
+           reads them in - matching by position rather than by a key the
+           template would have to carry three times per row. */
+        var rows = aiTable.tBodies[0].rows;
+        for (var k = 0; k < rows.length && k < j.ai.length; k++) {
+          var c = rows[k].querySelectorAll('.aiv');
+          if (c.length < 3) { continue; }
+          set(c[0], j.ai[k].raw);
+          set(c[1], j.ai[k].mv);
+          set(c[2], j.ai[k].open ? 'open' : 'CLOSED');
+          c[2].className = 'aiv ' + (j.ai[k].open ? 'ok' : 'bad');
+        }
+      })
+      .catch(function () { /* a missed poll says nothing worth saying */ });
+  }
+  function set(el, v) {
+    if (el.textContent !== String(v)) { el.textContent = v; }
+  }
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
 <script>
 /* The only script on this page, and it talks to nobody.
    It reads one number the server already rendered and advances the cells the
