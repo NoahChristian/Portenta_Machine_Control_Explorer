@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "1445713b"
-#define PAGE_INDEX_BYTES 41285
+#define PAGE_INDEX_BUILD "a0c1087e"
+#define PAGE_INDEX_BYTES 43511
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -262,6 +262,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   #tsay.bad { color:var(--bad); }
   #tsay.ok  { color:var(--ok); }
   .approx { color:#ffb020; }
+  .wirerow { display:flex; gap:.4rem; align-items:center; margin-top:.8rem;
+             font-size:.78rem; }
+  .wirerow button { font:inherit; font-size:.78rem; padding:.18rem .5rem;
+                    border-radius:4px; border:1px solid #8886; cursor:pointer;
+                    background:transparent; color:inherit; }
+  .wirerow button.on { border-color:#ffb020; color:#ffb020; }
+  .wirerow.off { opacity:.4; }
 </style></head><body>
 <svg id="links" aria-hidden="true"></svg>
 
@@ -553,6 +560,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     <div class="modenote">
       One switch for the whole board, not one per channel: the carrier has a
       single double-throw switch between the two converters.
+    </div>
+
+    
+    <div class="wirerow" id="wirerow">
+      <span class="dim">RTD leads</span>
+      <button type="button" id="w2">2 / 4</button>
+      <button type="button" id="w3">3</button>
     </div>
     <div id="tsay"></div>
   </div>
@@ -851,9 +865,38 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     });
   }
 
+  function wires(n) {
+    tsay.textContent = 'asking for ' + n + '-wire ...';
+    tsay.className = '';
+    fetch('/io', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'token=' + encodeURIComponent(tok.value) + '&do=wires&n=' + n
+    }).then(function (r) { return r.text(); })
+      .then(function (t) {
+        tsay.textContent = t.trim();
+        tsay.className = /^refused/.test(t) ? 'bad' : 'ok';
+      })
+      .catch(function (e) { tsay.textContent = 'request failed: ' + e;
+                            tsay.className = 'bad'; });
+  }
+  var w2 = document.getElementById('w2'), w3 = document.getElementById('w3');
+  if (w2) { w2.addEventListener('click', function () { wires(2); }); }
+  if (w3) { w3.addEventListener('click', function () { wires(3); }); }
+
   function tempShow(j) {
     if (!j.temp) { return; }
     lampsShow(j.temp.mode);
+
+    /* Like the lamps, these follow the board and not the click. Dimmed
+       outside PT100 because the setting does nothing to a thermocouple -
+       showing it as live there would imply it had an effect. */
+    var wr = document.getElementById('wirerow');
+    if (wr) {
+      wr.classList.toggle('off', j.temp.mode !== 'PT100');
+      if (w2) { w2.classList.toggle('on', j.temp.wires === 2); }
+      if (w3) { w3.classList.toggle('on', j.temp.wires === 3); }
+    }
 
     var tbl = document.getElementById('ttable');
     if (!tbl) { return; }
@@ -878,7 +921,14 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
       cell[2].textContent = (j.temp.mode === 'PT100') ? 'n/a'
         : (c.coldMC ? (c.coldMC / 1000).toFixed(2) : '-');
-      cell[3].textContent = c.word || '-';
+      /* In PT100 mode the converter names the cause; in thermocouple
+         modes all there is to show is the word it put on the bus. */
+      if (j.temp.mode === 'PT100') {
+        cell[3].textContent = c.cause
+          ? c.cause : (c.rtdFault ? ('fault 0x' + c.rtdFault.toString(16)) : '-');
+      } else {
+        cell[3].textContent = c.word || '-';
+      }
     }
   }
 

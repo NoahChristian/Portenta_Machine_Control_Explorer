@@ -431,8 +431,16 @@
 	pinctrl-0 = <&spi2_sck_pi1 &spi2_miso_pc2 &spi2_mosi_pc3>;
 	pinctrl-names = "default";
 
-	cs-gpios = <&gpioi 0 GPIO_ACTIVE_LOW>,   /* MC_TC_CS  - MAX31855 */
-		   <&gpioa 6 GPIO_ACTIVE_LOW>;   /* MC_RTD_CS - MAX31865 */
+	/*
+	 * PA6 APPEARS TWICE, ON PURPOSE. There is one MAX31865 on this board
+	 * and two devicetree instances of it - see pmc_rtd_3w below - so index
+	 * 1 and index 2 are deliberately the same chip select. cs-gpios is
+	 * indexed by a child's `reg`, and nothing requires the entries to be
+	 * distinct.
+	 */
+	cs-gpios = <&gpioi 0 GPIO_ACTIVE_LOW>,   /* MC_TC_CS  - MAX31855    */
+		   <&gpioa 6 GPIO_ACTIVE_LOW>,   /* MC_RTD_CS - MAX31865    */
+		   <&gpioa 6 GPIO_ACTIVE_LOW>;   /* MC_RTD_CS - same chip   */
 	status = "okay";
 
 	pmc_tc: max31855@0 {
@@ -476,6 +484,40 @@
 		 * Note the property has NO vendor prefix while `maxim,3-wire`
 		 * in the same binding does. Guessing costs a build.
 		 */
+		status = "okay";
+	};
+
+	/*
+	 * THE SAME CHIP AGAIN, WIRED FOR THREE.
+	 *
+	 * Lead resistance is the whole problem an RTD has. A PT100 moves about
+	 * 0.385 ohms per degree, so a couple of ohms of copper in a two-wire
+	 * run reads as several degrees - steady, plausible, and wrong. The
+	 * MAX31865 cancels it when told the probe has three wires, and that
+	 * instruction is one bit of its configuration register.
+	 *
+	 * Zephyr's driver takes that bit from devicetree at init and then
+	 * REWRITES THE WHOLE CONFIGURATION REGISTER FROM ITS OWN SHADOW ON
+	 * EVERY FETCH - max31865_get_temperature() raises VBIAS through
+	 * configure_device() before each conversion. So setting the bit behind
+	 * the driver's back survives less than one sweep: the next fetch puts
+	 * the devicetree value back, and the reading goes quietly wrong again.
+	 *
+	 * Hence two instances of one chip. They share a chip select and differ
+	 * in exactly one property, and because each fetch writes that
+	 * instance's shadow, choosing which device to read from IS choosing
+	 * the wire count. No register poking, no fighting the driver, and the
+	 * driver's tested Callendar-Van Dusen inverse is kept in both cases.
+	 *
+	 * Only one is ever used at a time; temp.c owns that choice.
+	 */
+	pmc_rtd_3w: max31865@2 {
+		compatible = "maxim,max31865";
+		reg = <2>;
+		spi-max-frequency = <4000000>;
+		resistance-at-zero = <100>;
+		resistance-reference = <400>;
+		maxim,3-wire;
 		status = "okay";
 	};
 };

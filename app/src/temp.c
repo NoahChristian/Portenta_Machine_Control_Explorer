@@ -58,7 +58,155 @@ static const uint8_t sel_pin[PMC_TEMP_COUNT] = { SEL0_PIN, SEL1_PIN, SEL2_PIN };
 static const struct device *const th_dev = DEVICE_DT_GET(TH_PORT);
 
 static const struct device *const tc_dev  = DEVICE_DT_GET(DT_NODELABEL(pmc_tc));
-static const struct device *const rtd_dev = DEVICE_DT_GET(DT_NODELABEL(pmc_rtd));
+/*
+ * ONE CHIP, TWO HANDLES. Both are the same MAX31865 on the same chip select;
+ * they differ only in the three-wire bit of the configuration register, and
+ * the driver rewrites that register from the instance's own shadow before
+ * every conversion. So reading through one of these IS selecting the wire
+ * count - see the overlay for why poking the bit directly does not survive.
+ */
+static const struct device *const rtd_2w = DEVICE_DT_GET(DT_NODELABEL(pmc_rtd));
+static const struct device *const rtd_3w = DEVICE_DT_GET(DT_NODELABEL(pmc_rtd_3w));
+
+static atomic_t three_wire;   /* 0 = two/four-wire, 1 = three-wire */
+
+static const struct device *rtd_now(void)
+{
+	return atomic_get(&three_wire) ? rtd_3w : rtd_2w;
+}
+
+uint8_t pmc_temp_wires_get(void)
+{
+	return atomic_get(&three_wire) ? 3 : 2;
+}
+
+/*
+ * The raw view of the RTD converter, for its fault register. The driver reads
+ * that register on a faulted conversion and then CLEARS it, so by the time a
+ * caller sees -EIO the cause is already gone. Reading it here, on a
+ * conversion of our own, is the only way to keep the detail.
+ */
+static const struct spi_dt_spec rtd_raw =
+	SPI_DT_SPEC_GET(DT_NODELABEL(pmc_rtd),
+			SPI_OP_MODE_MASTER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB);
+
+#define RTD_REG_CONFIG 0x00
+#define RTD_REG_FAULT  0x07
+#define RTD_WR(r)      ((r) | 0x80)
+
+static int rtd_reg_write(uint8_t reg, uint8_t val)
+{
+	uint8_t cmd[2] = { RTD_WR(reg), val };
+	struct spi_buf tx = { .buf = cmd, .len = sizeof(cmd) };
+	const struct spi_buf_set txs = { .buffers = &tx, .count = 1 };
+
+	return spi_write_dt(&rtd_raw, &txs);
+}
+
+static int rtd_reg_read(uint8_t reg, uint8_t *val)
+{
+	uint8_t addr = reg;
+	struct spi_buf tx = { .buf = &addr, .len = 1 };
+	const struct spi_buf_set txs = { .buffers = &tx, .count = 1 };
+	struct spi_buf rx = { .buf = val, .len = 1 };
+	const struct spi_buf_set rxs = { .buffers = &rx, .count = 1 };
+
+	return spi_transceive_dt(&rtd_raw, &txs, &rxs);
+}
+
+/*
+ * Run one conversion of our own and return the fault byte. Only called when
+ * the driver has already reported a fault, so the extra 66 ms is paid on the
+ * broken path and never on a healthy channel.
+ *
+ * Bit meanings are the MAX31865 datasheet's fault status register. They are
+ * worth naming rather than printing as hex, because they distinguish "no
+ * probe" from "the probe is there and one lead is open" from "the reference
+ * resistor network is wrong" - three very different things to be told while
+ * standing at a terminal block with a screwdriver.
+ */
+static uint8_t rtd_read_fault(void)
+{
+	uint8_t cfg = 0;
+	uint8_t fault = 0;
+
+	if (rtd_reg_read(RTD_REG_CONFIG, &cfg) != 0) {
+		return 0;
+	}
+
+	/*
+	 * RAISING VBIAS IS NOT ENOUGH - IT HAS TO RUN A DETECTION CYCLE.
+	 *
+	 * Zephyr configures this part with fault_cycle =
+	 * MAX31865_FAULT_DETECTION_NONE and one_shot = true, so nothing
+	 * converts and nothing tests the leads unless asked. An earlier
+	 * version of this function set VBIAS, waited, and read the register -
+	 * and got zero every time, because no cycle had run and the driver had
+	 * just cleared the bits. Zero then read as "no fault" on a channel
+	 * that was plainly open, which is the same kind of confident silence
+	 * the raw word exists to prevent.
+	 *
+	 * The sequence below is the datasheet's automatic fault detection:
+	 * VBIAS on, let the input network settle, write 01 into D3:D2, and
+	 * poll until the chip clears those bits to signal it has finished.
+	 */
+	const uint8_t base = (uint8_t)((cfg | BIT(7)) & ~0x0Cu);
+
+	if (rtd_reg_write(RTD_REG_CONFIG, base) != 0) {
+		return 0;
+	}
+	/* VBIAS settling: the datasheet wants 10 time constants of the input
+	 * RC, and a long probe lead is the slow case. 10 ms is generous. */
+	k_msleep(10);
+
+	if (rtd_reg_write(RTD_REG_CONFIG, (uint8_t)(base | 0x04u)) != 0) {
+		(void)rtd_reg_write(RTD_REG_CONFIG, cfg);
+		return 0;
+	}
+
+	/* The cycle is specified in microseconds; poll rather than guess, and
+	 * give up rather than spin if the chip never clears the bits. */
+	for (int i = 0; i < 20; i++) {
+		uint8_t now = 0;
+
+		k_msleep(1);
+		if (rtd_reg_read(RTD_REG_CONFIG, &now) != 0) {
+			break;
+		}
+		if ((now & 0x0Cu) == 0) {
+			break;
+		}
+	}
+
+	(void)rtd_reg_read(RTD_REG_FAULT, &fault);
+	(void)rtd_reg_write(RTD_REG_CONFIG, cfg);
+	return fault;
+}
+
+const char *pmc_temp_rtd_fault_str(uint8_t f)
+{
+	/* Most specific first: several bits can be set at once, and the
+	 * narrowest true statement is the useful one. */
+	if (f & BIT(2)) {
+		return "over/under voltage on an input";
+	}
+	if (f & BIT(3)) {
+		return "RTDIN- open - check the lead on TN";
+	}
+	if (f & BIT(4)) {
+		return "REFIN- open - check the lead on TP";
+	}
+	if (f & BIT(5)) {
+		return "REFIN- high - no probe, or an open circuit";
+	}
+	if (f & BIT(6)) {
+		return "below the low threshold";
+	}
+	if (f & BIT(7)) {
+		return "above the high threshold";
+	}
+	return NULL;
+}
 
 /*
  * THE DWELL. The MAX31855 free-runs, converting about every 100 ms with no
@@ -125,6 +273,22 @@ static struct k_mutex chans_lock;
 
 static atomic_t mode = (atomic_t)PMC_TEMP_K;
 static atomic_t sweeps;
+
+/*
+ * HOW MANY TIMES THE MODE HAS BEEN SET SINCE BOOT.
+ *
+ * Not a feature - an instrument. On 0.48.0 this board reported PT100 25
+ * seconds after a flash, with K compiled in as the initial value and no
+ * request able to change it without a token. A clean reset gave K, the ELF's
+ * .data holds 02 at that address, and the cause was never established.
+ *
+ * pmc_temp_mode_set() is the only writer, so a non-zero count here means
+ * something called it and the question becomes who; a zero count beside a
+ * mode of PT100 would mean the variable changed without the setter, which is
+ * a different and much worse problem. Guessing between those two costs more
+ * than one counter.
+ */
+static atomic_t mode_sets;
 static atomic_t faults;
 static atomic_t ready;
 
@@ -151,6 +315,11 @@ bool pmc_temp_ready(void)
 uint32_t pmc_temp_sweeps(void)
 {
 	return (uint32_t)atomic_get(&sweeps);
+}
+
+uint32_t pmc_temp_mode_sets(void)
+{
+	return (uint32_t)atomic_get(&mode_sets);
 }
 
 uint32_t pmc_temp_faults(void)
@@ -195,6 +364,7 @@ bool pmc_temp_mode_set(const char *name, char *detail, size_t cap)
 	}
 
 	atomic_set(&mode, (atomic_t)m);
+	atomic_inc(&mode_sets);
 
 	/*
 	 * EVERY CHANNEL BECOMES UNREAD, NOW. The numbers on screen were taken
@@ -212,6 +382,44 @@ bool pmc_temp_mode_set(const char *name, char *detail, size_t cap)
 	LOG_INF("temp mode -> %s", pmc_temp_mode_name(m));
 	(void)snprintk(detail, cap, "mode %s - readings clear until the next sweep\n",
 		       pmc_temp_mode_name(m));
+	return true;
+}
+
+bool pmc_temp_wires_set(uint8_t wires, char *detail, size_t cap)
+{
+	if (wires != 2 && wires != 3) {
+		(void)snprintk(detail, cap,
+			       "refused: wires must be 2 or 3, got %u\n",
+			       (unsigned)wires);
+		return false;
+	}
+
+	const bool want = (wires == 3);
+
+	if ((atomic_get(&three_wire) != 0) == want) {
+		(void)snprintk(detail, cap, "already %u-wire\n", (unsigned)wires);
+		return true;
+	}
+
+	atomic_set(&three_wire, want ? 1 : 0);
+
+	/*
+	 * Clear the readings for the same reason a mode change does: the
+	 * previous numbers were taken with a different lead-resistance
+	 * correction, and that difference is exactly the error this setting
+	 * exists to remove. Keeping them under the new label would hide it.
+	 */
+	atomic_set(&ready, 0);
+	k_mutex_lock(&chans_lock, K_FOREVER);
+	for (uint8_t i = 0; i < PMC_TEMP_COUNT; i++) {
+		chans[i].state = PMC_T_UNREAD;
+	}
+	k_mutex_unlock(&chans_lock);
+
+	LOG_INF("RTD wiring -> %u-wire", (unsigned)wires);
+	(void)snprintk(detail, cap,
+		       "%u-wire - readings clear until the next sweep\n",
+		       (unsigned)wires);
 	return true;
 }
 
@@ -328,14 +536,26 @@ static int read_thermocouple(struct pmc_temp_chan *c, enum pmc_temp_mode m)
 
 static int read_rtd(struct pmc_temp_chan *c)
 {
+	const struct device *dev = rtd_now();
 	struct sensor_value t;
 	int rc;
 
-	rc = sensor_sample_fetch(rtd_dev);
+	rc = sensor_sample_fetch(dev);
+	if (rc == -EIO) {
+		/*
+		 * The driver saw the RTD register's fault flag, logged a cause
+		 * and then cleared the register. Take our own conversion to
+		 * recover which cause it was - this is the whole reason the
+		 * PT100 path is more informative than the thermocouple one.
+		 */
+		c->rtd_fault = rtd_read_fault();
+		c->state = PMC_T_OPEN;
+		return 0;
+	}
 	if (rc != 0) {
 		return rc;
 	}
-	rc = sensor_channel_get(rtd_dev, SENSOR_CHAN_AMBIENT_TEMP, &t);
+	rc = sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &t);
 	if (rc != 0) {
 		return rc;
 	}
@@ -445,7 +665,7 @@ int pmc_temp_init(void)
 		LOG_ERR("MAX31855 not ready");
 		return -ENODEV;
 	}
-	if (!device_is_ready(rtd_dev)) {
+	if (!device_is_ready(rtd_2w) || !device_is_ready(rtd_3w)) {
 		LOG_ERR("MAX31865 not ready");
 		return -ENODEV;
 	}

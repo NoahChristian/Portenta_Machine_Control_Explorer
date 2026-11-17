@@ -221,6 +221,23 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 		goto done;
 	}
 
+	if (strcmp(verb, "wires") == 0) {
+		/*
+		 * Lead-resistance correction for the RTD. Two or three; a
+		 * four-wire probe uses the two-wire setting, which is the
+		 * MAX31865's own naming and not a simplification here.
+		 */
+		char w[4];
+
+		if (field(s_body, "n", w, sizeof(w)) == nullptr) {
+			n = refuse("refused: wires needs n\n");
+			goto done;
+		}
+		(void)pmc_temp_wires_set((uint8_t)atoi(w), detail, sizeof(detail));
+		n = refuse("%s", detail);
+		goto done;
+	}
+
 	n = refuse("refused: unknown verb '%s'\n", verb);
 
 done:

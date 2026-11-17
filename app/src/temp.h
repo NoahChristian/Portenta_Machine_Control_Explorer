@@ -60,7 +60,22 @@ struct pmc_temp_chan {
 	 * die temperature in bits 4..15 that should look like a warm room.
 	 */
 	uint32_t raw_word;
+
+	/*
+	 * The MAX31865's fault status register, PT100 mode only, and the
+	 * reason this family is worth more than the thermocouple side: where
+	 * the MAX31855 gives one open-circuit bit, this names which wire.
+	 * 0 means no fault was read.
+	 */
+	uint8_t rtd_fault;
 };
+
+/* A human cause for a fault byte, or NULL if it carries none. */
+const char *pmc_temp_rtd_fault_str(uint8_t f);
+
+/* 2 for two/four-wire, 3 for three-wire. */
+uint8_t pmc_temp_wires_get(void);
+bool pmc_temp_wires_set(uint8_t wires, char *detail, size_t cap);
 
 int pmc_temp_init(void);
 
@@ -83,6 +98,10 @@ bool pmc_temp_ready(void);
 
 /* How many sweeps have completed, and how many reads faulted. */
 uint32_t pmc_temp_sweeps(void);
+
+/* How many times the mode has been set since boot. An instrument, not a
+ * feature - see temp.c. */
+uint32_t pmc_temp_mode_sets(void);
 uint32_t pmc_temp_faults(void);
 
 #ifdef __cplusplus

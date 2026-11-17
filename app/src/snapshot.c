@@ -321,11 +321,13 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	 * room that is not getting warmer.
 	 */
 	n += snprintk(out + n, cap - n,
-		      "\"temp\":{\"mode\":\"%s\",\"ready\":%s,\"sweeps\":%u,"
-		      "\"faults\":%u,\"chan\":[",
+		      "\"temp\":{\"mode\":\"%s\",\"wires\":%u,\"ready\":%s,"
+		      "\"sweeps\":%u,\"faults\":%u,\"modeSets\":%u,\"chan\":[",
 		      pmc_temp_mode_name(pmc_temp_mode_get()),
+		      (unsigned)pmc_temp_wires_get(),
 		      pmc_temp_ready() ? "true" : "false",
-		      (unsigned)pmc_temp_sweeps(), (unsigned)pmc_temp_faults());
+		      (unsigned)pmc_temp_sweeps(), (unsigned)pmc_temp_faults(),
+		      (unsigned)pmc_temp_mode_sets());
 	for (size_t i = 0; i < PMC_TEMP_COUNT; i++) {
 		struct pmc_temp_chan c;
 		const char *st = "unread";
@@ -340,10 +342,13 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		}
 		n += snprintk(out + n, cap - n,
 			      "%s{\"state\":\"%s\",\"mC\":%d,\"rawMC\":%d,"
-			      "\"coldMC\":%d,\"word\":\"%08x\"}",
+			      "\"coldMC\":%d,\"word\":\"%08x\","
+			      "\"rtdFault\":%u,\"cause\":\"%s\"}",
 			      i ? "," : "", st, (int)c.milli_c,
 			      (int)c.raw_milli_c, (int)c.cold_milli_c,
-			      (unsigned)c.raw_word);
+			      (unsigned)c.raw_word, (unsigned)c.rtd_fault,
+			      pmc_temp_rtd_fault_str(c.rtd_fault)
+				      ? pmc_temp_rtd_fault_str(c.rtd_fault) : "");
 	}
 	n += snprintk(out + n, cap - n, "]},");
 
