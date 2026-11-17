@@ -160,6 +160,38 @@ uncleared — i.e. exactly the failure the command exists to undo.
 image headers against magic `0x96f3b83d`, and the swap type. It exists because
 the shipping bootloader is built with no console and declines in silence.
 
+## How the bootloader is configured
+
+`mcuboot/pmc.conf`, and why each choice is the one it is.
+
+**swap-using-scratch, never swap-using-move.** The two slots have
+heterogeneous geometry - 128 KB sectors in internal flash against 4 KB in the
+QSPI NOR, so 10 sectors against 320. `boot_slots_compatible()` requires equal
+sector counts *and* equal sector sizes, move fails both, and it **fails
+silently**: the update uploads, marks pending, the board resets, and MCUboot
+boots the old image with no error anywhere. Overwrite-only would be smaller
+again and would remove the way back from an image that does not boot, which is
+the one property this has to keep.
+
+It is set explicitly even though it may already be the default. MCUboot's
+choice defaults to scratch when a `scratch_partition` nodelabel is enabled,
+and the Portenta board does enable one - internally, at `0x08010000`, sharing
+erase sector 0 with the bootloader. Relying on that default would be relying
+on the right answer for the wrong reason, derived from a node this project
+deletes.
+
+**The sector ceiling covers the secondary slot, not the primary.** 320 QSPI
+sectors, not 10 internal ones. `BOOT_MAX_IMG_SECTORS_AUTO` derives it from the
+first image's partition, which on an asymmetric layout is the wrong end. It
+must also stay equal to the `zephyr_compile_definitions()` value in
+`app/CMakeLists.txt`: the application writes the image trailer through
+`img_mgmt`, so it has to agree about where that trailer begins, and the symbol
+exists only in MCUboot's Kconfig and never in the application's.
+
+**ECDSA P-256** for smaller signatures and smaller verification code, and
+because a sibling port on this bench already uses it - one less difference
+between two boards.
+
 ## Things that bit, recorded so they only bite once
 
 - **`smpmgr upgrade` is composite and its pending-mark did not take.** The
@@ -174,3 +206,19 @@ the shipping bootloader is built with no console and declines in silence.
   flashing it leaves a board sitting in MCUboot forever with no diagnostic.
 - **dfu-util refuses to act with more than one DFU device visible**, and this
   board alone advertises four alt settings. Pass `-d vid:pid -S serial`.
+- **It must be `BOARD_SERIAL_BACKEND_CDC_ACM=n`, not merely `UART_CONSOLE=n`.**
+  This board sources `boards/common/usb/Kconfig.cdc_acm_serial.defconfig` and
+  chooses `board_cdc_acm_uart` as console, shell and mcumgr UART. Turning off
+  only `UART_CONSOLE` leaves `uart_console.c` compiled against a console device
+  MCUboot never instantiates, and the **link** fails on an undefined
+  `__device_dts_ord_NNN`.
+- **Not `CONFIG_LOG=n` in the bootloader.** Turning logging off outright fights
+  MCUboot's own config, which sets `MCUBOOT_LOG_LEVEL_INF` and
+  `LOG_MODE_MINIMAL`, and produced three Kconfig warnings on every build.
+  Warnings on every build are how a real warning gets missed, and the logging
+  costs nothing when `CONFIG_CONSOLE=n` leaves it no backend to reach.
+- **`CONFIG_SPI` is not how the QSPI NOR is reached.** It is driven by
+  `FLASH_STM32_QSPI` on the QUADSPI peripheral and does not go through the SPI
+  subsystem at all. Enabling SPI produced only `No SOURCES given to Zephyr
+  library: drivers__spi` - an empty library, which is the tell that a symbol is
+  doing nothing.
