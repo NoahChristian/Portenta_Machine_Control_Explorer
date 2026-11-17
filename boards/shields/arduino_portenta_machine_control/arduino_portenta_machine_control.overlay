@@ -542,24 +542,73 @@
 };
 
 /*
- * ETHERNET IS OFF, DELIBERATELY AND TEMPORARILY.
+ * ETHERNET IS ON, AS A SECOND PATH AND NOT A PREFERENCE.
  *
- * The carrier has an RJ45 on J13 and the plan is to use it. But with no cable
- * in it, eth0 has been actively harmful rather than merely idle: it is
- * interface 1 and therefore the default, and in that role it took the single
- * IPv4 config struct, made a health check report "down" for a board that was
- * online, and - the costly one - broke every socket bind, because binding to
- * INADDR_ANY resolves through an interface and the default one had no address.
+ * It was off, and the block that disabled it named two specific harms. Both
+ * are now fixed in app/prj.conf, which is why this is being turned back on
+ * rather than left alone:
  *
- * CONFIG_NET_DEFAULT_IF_WIFI addresses the default-interface half. This
- * removes the rest of the surface until there is a cable to test against,
- * which is the honest state: an interface nothing has ever exercised is not a
- * feature, it is an untested code path that currently costs more than it
- * returns.
+ *   - "it took the single IPv4 config struct"
+ *       CONFIG_NET_IF_MAX_IPV4_COUNT=2 - each interface holds its own.
+ *   - "it is interface 1 and therefore the default", breaking every bind to
+ *     INADDR_ANY because the default interface had no address
+ *       CONFIG_NET_DEFAULT_IF_WIFI=y - WiFi is the default regardless of
+ *       enumeration order.
  *
- * To bring it back: delete this block, plug in a cable, and check `net iface`
- * shows eth0 with an address BEFORE assuming anything else works.
+ * WHY IT IS WORTH THE RISK NOW. Measured 2026-11-17: this board's radio loses
+ * 0% of 32-byte frames and 73% of 1000-byte ones, while another board on the
+ * same access point in the same minute loses none. Short SMP commands work
+ * and bulk transfer does not, so an OTA upload managed 0.1% at 7.1 kB/s -
+ * about two and a half hours for a megabyte. The update path is what makes
+ * every other mistake on this board recoverable, and it currently depends on
+ * the one link that does not work. A wire does not care about frame length.
+ *
+ * THE OLD WARNING STILL APPLIES, so it is kept: with no cable this is an
+ * interface with no address. Check `net iface` shows eth0 with an address
+ * before assuming anything else works, and read ethCarrier/ethLink on the
+ * panel rather than inferring either.
+ *
+ * NO CONFLICT WITH THE ANALOG INPUTS, which is worth stating because it looks
+ * like there should be one. The RMII reference clock is on PA1
+ * (eth_ref_clk_pa1) and AI0 is on PA_1C - a SEPARATE pad, joined to PA1 only
+ * by the SYSCFG analog switch. This project already opens that switch, which
+ * is what lets both work: closed, the 50 MHz clock and the analog front end
+ * are shorted together and BOTH are wrong. See the SYSCFG section of
+ * docs/MEASURED.md.
  */
 &mac {
-	status = "disabled";
+	status = "okay";
+};
+
+/*
+ * THE PHY NEEDS TIME AFTER ITS RESET IS RELEASED. MEASURED, NOT GUESSED.
+ *
+ * With the init priorities fixed so the reset regulator runs before the MAC,
+ * the MAC driver still failed. The board reported the reason itself, which is
+ * the only way it could have been found here - there is no console on this
+ * assembly and no RTT, so a driver that fails during init normally leaves no
+ * evidence at all:
+ *
+ *     eth: {"present":true,"rc":-19,"initRes":-5}
+ *
+ * rc -19 is this application saying the device is not ready; initRes -5 is
+ * -EIO out of eth_initialize(), read back from dev->state->init_res, which
+ * Zephyr keeps for every device. In eth_stm32_hal_common.c that is
+ * HAL_ETH_Init() failing, and HAL_ETH_Init() fails here for one reason: it
+ * performs a MAC software reset and spins until the DMA SWR bit clears, and
+ * that bit cannot clear without the RMII receive clock.
+ *
+ * On this board that 50 MHz reference clock arrives on PA1 FROM the LAN8742 -
+ * the MCU does not generate it. Releasing the PHY's reset line does not make
+ * the clock appear; the PHY's PLL has to lock first. Releasing reset and
+ * resetting the MAC in the same init pass leaves no time for that at all.
+ *
+ * 50 ms is generous on purpose. It is paid once, at boot, on a mains-powered
+ * bench instrument, and the failure it prevents costs an entire interface
+ * with no log line to explain it. regulator_fixed.c honors this with a
+ * k_usleep() after it enables the line, and the regulator runs at priority 75
+ * against the MAC's 80, so the wait lands in the gap between them.
+ */
+&ethernet_phy_en {
+	startup-delay-us = <50000>;
 };

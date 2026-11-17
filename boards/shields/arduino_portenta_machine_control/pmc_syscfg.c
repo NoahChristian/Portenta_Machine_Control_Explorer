@@ -85,9 +85,24 @@ static int pmc_syscfg_open_analog_switches(void)
 	 */
 	LL_APB4_GRP1_EnableClock(LL_APB4_GRP1_PERIPH_SYSCFG);
 
-	LL_SYSCFG_OpenAnalogSwitch(LL_SYSCFG_ANALOG_SWITCH_PA1 |
-				   LL_SYSCFG_ANALOG_SWITCH_PC2 |
-				   LL_SYSCFG_ANALOG_SWITCH_PC3);
+	/*
+	 * PA1 IS A CHOICE, AND THE OTHER TWO ARE NOT.
+	 *
+	 * PC2 and PC3 carry AI0 and AI1 against the temperature SPI bus, and
+	 * nothing wants that switch closed. PA1 is different: AI2 and the
+	 * Ethernet RMII reference clock share that one pad pair, so the switch
+	 * cannot serve both at once if the clock arrives on the PA1_C ball.
+	 * CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH=n exists to test exactly that - see
+	 * the Kconfig help and docs/MEASURED.md.
+	 */
+	uint32_t open = LL_SYSCFG_ANALOG_SWITCH_PC2 |
+			LL_SYSCFG_ANALOG_SWITCH_PC3;
+
+	if (IS_ENABLED(CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH)) {
+		open |= LL_SYSCFG_ANALOG_SWITCH_PA1;
+	}
+
+	LL_SYSCFG_OpenAnalogSwitch(open);
 
 	/*
 	 * Read back and complain, rather than trusting the write.
@@ -97,16 +112,17 @@ static int pmc_syscfg_open_analog_switches(void)
 	 * not be silent: every analog reading afterwards would be a plausible
 	 * number measured through a 50 MHz clock.
 	 */
-	const uint32_t want = LL_SYSCFG_ANALOG_SWITCH_PA1 |
-			      LL_SYSCFG_ANALOG_SWITCH_PC2 |
-			      LL_SYSCFG_ANALOG_SWITCH_PC3;
+	const uint32_t want = open;
 	const uint32_t got = SYSCFG->PMCR & want;
 
 	if (got != want) {
 		LOG_ERR("SYSCFG analog switches did not open: PMCR masked 0x%08x, wanted 0x%08x",
 			got, want);
-		LOG_ERR("AI0/AI1 are shorted to the temperature SPI bus and AI2 to the "
-			"Ethernet RMII clock; analog readings are meaningless");
+		LOG_ERR("AI0/AI1 are shorted to the temperature SPI bus%s; analog "
+			"readings are meaningless",
+			IS_ENABLED(CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH)
+				? " and AI2 to the Ethernet RMII clock"
+				: "");
 		return -EIO;
 	}
 

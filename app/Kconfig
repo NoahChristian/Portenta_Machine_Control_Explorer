@@ -1,0 +1,34 @@
+# Application Kconfig for the Portenta Machine Control Explorer.
+#
+# Copyright (c) 2026 Noah Christian
+# SPDX-License-Identifier: MIT
+#
+# An application Kconfig becomes the Kconfig ROOT, so it has to source
+# Kconfig.zephyr itself - and that source line must come LAST, after the
+# options below, or they are not visible to a -DCONFIG_... on the command
+# line.
+
+menu "Portenta Machine Control Explorer"
+
+config PMC_OPEN_PA1_ANALOG_SWITCH
+	bool "Open the PA1 analog switch, freeing AI2 from the RMII clock"
+	default y
+	help
+	  AI2 and the Ethernet RMII 50 MHz reference clock share the PA1/PA1_C
+	  pad pair on the STM32H747, joined by a single SYSCFG analog switch.
+	  Opening it separates them, which is what AI2 needs in order to read
+	  anything meaningful rather than a 50 MHz clock.
+
+	  Set this to n to leave that switch CLOSED. The only reason to do so
+	  is to test whether the Ethernet MAC needs it closed to receive its
+	  reference clock - with it closed, AI2 is measuring the clock and its
+	  readings are meaningless. PC2 and PC3 are unaffected either way, so
+	  AI0 and AI1 keep working regardless.
+
+	  This is a genuine either/or if it turns out the clock arrives on the
+	  PA1_C ball: one pad pair cannot serve an analog input and a 50 MHz
+	  clock at the same time. See docs/MEASURED.md.
+
+endmenu
+
+source "Kconfig.zephyr"
