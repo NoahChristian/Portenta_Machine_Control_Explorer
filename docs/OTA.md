@@ -44,6 +44,18 @@ It also refuses an application that does not begin with MCUboot's image magic,
 and a bootloader whose reset vector falls outside `boot_partition`. Both were
 verified against real artifacts rather than assumed.
 
+And it refuses to write to a board it was not told about.
+`tools/bench.local.ps1`, gitignored, names the USB serial - on an STM32 the
+chip's unique device ID - that the flashing tools may target. More than one
+Zephyr board on this bench exposes an identical CDC-ACM shell and at least one
+enumerates with the same USB VID:PID, and **DFU performs no signature check**:
+dfu-util writes whatever it is given to whatever address it is given, so a
+mis-targeted install overwrites another board's bootloader. The OTA path is
+protected by the per-project key and by asking the board what it is running;
+the DFU path has neither, so it gets this instead. Run the installer with no
+bench file and it prints the serial it found and refuses to write, which is
+the intended way to discover it.
+
 ## Updating, thereafter
 
 ```powershell
@@ -97,6 +109,24 @@ needed by 'zephyr/autogen-pubkey.c', missing and no known rule to make it
 and produces **no bootloader**. On the sibling project the same fallback
 succeeded with one warning line among hundreds and produced a bootloader that
 flashed and ran.
+
+### Custody
+
+Generated with
+
+```
+imgtool keygen -k <dir>/pmc-explorer-ec-p256.pem -t ecdsa-p256
+```
+
+**Back it up.** Losing it means no future image can be signed for a board
+already carrying this bootloader, and the way back is a full reinstall over
+double-tap RESET - *not* BOOT0, which this assembly cannot reach at all.
+
+The application half is unguarded on purpose. `app/mcuboot-key.conf` names the
+key imgtool signs with, and it must name the same key the bootloader verifies
+against; if it does not, the bootloader refuses the image, which is a visible
+and safe failure. The bootloader half carries the fail-closed placeholder
+because its failure mode is the opposite: silent, and trusting a published key.
 
 ## Recovery
 
