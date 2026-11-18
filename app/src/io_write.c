@@ -68,7 +68,7 @@ const char *pmc_write_result_str(enum pmc_write_result r)
 	switch (r) {
 	case PMC_W_OK:        return "verified";
 	case PMC_W_COMMANDED: return "commanded";
-	case PMC_W_NO_SUPPLY: return "no supply";
+	case PMC_W_UNEXPLAINED: return "unexplained";
 	case PMC_W_MISMATCH:  return "MISMATCH";
 	case PMC_W_REFUSED:   return "refused";
 	default:              return "error";
@@ -219,16 +219,17 @@ static enum pmc_write_result write_pdio(int n, bool on, char *detail, size_t cap
 	}
 
 	/*
-	 * Commanded high and reading low is the expected result when J8's
-	 * 24V IN is unfed - there is no rail for the switch to pass. Calling
-	 * that a mismatch would send someone looking for a broken board
-	 * instead of a missing wire, so it is named for what it is.
+	 * Commanded high and reading low has two candidate causes and this
+	 * firmware can separate neither of them - see io_write.h. Both are
+	 * named; neither is asserted.
 	 */
 	if (on && st.pdio[n] == 0) {
 		(void)snprintk(detail, cap,
-			       "PDIO%d commanded high, read low - J8 24V IN is "
-			       "unfed, so there is no rail to switch", n);
-		return PMC_W_NO_SUPPLY;
+			       "PDIO%d commanded high but reads low. Either "
+			       "J8's own 24V IN is unfed (it is not sensed) "
+			       "or this channel's bit map is wrong. Neither "
+			       "is confirmed.", n);
+		return PMC_W_UNEXPLAINED;
 	}
 
 	(void)snprintk(detail, cap, "PDIO%d commanded %s but read %s", n,

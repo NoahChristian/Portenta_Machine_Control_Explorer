@@ -477,6 +477,27 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	for (size_t i = 0; i < PMC_PDIO_COUNT; i++) {
 		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "", s->io.pdio[i]);
 	}
+
+	/*
+	 * THE DO LOGIC LINES, WHICH THIS DOCUMENT USED TO OMIT ENTIRELY.
+	 *
+	 * The board graphic lights a channel LED from pmc_snapshot_reading(),
+	 * which is evaluated when the PAGE renders - so after a command the
+	 * lamp kept whatever it was drawn with and nothing refreshed it. The
+	 * panel polls this document; without `do` here the one family with a
+	 * definite answer was the one family it could not show.
+	 *
+	 * -1 means the port was not ready, and that is kept distinct from 0
+	 * rather than flattened: see the comment on do_out in snapshot.h.
+	 *
+	 * Named `doOut` rather than `do`, which is a reserved word in the one
+	 * language guaranteed to read this document.
+	 */
+	n += snprintk(out + n, cap - n, "],\"doOut\":[");
+	for (size_t i = 0; i < ARRAY_SIZE(s->do_out); i++) {
+		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "",
+			      (int)s->do_out[i]);
+	}
 	n += snprintk(out + n, cap - n, "]},");
 
 	/*

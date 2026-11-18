@@ -20,12 +20,25 @@
  *        would confirm a write against the bit it just set, which is the
  *        failure that looks exactly like success.
  *
- * AND THE SUPPLY IS A THIRD ANSWER. Both connectors carry their own `24V IN`
- * which must be fed externally (datasheet 3-4 and 3-5); it is the source rail
- * for the high-side switches, not a pull-up. With it unfed a PDIO channel
- * commanded high reads back low - correctly. That is `no supply`, not a
- * fault and not a mismatch, and rendering it as either would send someone
- * looking for a broken board instead of a missing wire.
+ * AND A THIRD ANSWER IS NEEDED, BUT IT MUST NOT NAME A CAUSE. Both connectors
+ * carry their own `24V IN` which must be fed externally (datasheet 3-4 and
+ * 3-5); it is the source rail for the high-side switches, not a pull-up. With
+ * it unfed a PDIO channel commanded high reads back low - correctly - and
+ * calling that a fault would send someone looking for a broken board instead
+ * of a missing wire.
+ *
+ * THIS USED TO ANSWER `no supply` AND SAY "J8 24V IN is unfed" AS A FACT.
+ * Nothing on this board senses that rail. The encoder pull-ups in expander.h
+ * sense the BOARD 24 V, fed at the PWR SUPPLY block - a different rail from
+ * either output connector's own 24V IN - so `rail24Inferred.present` being
+ * true, as it is on this bench, says nothing whatever about J8. Meanwhile the
+ * PDIO bit maps are transcribed from the mbed library and confirmed at no
+ * connector, which makes a wrong map at least as likely a cause as a missing
+ * wire, and it is the hazard this whole panel is built to flag.
+ *
+ * So the answer is `unexplained` and it names both candidates without
+ * choosing between them. A panel that guesses a cause is a panel that sends
+ * someone to the wrong end of the problem with confidence.
  */
 #ifndef PMC_IO_WRITE_H
 #define PMC_IO_WRITE_H
@@ -41,7 +54,7 @@ extern "C" {
 enum pmc_write_result {
 	PMC_W_OK = 0,       /* PDIO: commanded and read back as commanded */
 	PMC_W_COMMANDED,    /* DO: driven; no read-back path exists to check */
-	PMC_W_NO_SUPPLY,    /* read back low with no fault: 24V IN unfed */
+	PMC_W_UNEXPLAINED,  /* commanded high, reads low; cause not knowable */
 	PMC_W_MISMATCH,     /* read back the wrong way with supply present */
 	PMC_W_REFUSED,      /* not a channel, or not writable */
 	PMC_W_ERROR,        /* the bus or a pin failed */

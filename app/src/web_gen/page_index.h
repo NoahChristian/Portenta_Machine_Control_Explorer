@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "84663f02"
-#define PAGE_INDEX_BYTES 72656
+#define PAGE_INDEX_BUILD "95ef63f0"
+#define PAGE_INDEX_BYTES 76077
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -305,7 +305,16 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
              width:15rem; font-size:.72rem; color:var(--dim);
              text-align:center; letter-spacing:.04em; margin-bottom:.9rem; }
   .lampcap b { color:inherit; font-weight:600; }
-  #tslider { width:15rem; margin:0; display:block; }
+  /* The three positions sit on the same 15rem grid as the lamps and their
+     captions, so each button is directly under the lamp it asks for. */
+  .modesw { display:grid; grid-template-columns:repeat(3,1fr); gap:.4rem;
+            width:15rem; }
+  .modesw button { font:inherit; font-size:.78rem; padding:.3rem .2rem;
+                   background:#1b1b1b; color:var(--dim);
+                   border:1px solid #8884; border-radius:3px;
+                   cursor:pointer; }
+  .modesw button:hover { border-color:#aaa8; color:inherit; }
+  .modesw button.on { border-color:#ffb020; color:#ffb020; }
   .modenote { font-size:.75rem; color:var(--dim); margin-top:.7rem;
               max-width:17rem; line-height:1.45; }
   #tsay { font-size:.8rem; margin-top:.6rem; min-height:1.2em; }
@@ -742,11 +751,12 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       <div class="lamp" id="lamp2"></div>
     </div>
     <div class="lampcap"><span>PT100</span><span>J</span><span>K</span></div>
-    <input type="range" id="tslider" min="0" max="2" step="1" value="2"
-           list="tmarks" aria-label="acquisition mode">
-    <datalist id="tmarks">
-      <option value="0"></option><option value="1"></option><option value="2"></option>
-    </datalist>
+    
+    <div class="modesw" role="group" aria-label="acquisition mode">
+      <button type="button" id="m0">PT100</button>
+      <button type="button" id="m1">J</button>
+      <button type="button" id="m2">K</button>
+    </div>
     <div class="modenote">
       One switch for the whole board, not one per channel: the carrier has a
       single double-throw switch between the two converters.
@@ -983,7 +993,12 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         /* The board's own words, refusal included. Nothing is reworded here:
            a control that paraphrases the device is a control that can lie
            about it. */
-        note(t.trim(), /^refused|MISMATCH|error/.test(t) ? 'bad' : 'ok');
+        /* `unexplained` joins the red set. The command did not take effect,
+           and the one thing worse than not knowing why is a green reply
+           saying so. The remaining green verdicts are `verified` and
+           `commanded`, which are the two that actually happened. */
+        note(t.trim(),
+             /^(refused|unexplained)|MISMATCH|error/.test(t) ? 'bad' : 'ok');
       })
       .catch(function (e) { note('request failed: ' + e, 'bad'); });
   }
@@ -1515,42 +1530,55 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   schedule485();
 
   /* --- temperature ------------------------------------------------- */
-  var slider = document.getElementById('tslider');
   var tsay = document.getElementById('tsay');
   var MODES = ['PT100', 'J', 'K'];
   var lamps = [document.getElementById('lamp0'),
                document.getElementById('lamp1'),
                document.getElementById('lamp2')];
+  var modebtn = [document.getElementById('m0'),
+                 document.getElementById('m1'),
+                 document.getElementById('m2')];
 
   function lampsShow(name) {
-    /* Driven by the BOARD's reported mode, never by the slider. */
+    /* Driven by the BOARD's reported mode, never by the button pressed. */
     var k = MODES.indexOf(name);
     for (var i = 0; i < lamps.length; i++) {
       if (lamps[i]) { lamps[i].classList.toggle('on', i === k); }
+      /* The switch follows the same source as the lamp above it, so the
+         two cannot disagree - which the slider this replaced could. */
+      if (modebtn[i]) { modebtn[i].classList.toggle('on', i === k); }
     }
   }
 
-  if (slider) {
-    slider.addEventListener('change', function () {
-      var want = MODES[+slider.value];
-      tsay.textContent = 'asking for ' + want + ' ...';
-      tsay.className = '';
-      fetch('/io', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'token=' + encodeURIComponent(tok.value) +
-              '&do=tmode&mode=' + encodeURIComponent(want)
-      }).then(function (r) { return r.text(); })
-        .then(function (t) {
-          tsay.textContent = t.trim();
-          tsay.className = /^refused/.test(t) ? 'bad' : 'ok';
-          /* The lamps do not move here. The next poll reads the board's
-             own mode, and if the write was refused they stay where the
-             hardware actually is - which is the point of them. */
-        })
-        .catch(function (e) { tsay.textContent = 'request failed: ' + e;
-                              tsay.className = 'bad'; });
-    });
+  function askMode(i) {
+    var want = MODES[i];
+    tsay.textContent = 'asking for ' + want + ' ...';
+    tsay.className = '';
+    fetch('/io', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'token=' + encodeURIComponent(tok.value) +
+            '&do=tmode&mode=' + encodeURIComponent(want)
+    }).then(function (r) { return r.text(); })
+      .then(function (t) {
+        tsay.textContent = t.trim();
+        tsay.className = /^refused/.test(t) ? 'bad' : 'ok';
+        /* Nothing moves here. The next poll reads the board's own mode, and
+           if the write was refused the switch stays where the hardware
+           actually is - which is the whole point of it. */
+      })
+      .catch(function (e) { tsay.textContent = 'request failed: ' + e;
+                            tsay.className = 'bad'; });
+  }
+
+  for (var mi = 0; mi < modebtn.length; mi++) {
+    /* `i` captured per button: a single loop variable shared by three
+       handlers is the bug this page already paid for once, on the DO row. */
+    (function (i) {
+      if (modebtn[i]) {
+        modebtn[i].addEventListener('click', function () { askMode(i); });
+      }
+    })(mi);
   }
 
   function wires(n) {
@@ -1635,11 +1663,62 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     }
   }
 
+  /*
+   * THE CHANNEL LAMPS ON THE BOARD GRAPHIC, REFRESHED FROM THE POLL.
+   *
+   * They are rendered server-side from pmc_snapshot_reading() when the PAGE
+   * is built, and commands go out by fetch() - so nothing re-rendered the
+   * graphic and a commanded output never lit. That is what "the DO and PDIO
+   * lights are not changing" was: not the expander, not the map, not the
+   * supply. The page simply never asked again.
+   *
+   * The channel name is taken from the terminal's own link rather than from
+   * a new attribute, because `?ch=NAME` is already there and already correct.
+   * The lamp is a sibling of that link inside the terminal's group.
+   *
+   * -1 is NOT off. A port that is not ready and a port reading low are
+   * different facts, and the dark lamp is reserved for the second - see
+   * snapshot.h. An unknown level leaves the lamp exactly as the server drew
+   * it rather than asserting a state the board did not report.
+   */
+  var ledMap = null;
+
+  function boardLeds(j) {
+    if (!j || !j.io) { return; }
+    if (ledMap === null) {
+      ledMap = [];
+      var links = document.querySelectorAll('a[href^="?ch="]');
+      for (var i = 0; i < links.length; i++) {
+        var led = links[i].parentNode.querySelector('.chled');
+        if (!led) { continue; }
+        ledMap.push({ ch: links[i].getAttribute('href').slice(4),
+                      led: led,
+                      term: links[i].querySelector('.term') });
+      }
+    }
+    for (var k = 0; k < ledMap.length; k++) {
+      var e = ledMap[k];
+      var m = /^(DIN|PDIO|DO)(\d+)$/.exec(e.ch);
+      if (!m) { continue; }
+      var arr = m[1] === 'DIN' ? j.io.din
+              : m[1] === 'PDIO' ? j.io.pdio : j.io.doOut;
+      if (!arr) { continue; }
+      var v = arr[+m[2]];
+      if (v !== 0 && v !== 1) { continue; }
+      e.led.classList.toggle('on', v === 1);
+      if (e.term) {
+        e.term.classList.toggle('live-hi', v === 1);
+        e.term.classList.toggle('live-lo', v === 0);
+      }
+    }
+  }
+
   function poll() {
     fetch('/state.json', { cache: 'no-store' })
       .then(function (r) { return r.json(); })
       .then(function (j) {
         tempShow(j);
+        boardLeds(j);
         if (!j.ai) { return; }
         /* Row order is the registry's order, which is the order the board
            reads them in - matching by position rather than by a key the
