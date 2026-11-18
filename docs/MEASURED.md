@@ -1477,10 +1477,12 @@ That number explains two things that had been read the other way:
   the thing that breaks the transfer.
 - **Why `--mtu 256` made it worse rather than better.** Under per-datagram
   loss, a smaller MTU multiplies the number of lockstep exchanges, so four
-  times the datagrams is four times the chance of losing one. The `-Mtu`
-  comment in `tools/ota.ps1` assumes size-dependent loss; an `--mtu 256`
+  times the datagrams is four times the chance of losing one. An `--mtu 256`
   attempt failed where the default had succeeded minutes earlier, which fits
-  per-datagram loss and not per-byte loss.
+  per-datagram loss and not per-byte loss. The `-Mtu` comment in
+  `tools/ota.ps1` claimed size-dependent loss and recommended shrinking frames
+  on that basis; it now carries the retraction and says the option is for
+  testing the model, not for fixing the link.
 
 **The contrast that names the missing property.** Same radio, same window:
 
@@ -1606,3 +1608,63 @@ The property this failure needs is retransmission, which means TCP, and this
 Zephyr has no TCP transport for SMP (`smp_bt`, `smp_dummy`, `smp_lorawan`,
 `smp_raw_dummy`, `smp_raw_uart`, `smp_shell`, `smp_spi`, `smp_uart`,
 `smp_udp`).
+
+## The upload verification that could not fail (2026-11-18)
+
+`tools/ota.ps1` asked the board whether the bytes had arrived - the right
+instinct, and the whole reason the UDP path was usable at all - and then
+accepted this as the answer:
+
+```powershell
+if ($after -match "0\.\d+\.\d+" -and $after -match "slot=1") {
+```
+
+Neither half is a check. `0\.\d+\.\d+` matches any version anywhere in the
+output, **including slot0's own**, so it passes on a board that received
+nothing; and `slot=1` is the literal text of a block label that
+`image state-read` prints whether or not slot1 holds an image. A clean pass
+meant "the board answered", not "the image is there". The script then marked
+whatever was in slot1 pending and reset into it. `-Resume` was worse: it
+skipped the question entirely, on the word "assumed", on the one path that
+exists *because* an upload ended ambiguously.
+
+**The fix is to compare the hash, and it is computable locally.**
+`bootutil_img_hash()` digests the header (`ih_hdr_size`), then `ih_img_size`
+bytes of payload, then `ih_protect_tlv_size` bytes of protected TLVs - and
+stops short of the unprotected TLV area that carries the signature and the
+digest itself. For `0.94.0` that is 1,130,568 bytes of a 1,130,720-byte file.
+
+Verified three ways before being trusted, none of which needed a flash cycle:
+
+```
+local SHA-256 over hdr+img+prot   F47DE115AA36FC97...   (PowerShell)
+the image's own SHA256 TLV        F47DE115AA36FC97...   (imgtool dumpinfo)
+slot0's hash, running that image  F47DE115AA36FC97...   (image state-read)
+```
+
+The naive version is the trap: SHA-256 of the **whole file** is
+`230ADB9CBC1F63DC...`, which matches nothing the board will ever report. A
+comparison that can never succeed is worse than none, because it calls a good
+transfer a failure.
+
+**Then the new check was proved on the board, with no upload and no reset.**
+slot1 still held `0.93.0` from the previous swap, so `-Resume` was run against
+exactly the state the old code mishandled:
+
+```
+image        0.94.0, 1,130,720 bytes
+  slot0 0.94.0   slot1 0.93.0
+==> resuming: checking slot1 holds this exact image
+  slot1  6E90DCF1CB29B86677A4C5D28A3066B31CB42B4323A30C0A5A82C7EC62BBCB56
+  local  F47DE115AA36FC97F8F1FA1E92E2670270231599D8C5EAE884E7C9099B4F26FF
+```
+
+Refused, exit 1, nothing marked. The old code would have downgraded the board
+to `0.93.0` and reported success. **The board was already standing in the
+failure case** - no plant was needed, only the willingness to run the check
+against a state that was not the happy one.
+
+A slot reports a plausible *version* while only part way written, because the
+MCUboot header lands in the first kilobyte. Only the hash covers every byte,
+which is why the same comparison now runs on the success path too: smpmgr
+exiting 0 is not evidence about what is in flash either.

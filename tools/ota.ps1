@@ -3,11 +3,21 @@
     Update the application over the air, with mcumgr/SMP over UDP.
 
 .DESCRIPTION
-    THIS IS THE ORDINARY WAY TO REFLASH THIS BOARD. tools/install_mcuboot.ps1
-    and its double-tap RESET are for installing the bootloader and for
-    recovery, not for development. The Giga port's reasoning applies here: when
-    the update path is also the development path, it gets exercised constantly
-    instead of only on the day it matters.
+    THIS IS THE FALLBACK PATH. Prefer tools/otahttp.ps1, which posts the same
+    signed image to POST /ota over TCP and therefore resends what it loses.
+    SMP over UDP is lockstep with no window: one datagram lost in either
+    direction ends the transfer, because the protocol has nothing to resend it
+    with. Measured on this bench on 2026-11-18, loss is about 0.06% per
+    datagram - one in 1,600, invisible to a ping test and fatal to a
+    1,100-datagram upload roughly half the time. On one occasion five
+    consecutive attempts failed. docs/MEASURED.md has the capture.
+
+    IT IS KEPT, AND NOT AS A COURTESY. It drives MCUboot's own image manager
+    rather than a route of this application's, so it is the path that still
+    works when the panel's HTTP server does not - and it is the only one that
+    can erase slot1 or read a slot's state back. tools/install_mcuboot.ps1 and
+    its double-tap RESET are for installing the bootloader and for recovery,
+    not for either of these.
 
     THE BOARD'S ADDRESS IS NOT STORED ANYWHERE. It is asked for over the USB
     shell, which means there is no IP address in any file in this repository -
@@ -37,6 +47,15 @@
     Mark permanent immediately, skipping the test/revert cycle. Avoid: it
     discards the one property that makes a bad OTA survivable.
 
+.PARAMETER Resume
+    Skip the erase and the upload, on the understanding that slot1 already
+    holds this exact image. Checked, not assumed: slot1's hash must equal the
+    local image's or the run stops.
+
+.PARAMETER Mtu
+    Shrink the SMP frames. Unlikely to help - see the measurement at the call
+    site - and left for diagnosis rather than as a remedy.
+
 .EXAMPLE
     pwsh tools/ota.ps1
     pwsh tools/ota.ps1 -Ip portentaexplorer.local
@@ -64,10 +83,67 @@ if (-not (Test-Path $img)) {
 # The signed image, checked before anything is uploaded. An unsigned image
 # uploads perfectly happily and is then rejected by MCUboot at boot, which
 # costs a swap cycle to discover.
-$magic = ([System.IO.File]::ReadAllBytes($img)[0..3] |
-          ForEach-Object { $_.ToString('x2') }) -join ''
+$imgBytes = [System.IO.File]::ReadAllBytes($img)
+$magic = ($imgBytes[0..3] | ForEach-Object { $_.ToString('x2') }) -join ''
 if ($magic -ne '3db8f396') {
     throw "$img is not a signed MCUboot image (magic 0x$magic)"
+}
+
+# THE IMAGE'S OWN HASH, COMPUTED HERE, SO "DID THE BYTES ARRIVE?" HAS AN ANSWER.
+#
+# bootutil_img_hash() digests the header (ih_hdr_size bytes), then ih_img_size
+# bytes of payload, then ih_protect_tlv_size bytes of protected TLVs - and
+# stops. The unprotected TLV area at the end, which carries the signature and
+# the digest itself, is NOT part of it. So this is reproducible from the file,
+# and it is the same value `image state-read` reports for whichever slot holds
+# the image.
+#
+# Hashing the whole file instead is the obvious mistake and it never matches:
+# for the 0.94.0 image the correct digest is F47DE115... over 1,130,568 bytes
+# and the whole-file digest is 230ADB9C... over 1,130,720. A comparison that
+# can never succeed is worse than no comparison, because it reports a failed
+# transfer for a good one.
+#
+# Checked against the image's own SHA256 TLV rather than against the board:
+# `imgtool dumpinfo` prints that TLV, and it agrees to the byte. Which means
+# this function was verified without a network, a board, or a flash cycle.
+function Get-McubootImageHash {
+    param([byte[]]$Bytes)
+    $hdrSize = [int][BitConverter]::ToUInt16($Bytes, 8)
+    $protTlv = [int][BitConverter]::ToUInt16($Bytes, 10)
+    $imgSize = [int][BitConverter]::ToUInt32($Bytes, 12)
+    $n = $hdrSize + $imgSize + $protTlv
+    if ($n -le 0 -or $n -gt $Bytes.Length) {
+        throw "image header is not consistent with the file: it claims $n bytes of a $($Bytes.Length)-byte file"
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return (($sha.ComputeHash($Bytes, 0, $n)) |
+                ForEach-Object { $_.ToString('X2') }) -join ''
+    } finally { $sha.Dispose() }
+}
+
+$expectHash = Get-McubootImageHash $imgBytes
+$expectVer = "{0}.{1}.{2}" -f $imgBytes[20], $imgBytes[21],
+                              [BitConverter]::ToUInt16($imgBytes, 22)
+
+# The 64-hex run inside a slot's block. The hash is printed as a multi-line
+# repr:
+#
+#     hash=HashBytes(
+#         'B7FB...'
+#     ),
+#
+# so a field matcher that stops at the end of the line finds "HashBytes("
+# rather than the digest. Nothing else in a slot block is 64 hex characters
+# long, which makes the run unambiguous.
+function Get-SlotHash {
+    param([string]$Raw, [int]$Slot = 1)
+    $block = ($Raw -split 'slot=' |
+              Where-Object { $_ -match "^\s*$Slot\s*," } | Select-Object -First 1)
+    if (-not $block) { return $null }
+    if ($block -match '([0-9A-Fa-f]{64})') { return $Matches[1].ToUpper() }
+    return $null
 }
 
 function Invoke-ZShell {
@@ -137,10 +213,11 @@ correct the passphrase is.
     }
 }
 
-$size = (Get-Item $img).Length
+$size = $imgBytes.Length
 Write-Host ""
 Write-Host ("target       {0}" -f $Ip)
-Write-Host ("image        {0:N0} bytes" -f $size)
+Write-Host ("image        {0}, {1:N0} bytes" -f $expectVer, $size)
+Write-Host ("hash         {0}..." -f $expectHash.Substring(0, 16))
 Write-Host ("mode         {0}" -f $(if ($Confirm) { 'CONFIRM - no revert if it misbehaves' } else { 'test - reverts unless the health gate confirms it' }))
 Write-Host ""
 
@@ -208,10 +285,37 @@ if ($Resume) {
     # erases a good image and re-sends a megabyte over WiFi at 64 kB/s to
     # reach the state it was already in.
     #
-    # Verify with `image state-read` before reaching for this: slot1 should
-    # already hold the version being shipped. If it does not, a plain run is
-    # the right thing.
-    Write-Host "==> resuming: slot1 is assumed already staged" -ForegroundColor Yellow
+    # IT NO LONGER ASSUMES. It used to say "slot1 is assumed already staged"
+    # and go straight to marking it pending, which is a bad thing to assume on
+    # exactly the path that exists because an upload ended ambiguously: the
+    # reason to reach for -Resume is not knowing what is in slot1. Marked
+    # pending wrongly, the board resets into a half-written image, MCUboot
+    # refuses it and reverts - survivable, but it reports as a mystery.
+    #
+    # So ask the board, and compare the hash rather than the version. A slot
+    # can report a plausible VERSION while only part way written, because the
+    # MCUboot header lands in the first kilobyte; the hash covers every byte.
+    Write-Host "==> resuming: checking slot1 holds this exact image" -ForegroundColor Yellow
+    $resumeHash = Get-SlotHash (Get-State) 1
+    if (-not $resumeHash) {
+        throw @"
+-Resume was asked for, but slot1 holds no readable image.
+
+Nothing is staged, so there is nothing to resume. Run again without -Resume.
+"@
+    }
+    if ($resumeHash -ne $expectHash) {
+        throw @"
+-Resume was asked for, but slot1 holds a DIFFERENT image.
+
+    slot1  $resumeHash
+    local  $expectHash
+
+That is either an older staged image or a partial write of this one. Either
+way the bytes for this image are not all there, so run again without -Resume.
+"@
+    }
+    Write-Host "  slot1's hash matches the local image" -ForegroundColor Green
 } else {
 
 Write-Host "==> 1/5 erasing slot1" -ForegroundColor Cyan
@@ -241,8 +345,10 @@ if ($LASTEXITCODE -ne 0) {
     if ($afterErase -notmatch 'slot=') {
         throw "erase failed - the board did not answer at all, so slot1's state is unknown"
     }
-    if ($afterErase -match 'slot=1') {
-        throw "erase failed - slot1 still holds an image"
+    if (Get-SlotHash $afterErase 1) {
+        # Asked by hash rather than by `-match 'slot=1'`, which is the literal
+        # text of a block label and not a statement about the slot's contents.
+        throw "erase failed - slot1 still holds a readable image"
     }
     Write-Host "    slot1 is empty: the erase completed. Continuing." -ForegroundColor Green
 }
@@ -250,18 +356,25 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host ""
 Write-Host "==> 2/5 uploading to slot1" -ForegroundColor Cyan
 
-# -Mtu SHRINKS THE FRAMES, WHICH IS A FIX FOR A LOSSY LINK AND NOTHING ELSE.
+# -Mtu MAKES THINGS WORSE, AND THE REASON IS WORTH THE PARAGRAPH.
 #
-# The upload is the only step that sends full-size frames; erase, state-read,
-# state-write and reset are all short exchanges, which is why they kept working
-# on this bench while uploads did not. Measured here on 2026-11-17: 0% loss at
-# 32-byte frames, 20% at 500 and 73% at 1000, with a sibling board on the same
-# access point losing none. SMP over UDP is lockstep with no window, so a lost
-# frame is not retransmitted by the protocol - it becomes a client timeout, and
-# the transfer presents as a stall rather than as a slowdown.
+# This comment used to claim loss rose with frame size - 0% at 32 bytes, 20% at
+# 500, 73% at 1000 - and recommend a smaller MTU on that basis. Both the
+# numbers and the conclusion are withdrawn. They came from `ping -w 1000`,
+# which counts a merely LATE reply as lost; larger frames take longer, so the
+# measurement manufactured a loss-versus-size curve out of its own timeout.
 #
-# So a smaller MTU trades throughput for the chance of finishing at all. Leave
-# it unset on a healthy link; the default is whatever smpmgr negotiates.
+# What the link actually does is lose about 0.06% of datagrams REGARDLESS of
+# size - one in 1,600, established by arithmetic rather than by pinging:
+# roughly 1,100 datagrams per image and about half of attempts succeeding gives
+# (1 - p) ** 1100 ~= 0.5. Under per-datagram loss a smaller MTU multiplies the
+# number of lockstep exchanges, so four times the datagrams is four times the
+# chance of losing one. Measured: an --mtu 256 attempt failed where the default
+# had succeeded minutes earlier.
+#
+# So this is left for diagnosis - changing the frame count is a way to test a
+# per-datagram model against a per-byte one - and not as a remedy. The remedy
+# is a transport that resends what it loses, which is tools/otahttp.ps1.
 $upArgs = @('--ip', $Ip, '--timeout', '90')
 if ($Mtu -gt 0) {
     Write-Host "    --mtu $Mtu (frames shrunk deliberately)" -ForegroundColor Yellow
@@ -281,21 +394,39 @@ if ($LASTEXITCODE -ne 0) {
     # interrupt storm, the panel's own polling - and several readings behind
     # them were not about the board at all. They were this exit code.
     #
-    # So ask the board before declaring anything. image state-read validates
-    # the staged image, which is the only authority on whether the bytes
-    # arrived: a slot can report a VERSION while only part way written,
-    # because the MCUboot header lands in the first few kB.
+    # So ask the board before declaring anything - BY HASH.
+    #
+    # The check here used to be `$after -match "0\.\d+\.\d+"` and
+    # `$after -match "slot=1"`, which is not a check. The first matches any
+    # 0.x.y anywhere in the output, including slot0's own version - so it
+    # passes on a board that received nothing - and the second matches the
+    # literal text "slot=1", which `image state-read` prints whether or not
+    # slot1 holds anything. It would have called the transfer complete with a
+    # previous image still staged, then marked THAT pending and reset into it.
+    #
+    # The hash is the only thing that answers the question actually being
+    # asked. A slot can report a plausible VERSION while only part way
+    # written, because the MCUboot header lands in the first kilobyte.
     Write-Host ""
     Write-Host "    smpmgr exited non-zero - asking the board whether the" -ForegroundColor Yellow
     Write-Host "    image actually arrived before calling this a failure" -ForegroundColor Yellow
-    $after = Get-State
-    if ($after -match "0\.\d+\.\d+" -and $after -match "slot=1") {
+    $gotHash = Get-SlotHash (Get-State) 1
+    if ($gotHash -eq $expectHash) {
         Write-Host ""
-        Write-Host "    THE TRANSFER COMPLETED. slot1 holds a validated image;" -ForegroundColor Green
-        Write-Host "    smpmgr reported an error after the fact. Continuing." -ForegroundColor Green
+        Write-Host "    THE TRANSFER COMPLETED. slot1's hash matches the local" -ForegroundColor Green
+        Write-Host "    image; smpmgr reported an error after the fact." -ForegroundColor Green
         Write-Host ""
+    } elseif (-not $gotHash) {
+        throw "upload failed - slot1 holds no readable image, so this one is real"
     } else {
-        throw "upload failed - and slot1 holds no validated image, so this one is real"
+        throw @"
+upload failed - slot1 holds a different image, so this one is real.
+
+    slot1  $gotHash
+    local  $expectHash
+
+A partial write reports a hash too, over whatever is in the slot. Run again.
+"@
     }
 }
 
@@ -304,21 +435,29 @@ Write-Host ""
 
 Write-Host "==> 3/5 reading back the staged image's hash" -ForegroundColor Cyan
 $staged = Get-State
-# The hash is printed as a multi-line repr:
+$hash = Get-SlotHash $staged 1
+if (-not $hash) { throw "slot1 holds no readable image - nothing was staged" }
+
+# THE BOARD'S HASH AGAINST THE LOCAL ONE, ON THE SUCCESS PATH TOO.
 #
-#     hash=HashBytes(
-#         'B7FB...'
-#     ),
-#
-# so a field matcher that stops at the end of the line finds "HashBytes("
-# rather than the digest. Take the 64-hex run from inside slot 1's block
-# instead, which is unambiguous because nothing else in the block is 64 hex
-# characters long.
-$slot1Block = ($staged -split 'slot=' | Where-Object { $_ -match '^\s*1\s*,' } | Select-Object -First 1)
-if (-not $slot1Block) { throw "slot1 does not appear in the state - nothing was staged" }
-if ($slot1Block -match "([0-9A-Fa-f]{64})") { $hash = $Matches[1] } else { throw "could not read slot1's hash" }
+# The failure path above checks this, but a clean exit from smpmgr is not
+# evidence either: what gets marked pending and booted is whatever is in
+# slot1, so the comparison belongs here rather than only where something has
+# already gone visibly wrong.
+if ($hash -ne $expectHash) {
+    throw @"
+slot1 does not hold the image that was just uploaded.
+
+    slot1  $hash
+    local  $expectHash
+
+smpmgr exited cleanly, so this is the case worth stopping for: nothing has
+been marked pending yet and the board is still running a good image.
+"@
+}
 $stagedVer = Get-SlotField $staged 1 'version'
-Write-Host ("  slot1 is now {0}, hash {1}..." -f $stagedVer, $hash.Substring(0,16))
+Write-Host ("  slot1 is now {0}, hash {1}... - matches the local image" -f `
+    $stagedVer, $hash.Substring(0, 16))
 
 Write-Host ""
 Write-Host "==> 4/5 marking it for test, and CHECKING the mark took" -ForegroundColor Cyan

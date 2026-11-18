@@ -237,6 +237,14 @@ between two boards.
   upload succeeded, the board reset, and MCUboot booted the old image with
   slot1 showing `pending=False`. The swap only happened after an explicit
   `image state-write`. Do each step and verify it; do not trust the composite.
+- **"Did the bytes arrive?" has to be asked by hash.** `ota.ps1` once accepted
+  a version string appearing anywhere in `image state-read`, which passes on a
+  board that received nothing, and `-Resume` skipped the question outright. A
+  slot reports a plausible version while only part way written, because the
+  MCUboot header lands in the first kilobyte. The hash is computed from the
+  local file - header plus `ih_img_size` plus protected TLVs, stopping short of
+  the signature - and compared against the slot's. `docs/MEASURED.md` has the
+  three-way verification and the live refusal.
 - **`Connecting... OK` from smpmgr means nothing on UDP.** It is a local
   socket, not a reply. A board that is not on the network produces exactly the
   same line, followed by a timeout that looks like a slow handler.
