@@ -492,7 +492,15 @@ static void fillNet(void)
 			       (unsigned)gSnap.link.chan);
 		netAdd("signal", v, false);
 
-		(void)snprintk(v, sizeof(v), "%u.%u Mbit, %s",
+		/*
+		 * THE MODE IS DERIVED FROM THIS RATE, NOT READ FROM THE RADIO.
+		 * airoc_wifi.c:1289 picks WIFI_4 above 54 Mbit, WIFI_3 for the
+		 * exact 802.11g rate set, and WIFI_1 for everything else - its
+		 * own comment calls that the only way the WHD SDK allows. So
+		 * 11 Mbit AND 43 Mbit both render "802.11b", which cost a wrong
+		 * conclusion once. Labeled as derived so it cannot again.
+		 */
+		(void)snprintk(v, sizeof(v), "%u.%u Mbit (%s, derived)",
 			       (unsigned)(gSnap.link.rate_tenths / 10U),
 			       (unsigned)(gSnap.link.rate_tenths % 10U),
 			       wifi_link_mode_txt((enum wifi_link_mode)

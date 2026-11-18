@@ -1102,6 +1102,49 @@ The lesson is the probe's, not the fix's: the knob, the generated `.config` and
 the hardware all have to be read separately. Two of the three agreed and were
 wrong.
 
+### "WIFI 1 (802.11b)" is a DERIVED LABEL, not the association mode
+
+Third wrong conclusion from the same investigation, and the cheapest to have
+avoided: read the driver.
+
+`airoc_wifi.c:1289` computes `link_mode` from the instantaneous data rate,
+under its own comment that this "appears to be the only way to determine the
+phy mode with the whd SDK that we're currently using":
+
+```c
+if (rate > 54)                               WIFI_4
+else if (rate in {6,9,12,18,24,36,48,54})    WIFI_3
+else                                         WIFI_1
+```
+
+So 11 Mbit reports 802.11b **and so do 39, 43 and 52 Mbit**, because they are
+not in that 802.11g set. The link never "fell back to 802.11b"; the label just
+means "not above 54 and not a g-rate". The panel now prints it as
+`(..., derived)` so it cannot be read as the association mode again.
+
+### What is actually true about the radio
+
+- The PHY TX rate genuinely swings **11 to 104 Mbit** at a steady -43 to -50
+  dBm. That value is real - it is WHD's `current_phy_tx_rate`.
+- The driver sees **no faults at all**: `rxDrops=0`, `txErrs=0` across 46,893
+  rx and 7,023 tx packets. Frames leave cleanly.
+- TCP nevertheless resent **711,160 of 4,053,276 bytes - 17.5%** - with 419
+  packet drops and 97 connection resets. Retransmission without driver error
+  points at the transport or the air, not the SDIO path.
+- Power save is off (`wifiPsMode` 0), 24 V is present (`highs=6`,
+  `encoderWired=false`), buffers are far from full, no thread is blocked, and
+  nothing leaks.
+- A 1.7 MB run (12 x 144 KB) completed with zero failures; a 1 MB OTA fails
+  about half the time. The path is marginal rather than broken.
+
+**AND THE SIBLING COMPARISON DOES NOT COVER THIS.** The other Zephyr board on
+this bench, up 41 h on the same SoC and radio, serves a small JSON document.
+This one serves a 144 KB page and 1 MB images. Its uptime is evidence about
+association stability at low load and says nothing about throughput - so it is
+not a control for the failure being chased. Their TCP and SDIO settings are
+identical (both at defaults), and the two differences that did exist - system
+heap and workqueue stack - are now matched and did not change the behavior.
+
 ### RETRACTED: the radio-loss conclusion below, and the heap theory that followed
 
 Both wrong, and the measurements that killed them are worth more than either.
