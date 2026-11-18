@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "3b43d186"
-#define PAGE_INDEX_BYTES 65579
+#define PAGE_INDEX_BUILD "454b0994"
+#define PAGE_INDEX_BYTES 66319
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -105,7 +105,16 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .hdrlbl  { fill:#e8eaed; font:9px ui-monospace,monospace; }
   .cavity { fill:#0d1013; } .tongue { fill:#2b2f33; }
   .pin { fill:#c9a227; }
+  /* The RJ45's two lamps. Green is the PHY's link bit. Amber blinks whenever
+     the link is up: the blink is decoration for "there is a live wire here",
+     not a packet count, because nothing on this board can offer one. Unlit is
+     the color darkened so an off lamp still reads as the right lamp. */
   .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
+  .ledg.off { fill:#10301a; } .leda.off { fill:#3a2608; }
+  @keyframes ethact { 0%,38% { opacity:1 } 44%,92% { opacity:.16 } 100% { opacity:1 } }
+  .leda.act { animation:ethact 1.3s steps(1,end) infinite; }
+  /* An indicator that animates forever is exactly what this should suppress. */
+  @media (prefers-reduced-motion: reduce) { .leda.act { animation:none; } }
   .btnbody { fill:#aeb6bd; } .btn { fill:#3d454e; }
   .hdr { fill:#e9ecee; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
   /* The indicator LEDs in their real colors: 3V3 red, 12V yellow, 24V
@@ -449,8 +458,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 <rect class="pin" x="388" y="374" width="34" height="3"/>
 <rect class="tongue" x="432" y="352" width="30" height="26" rx="2"/>
 </g>
-<rect class="ledg" x="500" y="286" width="14" height="18" rx="2"/>
-<rect class="leda" x="500" y="376" width="14" height="18" rx="2"/>
+<rect data-tpl-attr="class ethLedG" class="ledg off" x="500" y="286" width="14" height="18" rx="2"/>
+<rect data-tpl-attr="class ethLedA" class="leda off" x="500" y="376" width="14" height="18" rx="2"/>
 <text class="featlbl" x="423" y="416">RJ45 &middot; J13</text>
 
 <rect class="shell" x="600" y="306" width="24" height="64" rx="3"/>

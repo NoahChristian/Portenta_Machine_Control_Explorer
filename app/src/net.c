@@ -384,6 +384,59 @@ static int eth_mdio_raw(uint8_t prtad, uint8_t regad, uint16_t *out)
 }
 
 /*
+ * The PHY's own link state, over MDIO, for when the MAC is dead and
+ * phy_get_link_state() therefore cannot be asked. IEEE-standard registers
+ * only - no vendor datasheet - so this holds for whatever PHY answers.
+ *
+ * BMSR.LINK IS LATCHING LOW: it reports 0 if the link dropped since the last
+ * read, even when the link is back. So it is read TWICE and the second read is
+ * the current state. A single read makes a recovered link look down.
+ */
+#define MII_BMSR     1U
+#define MII_ANAR     4U
+#define MII_ANLPAR   5U
+#define BMSR_LINK    BIT(2)
+
+static void eth_mdio_link(uint8_t addr)
+{
+	uint16_t bmsr = 0, anar = 0, anlpar = 0, common;
+
+	(void)eth_mdio_raw(addr, MII_BMSR, &bmsr);
+	if (eth_mdio_raw(addr, MII_BMSR, &bmsr) != 0) {
+		return;
+	}
+
+	s_eth.link_up = (bmsr & BMSR_LINK) ? 1U : 0U;
+	if (!s_eth.link_up) {
+		s_eth.speed_mbit = 0U;
+		s_eth.full_duplex = 0U;
+		return;
+	}
+
+	if (eth_mdio_raw(addr, MII_ANAR, &anar) != 0 ||
+	    eth_mdio_raw(addr, MII_ANLPAR, &anlpar) != 0) {
+		return;
+	}
+
+	/* The best mode BOTH sides advertise is the negotiated one. */
+	common = anar & anlpar;
+
+	if (common & BIT(8)) {
+		s_eth.speed_mbit = 100U;
+		s_eth.full_duplex = 1U;
+	} else if (common & BIT(7)) {
+		s_eth.speed_mbit = 100U;
+		s_eth.full_duplex = 0U;
+	} else if (common & BIT(6)) {
+		s_eth.speed_mbit = 10U;
+		s_eth.full_duplex = 1U;
+	} else if (common & BIT(5)) {
+		s_eth.speed_mbit = 10U;
+		s_eth.full_duplex = 0U;
+	}
+}
+
+/*
  * Why these five registers, and why the sweep is conditional on SWR:
  * docs/MEASURED.md. Safe only because the MAC's init failed, so no driver
  * owns any of this.
@@ -507,6 +560,16 @@ static void eth_sample(void)
 		 */
 		if (!s_eth.probed) {
 			eth_probe_registers();
+		}
+
+		/*
+		 * The PHY still answers, so the panel reports the WIRE's state
+		 * even though the MAC cannot carry it. Sampled every pass, not
+		 * once, because a cable can come and go.
+		 */
+		if (s_eth.phy_addr >= 0) {
+			eth_mdio_link((uint8_t)s_eth.phy_addr);
+			s_eth_stamp = k_uptime_get();
 		}
 		return;
 	}

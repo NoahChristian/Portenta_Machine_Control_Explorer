@@ -91,7 +91,9 @@ static struct pmc_snapshot gSnap;
 /* --------------------------------------------------------------- variables */
 
 static char     vLink[64];
-static char     vEth[64];
+static char     vEth[72];
+static char     vEthLedG[12];
+static char     vEthLedA[12];
 static char     vHost[48];
 static char     vFw[24];
 static uint32_t vUptime;
@@ -197,6 +199,18 @@ static void fillLink(void)
  */
 static void fillEth(void)
 {
+	/*
+	 * THE JACK'S OWN TWO LAMPS. Green follows the PHY's link bit. Amber
+	 * blinks whenever the link is up and is a CSS animation, NOT a traffic
+	 * measurement - the board has no per-packet activity signal to offer,
+	 * and the real amber blinks on any wire traffic the PHY sees, most of
+	 * which never reaches this controller anyway.
+	 */
+	const bool up = (gSnap.eth.present && gSnap.eth.link_up);
+
+	PUT(vEthLedG, up ? "ledg" : "ledg off");
+	PUT(vEthLedA, up ? "leda act" : "leda off");
+
 	if (!gSnap.eth.present) {
 		PUT(vEth, "eth off in this build");
 		return;
@@ -205,6 +219,36 @@ static void fillEth(void)
 		PUT(vEth, "eth not sampled yet");
 		return;
 	}
+
+	/*
+	 * THE MAC CAN BE DEAD WHILE THE WIRE IS PERFECTLY FINE, which is this
+	 * board's actual state. `carrier` comes from the MAC driver, so it
+	 * reads false when that driver never initialized - and rendering "no
+	 * cable" there would blame the cable for a controller fault. When the
+	 * register probe ran, the PHY's own MDIO answer is the truth instead,
+	 * and the text names the MAC as the part that is down.
+	 */
+	if (gSnap.eth.probed) {
+		if (!up) {
+			PUT(vEth, "eth PHY link down, MAC not initialized");
+		} else if (gSnap.eth.speed_mbit == 0U) {
+			/*
+			 * Link up with nothing negotiated is a real state, not
+			 * a missing reading: measured here as BMSR 0x780d -
+			 * link bit set, auto-negotiation NOT complete - with
+			 * ANLPAR 0x0001, a partner advertising no ability. "0
+			 * half" would be a fabricated speed.
+			 */
+			PUT(vEth, "eth PHY link up, speed unnegotiated, MAC down");
+		} else {
+			(void)snprintk(vEth, sizeof(vEth),
+				       "eth PHY link %u %s, MAC not initialized",
+				       (unsigned)gSnap.eth.speed_mbit,
+				       gSnap.eth.full_duplex ? "full" : "half");
+		}
+		return;
+	}
+
 	if (!gSnap.eth.carrier) {
 		PUT(vEth, "eth no cable");
 		return;
@@ -494,6 +538,8 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	   relying on there being no POST route yet. */
 	TPL_STR_RO("link", vLink)
 	TPL_STR_RO("eth", vEth)
+	TPL_STR_RO("ethLedG", vEthLedG)
+	TPL_STR_RO("ethLedA", vEthLedA)
 	TPL_STR_RO("host", vHost)
 	TPL_STR_RO("fw", vFw)
 	TPL_VAR_RO("uptime", vUptime)
