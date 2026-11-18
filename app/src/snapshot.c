@@ -413,7 +413,7 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	n += snprintk(out + n, cap - n,
 		      "\"eth\":{\"present\":%s,\"ageMs\":%d,\"rc\":%d,"
 		      "\"carrier\":%s,\"link\":%s,\"fullDuplex\":%s,"
-		      "\"speedMbit\":%u,\"hasAddr\":%s,\"initRes\":%d},",
+		      "\"speedMbit\":%u,\"hasAddr\":%s,\"initRes\":%d",
 		      s->eth.present ? "true" : "false",
 		      (int)s->eth.age_ms, (int)s->eth.rc,
 		      s->eth.carrier ? "true" : "false",
@@ -422,6 +422,20 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      (unsigned)s->eth.speed_mbit,
 		      s->eth.has_addr ? "true" : "false",
 		      (int)s->eth.init_res);
+
+	/* Only when the MAC failed init, which is the only time it is read. */
+	if (s->eth.probed) {
+		n += snprintk(out + n, cap - n,
+			      ",\"gates\":%u,\"epis\":%u,\"sw\":%u,\"phyRst\":%u,"
+			      "\"swr\":%u,\"phyAddr\":%d,\"phyId\":\"%04x:%04x\"",
+			      (unsigned)s->eth.gates, (unsigned)s->eth.epis,
+			      (unsigned)s->eth.pmcr_sw,
+			      (unsigned)s->eth.phy_rst, (unsigned)s->eth.swr,
+			      (int)s->eth.phy_addr, (unsigned)s->eth.phy_id1,
+			      (unsigned)s->eth.phy_id2);
+	}
+
+	n += snprintk(out + n, cap - n, "},");
 
 	/*
 	 * TEMPERATURE. The mode is reported beside the readings because a

@@ -119,6 +119,17 @@ struct pmc_eth {
 	uint8_t  has_addr;     /* an IPv4 address is bound. NOT the address. */
 	int16_t  rc;           /* phy_get_link_state() return */
 	int16_t  init_res;     /* the MAC driver's OWN init errno, negated */
+
+	/* Raw registers, read only when the MAC failed init. docs/MEASURED.md */
+	uint8_t  probed;       /* the probe ran; without this 0 is ambiguous */
+	uint8_t  gates;        /* RCC AHB1ENR: b0 MAC, b1 TX, b2 RX */
+	uint8_t  swr;          /* ETH DMAMR SWR still set = reset never finished */
+	uint8_t  epis;         /* SYSCFG PMCR EPIS_SEL: 0 = MII, 4 = RMII */
+	uint8_t  pmcr_sw;      /* PMCR switches: b0 PA0 b1 PA1 b2 PC2 b3 PC3 */
+	uint8_t  phy_rst;      /* PJ15, the PHY reset-release line, read back */
+	int16_t  phy_addr;     /* MDIO address that answered; -1 = none of 32 */
+	uint16_t phy_id1;      /* MDIO register 2 */
+	uint16_t phy_id2;      /* MDIO register 3 */
 };
 
 struct pmc_snapshot {

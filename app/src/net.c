@@ -35,6 +35,9 @@
 #include <zephyr/net/net_if.h>
 #include <zephyr/net/wifi_mgmt.h>
 
+/* For the Ethernet raw-register probe below. */
+#include <stm32_ll_system.h>
+
 /* Under the Zephyr API on purpose - see the power save note below. */
 #include <whd_wifi_api.h>
 #include <whd_types.h>
@@ -342,9 +345,117 @@ static const struct device *const s_eth_dev = DEVICE_DT_GET(DT_NODELABEL(mac));
 static const struct device *const s_eth_phy =
 	DEVICE_DT_GET(DT_PHANDLE(DT_NODELABEL(mac), phy_handle));
 
-static struct pmc_eth s_eth = { .age_ms = -1, .present = 1 };
+static struct pmc_eth s_eth = { .age_ms = -1, .present = 1, .phy_addr = -1 };
 static int64_t s_eth_stamp;
 static bool s_eth_dhcp_on;
+
+/*
+ * One MDIO read, driven directly, because the driver's path is unavailable
+ * when its init failed. HAL_ETH_Init leaves MACMDIOAR.CR at reset if it bails
+ * early, so the divider is set here or MDC runs at HCLK/42. docs/MEASURED.md.
+ */
+static int eth_mdio_raw(uint8_t prtad, uint8_t regad, uint16_t *out)
+{
+	uint32_t reg = ETH->MACMDIOAR;
+	int64_t deadline;
+
+	if (reg & ETH_MACMDIOAR_MB) {
+		return -EBUSY;
+	}
+
+	reg &= ~(ETH_MACMDIOAR_PA | ETH_MACMDIOAR_RDA | ETH_MACMDIOAR_MOC |
+		 ETH_MACMDIOAR_CR);
+	reg |= ETH_MACMDIOAR_CR_DIV102;
+	reg |= ((uint32_t)prtad << 21) & ETH_MACMDIOAR_PA;
+	reg |= ((uint32_t)regad << 16) & ETH_MACMDIOAR_RDA;
+	reg |= ETH_MACMDIOAR_MOC_RD | ETH_MACMDIOAR_MB;
+
+	ETH->MACMDIOAR = reg;
+
+	deadline = k_uptime_get() + 50;
+	while (ETH->MACMDIOAR & ETH_MACMDIOAR_MB) {
+		if (k_uptime_get() > deadline) {
+			return -ETIMEDOUT;
+		}
+	}
+
+	*out = (uint16_t)ETH->MACMDIODR;
+	return 0;
+}
+
+/*
+ * Why these five registers, and why the sweep is conditional on SWR:
+ * docs/MEASURED.md. Safe only because the MAC's init failed, so no driver
+ * owns any of this.
+ */
+static void eth_probe_registers(void)
+{
+	const uint32_t ahb1 = RCC->AHB1ENR;
+	uint8_t gates = 0;
+
+	if (ahb1 & RCC_AHB1ENR_ETH1MACEN) {
+		gates |= BIT(0);
+	}
+	if (ahb1 & RCC_AHB1ENR_ETH1TXEN) {
+		gates |= BIT(1);
+	}
+	if (ahb1 & RCC_AHB1ENR_ETH1RXEN) {
+		gates |= BIT(2);
+	}
+
+	s_eth.gates = gates;
+	s_eth.epis = (uint8_t)((SYSCFG->PMCR & SYSCFG_PMCR_EPIS_SEL) >>
+			       SYSCFG_PMCR_EPIS_SEL_Pos);
+
+	/* The analog switches as the RUNNING board has them, not as built. */
+	s_eth.pmcr_sw = (uint8_t)((SYSCFG->PMCR >> SYSCFG_PMCR_PA0SO_Pos) & 0xfU);
+
+	s_eth.phy_addr = -1;
+	s_eth.probed = 1U;
+
+	if (RCC->AHB4ENR & RCC_AHB4ENR_GPIOJEN) {
+		s_eth.phy_rst = (GPIOJ->ODR & BIT(15)) ? 1U : 0U;
+	}
+
+	/* Reading ETH with its gate off is a bus fault, not an error code. */
+	if ((gates & BIT(0)) == 0U) {
+		LOG_ERR("eth probe: MAC clock gate is off; ETH not read");
+		return;
+	}
+
+	s_eth.swr = (ETH->DMAMR & ETH_DMAMR_SWR) ? 1U : 0U;
+
+	/*
+	 * SWR SET MAKES A *SILENT* SWEEP UNINFORMATIVE - it resets the MAC's
+	 * own logic, MDIO included - so swr is published beside the result
+	 * rather than the sweep being skipped. An answer still proves the PHY;
+	 * only a non-answer is ambiguous.
+	 */
+	if (s_eth.swr) {
+		LOG_WRN("eth probe: DMAMR SWR set; a silent sweep proves nothing");
+	}
+
+	for (uint8_t a = 0U; a < 32U; a++) {
+		uint16_t id1 = 0, id2 = 0;
+
+		if (eth_mdio_raw(a, 2U, &id1) != 0 ||
+		    eth_mdio_raw(a, 3U, &id2) != 0) {
+			continue;
+		}
+		if (id1 == 0xffffU || (id1 == 0U && id2 == 0U)) {
+			continue;
+		}
+
+		s_eth.phy_addr = (int16_t)a;
+		s_eth.phy_id1 = id1;
+		s_eth.phy_id2 = id2;
+		break;
+	}
+
+	LOG_INF("eth probe: gates 0x%02x epis %u phyRst %u swr %u addr %d id %04x:%04x",
+		s_eth.gates, s_eth.epis, s_eth.phy_rst, s_eth.swr,
+		(int)s_eth.phy_addr, s_eth.phy_id1, s_eth.phy_id2);
+}
 
 static void eth_sample(void)
 {
@@ -387,6 +498,15 @@ static void eth_sample(void)
 		 */
 		if (s_eth_dev->state != NULL) {
 			s_eth.init_res = -(int16_t)s_eth_dev->state->init_res;
+		}
+
+		/*
+		 * -EIO IS AMBIGUOUS. eth_stm32_hal_common.c returns it both for
+		 * a clock-setup failure (:102) and for HAL_ETH_Init failing
+		 * (:123). Only the registers separate the two.
+		 */
+		if (!s_eth.probed) {
+			eth_probe_registers();
 		}
 		return;
 	}
@@ -465,7 +585,8 @@ static void eth_sample(void) { }
 
 void pmc_net_eth_read(struct pmc_eth *out)
 {
-	static const struct pmc_eth absent = { .age_ms = -1, .present = 0 };
+	static const struct pmc_eth absent = { .age_ms = -1, .present = 0,
+					       .phy_addr = -1 };
 
 	*out = absent;
 }
