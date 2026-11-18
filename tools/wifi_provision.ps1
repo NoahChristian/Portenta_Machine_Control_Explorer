@@ -9,8 +9,12 @@
     should not be. They live in the `kvs` NVS partition, which sits outside both
     image slots and therefore survives every firmware update.
 
-    app/app_secrets.h is gitignored and is a BENCH holding place, not a build
-    input - nothing #includes it. app_secrets.h.example is the committed
+    app/app_secrets.h is gitignored. The WiFi credentials in it are read only
+    by THIS script and pushed to NVS - but the file IS a build input, so do
+    not treat an edit here as provisioning-only: app/src/auth.c pulls it in
+    through __has_include("../app_secrets.h") and compiles SECRET_API_TOKEN
+    into the image. Changing the token therefore needs a rebuild and a flash,
+    and nothing rotates it per version. app_secrets.h.example is the committed
     template, made by blanking every value rather than by copying this file.
 
     Run once per board. After that the board rejoins by itself on every boot

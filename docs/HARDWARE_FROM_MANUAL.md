@@ -164,3 +164,40 @@ wired anywhere is not stated here.
 - Which pin drives each channel. The datasheet names no MCU pins at all.
 - The 0x36 device found on the Portenta's internal I2C bus.
 - Whether the PCF8563's CLKOUT pin is connected to anything.
+
+## J13's LED wiring, and why it is the Ethernet suspect
+
+From the AKX00032 carrier schematic, page 8. The jack is `J13`, an
+`MTJ-88AX1-FS-TSMT-P-L5-M398AC-WOT-K` with integrated magnetics and LEDs - the
+carrier carries no PHY, which lives on the Portenta H7 module.
+
+Both LED nets are referenced to the **+3V3 rail**:
+
+```
++3V3 -> J13 LED pin -> series resistor (R142/R143) -> ETH_LED2 -> module pin
++3V3 -> J13 LED pin -> series resistor (R146/R147) -> ETH_LED1 -> module pin
+```
+
+The module's side of `ETH_LED2` is the LAN8742A's **`LED2/nINTSEL`** pin: an
+LED driver after reset, and a configuration strap latched at power-on and on
+the rising edge of nRST. The datasheet ties the two together - an LED2 output
+pulled toward VDD to latch nINTSEL high is driven **active low**, which is
+exactly the polarity this schematic wires.
+
+nINTSEL high selects **REF_CLK In**, in which the PHY outputs no 50 MHz
+reference clock at all. The STM32H7 MAC's DMA software reset cannot complete
+without that clock, which is the measured failure - see docs/MEASURED.md.
+
+**NOT YET CONFIRMED, and the arithmetic is close.** At reset the jack's LED
+blocks DC below its forward voltage, so the 3V3 path is weak; if the module
+carries a 10 kOhm pull-down on that net, the node could settle near 1.3 V,
+between the logic thresholds rather than clearly either side. R142/R143's
+values are vector-rendered in the PDF and did not survive text extraction.
+
+Settle it with a meter, not a scope: **hold RESET and measure `ETH_LED2` at the
+connector.** At or above 2.0 V the strap latches high and the clock is absent
+by design, which makes Ethernet a hardware matter on this carrier. At or below
+0.8 V it latches low, the PHY should be driving REFCLKO, and the fault is
+elsewhere.
+
+Source: `https://docs.arduino.cc/resources/schematics/AKX00032-schematics.pdf`
