@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "6db3eb8c"
-#define PAGE_INDEX_BYTES 80170
+#define PAGE_INDEX_BUILD "f5e2d1d9"
+#define PAGE_INDEX_BYTES 88009
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -162,11 +162,32 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     0%,40% { fill:#38d16a; filter:drop-shadow(0 0 3px #38d16a); }
     46%,100% { fill:#123a1c; filter:none; }
   }
+  /* The PDIO read-back row, below the connector. Amber like the PDIO channel
+     lamps, because it is the same family of channel - the ROW it is in is
+     what says which fact it reports, not its color. Unlit is amber darkened,
+     the same rule as every other lamp here. `unknown` is for a port that did
+     not answer: hollow, so "no reading" cannot be mistaken for "low". */
+  .rbled { fill:#3f3310; }
+  .rbled.on { fill:#ffb020; filter:drop-shadow(0 0 3px #ffb020); }
+  .rbled.unknown { fill:none; stroke:#6b5a2a; stroke-width:1.2; }
+  .rblbl { fill:#8d959e; font:8px ui-monospace,monospace;
+           letter-spacing:.08em; }
+  @keyframes buslampr {
+    0%,40% { fill:#ff3b30; filter:drop-shadow(0 0 3px #ff3b30); }
+    46%,100% { fill:#3f1512; filter:none; }
+  }
   .led.amber.act { animation:buslamp .5s steps(1,end) infinite; }
   .led.green.act { animation:buslampg .5s steps(1,end) infinite; }
+  .led.red.act   { animation:buslampr .5s steps(1,end) infinite; }
+  /* REDUCED MOTION TURNS A BLINK INTO A LIE IF IT JUST STOPS IT LIT. A solid
+     lamp here would mean "traffic within the last 3 s" while looking exactly
+     like "traffic right now", and the blink is the whole distinction being
+     asked for. Slowed to a 2 s fade instead of frozen: still obviously
+     changing, no fast flashing. */
   @media (prefers-reduced-motion: reduce) {
-    .led.amber.act { animation:none; fill:#f5c35c; }
-    .led.green.act { animation:none; fill:#38d16a; }
+    .led.amber.act { animation:buslamp 2s ease-in-out infinite; }
+    .led.green.act { animation:buslampg 2s ease-in-out infinite; }
+    .led.red.act   { animation:buslampr 2s ease-in-out infinite; }
   }
   .brand  { fill:#cfd4da; font:14px ui-monospace,monospace;
             text-anchor:middle; letter-spacing:.15em; }
@@ -292,10 +313,18 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .ctl input { font:inherit; font-size:.8rem; padding:.25rem .4rem;
                border-radius:4px; border:1px solid #8886;
                background:transparent; color:inherit; width:7rem; }
+  /* ONE LINE PER COMMAND, NOT ONE LINE TOTAL. See note() for why.
+     The class is on each line rather than on the box, so a refusal and a
+     confirmation can sit together and still read as what they are. */
   #ctlsay { font-size:.8rem; color:var(--dim); margin-top:.6rem;
             min-height:1.2em; white-space:pre-wrap; }
-  #ctlsay.bad { color:var(--bad); }
-  #ctlsay.ok  { color:var(--ok); }
+  #ctlsay .sayln { padding:.06rem 0; }
+  #ctlsay .sayln.bad { color:var(--bad); }
+  #ctlsay .sayln.ok  { color:var(--ok); }
+  /* Older lines dim rather than disappear: the newest is the one just asked
+     for, and the rest are context. Dimming is what makes six lines readable
+     at a glance instead of a wall. */
+  #ctlsay .sayln.old { opacity:.5; }
 
   /* --- connector lines ---------------------------------------------------
      Drawn on hover or focus, one at a time, NOT all at once. DO sits on the
@@ -488,6 +517,29 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </g>
 <!--#/each-->
 
+ and four more registry variables for geometry the
+     page can already see.
+
+     NO SERVER-RENDERED CLASS. Every one starts dark and the poll fills them
+     in, so this row cannot be frozen at page load - which is the defect it
+     was added to answer.-->
+<g id="pdiorb">
+<circle class="rbled" cx="678.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="705.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="732.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="759.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="786.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="813.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="840.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="867.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="894.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="921.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="948.5" cy="613" r="3.4"/>
+<circle class="rbled" cx="975.5" cy="613" r="3.4"/>
+<text class="rblbl" x="827" y="630" text-anchor="middle">LINE READ BACK
+&#183; LIT = HIGH, COMMANDED OR NOT</text>
+</g>
+
 
 <g class="feat">
 <rect class="badge" x="380" y="254" width="52" height="16" rx="2"/>
@@ -572,11 +624,15 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </g>
 
 
-<circle data-tpl-attr="class tx485Cls" class="led amber" cx="46" cy="282" r="4.4"/>
+
+
+<circle id="led485tx" data-tpl-attr="class tx485Cls" class="led red"
+        cx="46" cy="282" r="4.4"/>
 <text class="ledlbl" x="58" y="285.4">RS485 TX</text>
-<circle data-tpl-attr="class rx485Cls" class="led green" cx="46" cy="302" r="4.4"/>
+<circle id="led485rx" data-tpl-attr="class rx485Cls" class="led green"
+        cx="46" cy="302" r="4.4"/>
 <text class="ledlbl" x="58" y="305.4">RS485 RX</text>
-<circle data-tpl-attr="class txCanCls" class="led amber" cx="46" cy="322" r="4.4"/>
+<circle data-tpl-attr="class txCanCls" class="led red" cx="46" cy="322" r="4.4"/>
 <text class="ledlbl" x="58" y="325.4">CAN TX</text>
 <circle data-tpl-attr="class rxCanCls" class="led green" cx="46" cy="342" r="4.4"/>
 <text class="ledlbl" x="58" y="345.4">CAN RX</text>
@@ -600,6 +656,12 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     style="background:#ffb020"></i><i class="sw"
     style="background:#ff3b30"></i>channel LED &mdash; input reads high,
     output commanded on</span>
+  
+  <span><i class="sw" style="background:#ffb020"></i>PDIO row below the
+    connector &mdash; the line read back, lit = high whether commanded or
+    driven from outside</span>
+  <span>RS485 / CAN lamps: <b>red TX</b>, <b>green RX</b>, blinking while
+    bytes moved in the last 3 s</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
   <span><!--#v canNote--></span>
@@ -1007,14 +1069,56 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     note('token forgotten', '');
   });
 
-  function note(text, cls) { say.textContent = text; say.className = cls; }
+  /*
+   * ONE LINE PER COMMAND, AND NOTHING SWALLOWED.
+   *
+   * This used to be `say.textContent = text`, one line for the whole panel,
+   * so every reply erased the one before it. Reading back several channels in
+   * a row left only the last answer on screen - and because a channel reading
+   * high is the one worth announcing, what survived looked like "only this
+   * channel answered" when in fact all of them had. A single-line log is a
+   * log that lies by omission.
+   *
+   * Each command now takes its OWN line at the moment it is sent, and its
+   * reply lands on that line. So replies cannot overwrite each other, and
+   * they cannot swap places either: two commands in flight land where they
+   * started rather than in the order the board happens to answer.
+   */
+  var SAY_KEEP = 6;
+
+  function sayDim() {
+    var k = say.childNodes;
+    for (var i = 0; i < k.length; i++) {
+      if (k[i].classList) { k[i].classList.toggle('old', i > 0); }
+    }
+  }
+
+  function sayLine() {
+    var ln = document.createElement('div');
+    ln.className = 'sayln';
+    say.insertBefore(ln, say.firstChild);
+    while (say.childNodes.length > SAY_KEEP) {
+      say.removeChild(say.lastChild);
+    }
+    sayDim();
+    return ln;
+  }
+
+  function setLine(ln, text, cls) {
+    ln.textContent = text;
+    ln.className = 'sayln' + (cls ? ' ' + cls : '');
+    sayDim();
+  }
+
+  function note(text, cls) { setLine(sayLine(), text, cls); }
 
   function post(fields, label) {
     var body = 'token=' + encodeURIComponent(tok.value);
     for (var k in fields) {
       body += '&' + k + '=' + encodeURIComponent(fields[k]);
     }
-    note(label + ' ...', '');
+    var ln = sayLine();
+    setLine(ln, label + ' ...', '');
     fetch('/io', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1028,10 +1132,10 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
            and the one thing worse than not knowing why is a green reply
            saying so. The remaining green verdicts are `verified` and
            `commanded`, which are the two that actually happened. */
-        note(t.trim(),
-             /^(refused|unexplained)|MISMATCH|error/.test(t) ? 'bad' : 'ok');
+        setLine(ln, t.trim(),
+                /^(refused|unexplained)|MISMATCH|error/.test(t) ? 'bad' : 'ok');
       })
-      .catch(function (e) { note('request failed: ' + e, 'bad'); });
+      .catch(function (e) { setLine(ln, 'request failed: ' + e, 'bad'); });
   }
 
   var dob = document.getElementById('dobtns');
@@ -1756,6 +1860,81 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     }
   }
 
+  /*
+   * THE BUS LAMPS, FOR THE SAME REASON AS THE RJ45's.
+   *
+   * `tx485Cls` and `rx485Cls` are server-rendered, so the blink was decided
+   * once when the page was built and then kept: quiet at load meant a dead
+   * lamp through any amount of later traffic, and a byte just before load
+   * meant a lamp blinking long after the bus went silent. Neither is activity.
+   *
+   * The window lives HERE and not in the firmware, which publishes the age of
+   * the last byte each way. What counts as "recent" is a property of how fast
+   * a person can see a lamp, not of the bus - and the poll is 2 s, so a window
+   * shorter than that would blink only when a byte happened to land in the
+   * gap. 3 s is one poll plus margin.
+   */
+  var BUS_WINDOW_MS = 3000;
+  var busLed = null;
+
+  function busLeds(j) {
+    if (!j || !j.rs485) { return; }
+    if (busLed === null) {
+      /* By id, NOT by data-tpl-attr: the engine consumes that attribute, so
+         it is absent from the rendered page - see the note beside these
+         circles in the drawing. */
+      busLed = { tx: document.getElementById('led485tx'),
+                 rx: document.getElementById('led485rx') };
+    }
+    function set(el, age) {
+      if (!el) { return; }
+      el.classList.toggle('act', age >= 0 && age < BUS_WINDOW_MS);
+    }
+    set(busLed.tx, j.rs485.txAge);
+    set(busLed.rx, j.rs485.rxAge);
+  }
+
+  /*
+   * THE PDIO READ-BACK ROW, AND WHY IT IS A SECOND ROW.
+   *
+   * The lamps on the connector follow the COMMAND, which is what an output
+   * indicator has to do. That left a programmable channel driven high from
+   * outside - 24 V on the terminal, nothing commanded - looking identical to
+   * one sitting idle, because nothing on the drawing showed the read-back at
+   * all. Observed on PDIO4: wired to 24 V, reading high, and invisible.
+   *
+   * So the two facts get a row each. Above the connector: what the board was
+   * told. Below it: what the line actually reads. Where they differ is the
+   * interesting case, and now it is the one that LOOKS different.
+   *
+   * A LIT LAMP HERE MEANS "THIS LINE IS HIGH", NOT "AN INPUT IS HIGH", and
+   * the distinction is not pedantic: a channel commanded high reads high
+   * through its own output driver. PDIO4 is currently both at once, which is
+   * exactly why the row cannot be labeled "input".
+   *
+   * Driven only from the poll, never server-rendered. That is deliberate -
+   * a lamp with no rendered state cannot be frozen at page load, which is the
+   * defect this row exists to answer.
+   */
+  var rbLed = null;
+
+  function pdioReadback(j) {
+    if (!j || !j.io || !j.io.pdio) { return; }
+    if (rbLed === null) {
+      rbLed = document.querySelectorAll('#pdiorb circle');
+    }
+    /* A PORT THAT DID NOT ANSWER IS NOT A PORT READING LOW. Without this the
+       whole row goes dark when the expander drops off I2C, which is the one
+       reading that must never be reported as "every line is low". */
+    var ok = j.io.pdioOk !== false;
+    for (var i = 0; i < rbLed.length && i < j.io.pdio.length; i++) {
+      var v = j.io.pdio[i];
+      var known = ok && (v === 0 || v === 1);
+      rbLed[i].classList.toggle('on', known && v === 1);
+      rbLed[i].classList.toggle('unknown', !known);
+    }
+  }
+
   function boardLeds(j) {
     if (!j || !j.io) { return; }
     if (ledMap === null) {
@@ -1808,6 +1987,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         tempShow(j);
         boardLeds(j);
         ethLeds(j);
+        busLeds(j);
+        pdioReadback(j);
         if (!j.ai) { return; }
         /* Row order is the registry's order, which is the order the board
            reads them in - matching by position rather than by a key the

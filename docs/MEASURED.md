@@ -1822,3 +1822,152 @@ It answers in one round trip what the wrong-board incident needed four
 commands to establish, and deliberately prints **no address**: this output is
 meant to be pasted verbatim into this file, and an address may not be
 committed here. `net iface` is where those live.
+
+## Three indicators that were decided once (2026-11-18, 0.100.1)
+
+Reported from the bench: the RS485 lamps sit solid instead of blinking, and a
+PDIO channel driven from outside looks identical to an idle one. Both are the
+same defect as the RJ45 lamps above, found three more times in one pass, so the
+pattern is now recorded as a rule rather than as three fixes.
+
+**EVERY SERVER-RENDERED INDICATOR ON THIS PANEL NEEDS A LINE IN THE POLL.** The
+page is one snapshot by design, which is right for a table of readings and
+wrong for anything whose job is to show change. The lamps decided at render
+time were: the terminal channel LEDs (fixed this morning), the RJ45's two
+(fixed this afternoon), and now RS485 TX/RX. The enumeration is the fix - the
+drawing was read element by element rather than waiting for the next report.
+
+### RS485: a blink window belongs to the viewer, not the bus
+
+`fillBusLamps()` compared the age of the last byte against a 3 s window in C
+and emitted `act` or not. So a page loaded quiet showed a dead bus through any
+amount of later traffic, and one loaded just after a byte blinked for as long
+as it stayed open. Neither is activity; both are a stopped clock.
+
+The firmware now publishes the **age in ms** and the page decides:
+
+```
+"rs485":{"txAge":-1,"rxAge":-1}
+```
+
+An age, not a boolean, because "recent" is a property of how fast a person can
+see a lamp against a 2 s poll - a window shorter than the poll would blink only
+when a byte happened to land in the gap. Driven through the page's own poll
+with the ages forced, nothing transmitted:
+
+```
+ages -1          tx "led red"       rx "led green"
+txAge 120        tx "led red act"   rx "led green"
+both recent      tx "led red act"   rx "led green act"
+both 9 s stale   tx "led red"       rx "led green"
+```
+
+Also **red TX, green RX**, which is what the lamps on the carrier do. They were
+amber-over-green, a convention from nowhere; an indicator whose color does not
+match the one beside it on the hardware makes a person check the drawing
+against the board instead of trusting it.
+
+### `data-tpl-attr` IS CONSUMED, and the selector that used it matched nothing
+
+The first version of the RS485 fix selected the lamps by
+`[data-tpl-attr~="tx485Cls"]`. The template engine **acts on that attribute and
+does not emit it**, so the rendered circle carries no trace of which variable
+filled its class. `querySelector` returned null, the lamp never updated, and
+**it threw no error** - a dead lamp looks exactly like a quiet bus.
+
+Caught by reading the rendered DOM rather than the source:
+
+```
+{"cls":"led red","cy":"282","tpl":null}     <- tpl null, not "class tx485Cls"
+```
+
+The lamps now carry `id`s. The general form, which is this file's recurring
+shape in a new costume: **a template directive is not a hook.** The source
+attribute and the served attribute are different sets, and only one of them is
+what a script can find.
+
+### The PDIO read-back row, because command and level are two facts
+
+The connector's PDIO lamps follow the **command**, which is what an output
+indicator must do and was the right fix this morning. It left a channel driven
+high from outside - 24 V on the terminal, nothing commanded - looking exactly
+like an idle one, because the drawing showed no read-back anywhere.
+
+So twelve lamps now sit **below** the PROGRAMMABLE DIGITAL I/O block: above the
+connector is what the board was told, below it is what the line reads. Measured
+with nothing commanded this boot:
+
+```
+pdioCmd  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+pdio      0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0
+row lit  [2]        unknown []
+```
+
+**A lit lamp there means "this line is high", not "an input is high".** A
+channel commanded high reads high through its own output driver, so the row
+cannot be labeled "input" without being wrong half the time.
+
+It is driven only from the poll and never server-rendered - deliberately, since
+a lamp with no rendered state cannot be frozen at page load, which is the
+defect the row exists to answer. And `pdioOk` false marks the whole row
+`unknown` (hollow) rather than dark: a port that did not answer is not a port
+reading low.
+
+### UNRESOLVED: 24 V reported on PDIO4, read back on index 2
+
+The bench report is that **PDIO4** is wired to 24 V. With nothing commanded
+this boot the board reads index **2** high and every other index low. Two
+candidates, and this firmware can separate neither:
+
+- the wire is on the terminal marked **02**, not **04**; or
+- the PDIO **read** bit map is wrong - `r:P23` for channel 04 against `r:P25`
+  for channel 02.
+
+Neither is confirmed. The second is risk 5 of this project's plan, and the
+whole reason every PDIO row in `tools/terminals.csv` still says `pinout`: the
+write map, the read map and the DIN map are each scrambled differently, all
+three were transcribed from upstream `main`, and not one has been confirmed at
+a connector.
+
+**One wire move settles it.** Put the 24 V lead on the terminal marked **00**
+with nothing commanded: index 0 lighting means the map is right and the lead
+was simply on 02; index 11 or anything else lighting means the read map is
+wrong, and which index lights names the error. Do it one terminal at a time and
+the `conf` column for all twelve can finally read `measured`.
+
+Noted beside it, because it was in the same capture and may not be expected:
+`din` reads **DIN2 high** as well. Not a crossed read - before the reset, PDIO
+channels commanded high showed as 1 in `pdio` while `din` stayed all low, so
+the two arrays are independently sourced.
+
+### The log that lied by omission
+
+`note()` was `say.textContent = text`: one line for the whole panel, so every
+reply erased the one before it. Reading several channels in a row left only the
+last answer on screen - and because a channel reading HIGH is the one worth
+announcing, what survived looked like "only this channel answered" when all of
+them had. A single-line log is a log that lies by omission.
+
+Each command now takes its own line when it is sent and its reply lands on that
+line. Proved with commands the board **refuses**, so nothing was energized -
+the token was cleared first and restored after:
+
+```
+refused: bad or missing token (3 refusals since boot)     <- newest, bright
+refused: bad or missing token (4 refusals since boot)     <- answered LAST
+refused: bad or missing token (2 refusals since boot)
+refused: bad or missing token (1 refusals since boot)
+token forgotten
+```
+
+The second line is the proof: that command's reply arrived **after** the one
+above it and still landed in the position where it was issued. Replies cannot
+overwrite each other and cannot swap places. Four clicks, four refusals,
+counted 1-4 by the board itself.
+
+**And a check that was wrong, not a defect.** `doOut` read `0,1,0,0,0,0,0,0`
+right after that test, which looked like a refused command having energized an
+output. It had not: `status_out.c` drives **DO1** as the health heartbeat, and
+the sample caught the blink high. Six samples at 700 ms afterwards read all
+zero. Worth keeping because "an output I did not command is on" is the right
+thing to be alarmed by, and the answer is that one channel has an owner.

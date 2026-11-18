@@ -225,10 +225,12 @@ static void fillBusLamps(void)
 	const bool rx = (gSnap.rs485_rx_age >= 0 &&
 			 gSnap.rs485_rx_age < LAMP_WINDOW_MS);
 
-	PUT(vTx485Cls, tx ? "led amber act" : "led amber");
+	/* Red for TX, green for RX - the pairing the lamps on the carrier use.
+	   See the note beside these circles in web/index.html. */
+	PUT(vTx485Cls, tx ? "led red act" : "led red");
 	PUT(vRx485Cls, rx ? "led green act" : "led green");
 
-	PUT(vTxCanCls, "led amber");
+	PUT(vTxCanCls, "led red");
 	PUT(vRxCanCls, "led green");
 	PUT(vCanNote, "CAN lamps dark: no CAN driver in this image");
 }

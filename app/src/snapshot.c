@@ -563,6 +563,21 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      (unsigned)s->pulse_mask);
 
 	/*
+	 * RS485 ACTIVITY AS AN AGE, so the lamp can blink rather than sit.
+	 *
+	 * Rendered server-side the bus lamps were decided once, at page load,
+	 * and then held that verdict forever: a page loaded during a quiet
+	 * moment showed a dead bus through an hour of traffic, and one loaded
+	 * mid-burst blinked for an hour after the last byte. Published as the
+	 * age in ms of the last byte each way - NOT as a boolean - because the
+	 * window that counts as "active" is a presentation choice and belongs
+	 * on the side that is doing the presenting. -1 is never.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"rs485\":{\"txAge\":%d,\"rxAge\":%d},",
+		      (int)s->rs485_tx_age, (int)s->rs485_rx_age);
+
+	/*
 	 * THE RADIO'S OWN DROP COUNTER, and the reason it is here.
 	 *
 	 * Three explanations for a stalled OTA have been proposed on this
