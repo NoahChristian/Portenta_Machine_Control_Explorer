@@ -79,6 +79,11 @@ zephyr_compile_definitions(
   # One TCP MSS, and therefore the peak RAM cost of rendering a page of any
   # length.
   HTMLTPL_OUTBUF=1460
+
+  # The library default is 64 and the panel is past it. Must be visible to
+  # EVERY target: the registry and the library disagreeing about this is a
+  # silent layout mismatch, which is why these live here.
+  HTMLTPL_MAX_VARS=112
 )
 
 # Needed by the APPLICATION as well as by the bootloader, because the app
