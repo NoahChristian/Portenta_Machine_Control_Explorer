@@ -1545,6 +1545,55 @@ driver, the 4343W firmware, or the air itself - the board-to-AP direction.
   is dominated by ambient traffic with no listener - mDNS to 5353, a foreign
   DHCP conversation, and 0x88ca frames - because the broadcast domain is a /22.
 
+### The fix, measured: the same image over TCP
+
+`POST /ota` writes the signed image into the secondary slot through the same
+`flash_img` API `img_mgmt` uses, over the panel's existing TCP server.
+Same board, same radio, same session in which five consecutive UDP attempts
+had just failed:
+
+```
+upload over HTTP/TCP   1,130,642 bytes in  4 s   260 kB/s
+upload over HTTP/TCP   1,130,720 bytes in 14 s    80 kB/s
+upload over SMP/UDP    1,129,310 bytes in 16 s    70 kB/s   (when it worked)
+```
+
+Then end to end on the new path: staged, armed with `do=otatest`, reset,
+MCUboot swapped, and the health gate confirmed the new image on the fourth
+15-second poll. The byte count the board reported matched what was sent
+exactly, which is what the uploader checks before it will arm anything.
+
+### A 32-character token in a 32-byte buffer (2026-11-18)
+
+The first upload transferred perfectly and was refused for a missing token.
+`CONFIG_HTTP_SERVER_MAX_HEADER_LEN` sizes **one** buffer that the HTTP/1 parser
+reuses for a header's name and then its value:
+
+```c
+if (offset + length > sizeof(ctx->header_buffer) - 1U) {
+        LOG_DBG("Header %s too long (by %zu bytes)", "value", ...);
+        ctx->header_buffer[0] = '\0';
+}
+```
+
+At the default of 32 the usable value is 31 characters. The API token is 32, so
+it needed 33 bytes, was discarded at **debug** level, and the header was never
+captured - `POST /ota` saw no token and refused every upload. The registration
+macro's `BUILD_ASSERT` checks only the NAME (12 bytes for `X-PMC-Token`), so
+the build was clean. Raised to 64.
+
+Two things worth keeping from how it was found:
+
+- **The client was tested in isolation first.** A loopback `HttpListener`
+  showed `Invoke-WebRequest` putting `X-PMC-Token` on the wire correctly, which
+  moved the fault to the board without touching the board. Guessing between two
+  ends is what burns flash cycles.
+- **The first diagnostic was logged to the console and never arrived.**
+  Deferred logging dropped it under the `net_pkt` flood - the same mechanism
+  that discarded 781,997 messages above. The refusal now carries its reason in
+  the HTTP response body, because the caller is the one party guaranteed to be
+  listening.
+
 ### DTLS does not address this
 
 Zephyr's `smp_udp` does support it: `CONFIG_MCUMGR_TRANSPORT_UDP_DTLS` opens

@@ -60,8 +60,47 @@ the intended way to discover it.
 
 ```powershell
 pwsh tools/wifi_provision.ps1   # once per board; credentials go to NVS
-pwsh tools/ota.ps1
+pwsh tools/otahttp.ps1 -Ip <board> -Arm -Reset    # over TCP, preferred
+pwsh tools/ota.ps1                                # over UDP, the SMP path
 ```
+
+### Prefer the HTTP path, and the reason is retransmission
+
+`tools/ota.ps1` drives `smpmgr` over SMP/UDP, which is **lockstep with no
+window**: one datagram lost in either direction ends the transfer, because the
+protocol has nothing to resend it with. Measured on this bench on 2026-11-18,
+loss is about **0.06% per datagram** - one in 1,600, invisible to a ping test
+and fatal to a 1,100-datagram upload roughly half the time. On one occasion
+five consecutive attempts failed. `docs/MEASURED.md` has the capture.
+
+`tools/otahttp.ps1` posts the same signed image to `POST /ota` on the panel's
+own server, over TCP, which resends what it loses. Measured in the same
+session: **260 kB/s** best and 80 kB/s typical, against 70 kB/s for a
+*successful* UDP upload, and it has not yet failed.
+
+Zephyr has no TCP transport for SMP - nine transports, none of them TCP - so
+this is a route of ours rather than a configuration change. It writes into the
+secondary slot through the same `flash_img` API that `img_mgmt` uses, so
+MCUboot's slot logic and signature check are untouched. **Only the transport is
+different.**
+
+```
+POST /ota     body = build/app/zephyr/zephyr.signed.bin
+              header X-PMC-Token: <the API token>
+              -> "staged <n> bytes"
+GET  /ota     -> "staged <n> bytes", the count already in slot1
+POST /io      token=<...>&do=otatest     arms it
+POST /reset   token=<...>                swaps on the next boot
+```
+
+**Staging and arming are two acts on purpose.** Writing slot1 changes nothing
+about what the board boots; arming does. Keeping them apart means a
+half-considered upload cannot reboot the board, and it mirrors smpmgr's own
+`upload` / `state-write` split.
+
+The uploader checks the **board's** reported byte count against what it sent
+and refuses to arm on a mismatch. An HTTP 200 means the request completed; it
+does not mean every byte reached flash.
 
 Uploaded in **test** mode. MCUboot swaps slot1 into slot0 through the scratch
 area and boots it; if the image does not confirm itself, the next reset puts

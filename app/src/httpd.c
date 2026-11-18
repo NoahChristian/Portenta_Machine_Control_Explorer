@@ -41,7 +41,13 @@
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/dfu/mcuboot.h>
+#include <stdarg.h>
+#include <string.h>
+#include <strings.h>
 
+#include "auth.h"
 #include "health.h"
 #include "httpd.h"
 #include "rs485.h"
@@ -405,6 +411,227 @@ static struct http_resource_detail_dynamic reset_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(reset_resource, pmc_service, "/reset", &reset_detail);
+
+/* ---------------------------------------------------------------- /ota ----
+ * IMAGE UPLOAD OVER TCP, AND THE REASON IS RETRANSMISSION.
+ *
+ * SMP over UDP is lockstep with no window: one datagram lost in either
+ * direction ends the transfer, and the protocol has nothing to resend it with.
+ * Measured on this bench on 2026-11-18 - see docs/MEASURED.md - the loss rate
+ * is about 0.06% per datagram, which is invisible to a ping test and fatal to
+ * a 1,100-datagram upload about half the time. In the same window TCP moved
+ * 492 KB through the same radio, resending 355 segments and dropping none,
+ * because that is what TCP does.
+ *
+ * Zephyr has no TCP transport for SMP (nine transports, none of them TCP), so
+ * this is our own route rather than a configuration change. It writes the
+ * SIGNED image straight into the secondary slot through the same flash_img
+ * API that img_mgmt uses, so MCUboot's slot logic and signature check are
+ * untouched - this replaces the transport and nothing else.
+ *
+ * POST /ota   body = zephyr.signed.bin, header X-PMC-Token = the API token
+ * GET  /ota   reports how many bytes are already staged, so a retry can skip
+ *             what arrived (the upload is resumable only from a fresh start
+ *             today; the offset is reported because it is the number a human
+ *             wants when a transfer dies).
+ *
+ * Setting the pending flag is NOT done here. It is a separate, deliberate act
+ * on /io, so that staging an image and arming it stay two decisions.
+ */
+
+/* The token travels in a header, not the query string: a URL ends up in logs,
+ * shell history and the browser's address bar, and this one grants writes.
+ */
+HTTP_SERVER_REGISTER_HEADER_CAPTURE(pmc_ota_token, "X-PMC-Token");
+
+static struct flash_img_context s_ota;
+static bool   s_ota_open;
+static bool   s_ota_bad;
+static char   s_ota_reply[200];
+/*
+ * WHY THE REFUSAL CARRIES ITS OWN DIAGNOSIS. The first version logged the
+ * header count to the console and the line never appeared: deferred logging
+ * drops under the net_pkt flood, so the one message that mattered was
+ * discarded among 781,997 others. A refusal has to explain itself to the
+ * caller, who is the only party guaranteed to be listening.
+ */
+static char   s_ota_why[120];
+/*
+ * WHICH CLIENT OWNS THE UPLOAD. One server thread means one callback at a
+ * time, but it does NOT mean one request at a time: with four client slots,
+ * another client's DATA_MORE can interleave between ours, and two bodies
+ * feeding one flash_img context would write a corrupt image that still passed
+ * every length check here and failed only at MCUboot's signature.
+ */
+static struct http_client_ctx *s_ota_owner;
+
+static const char *ota_token(const struct http_request_ctx *req)
+{
+	if (req == NULL || req->headers == NULL) {
+		return NULL;
+	}
+	for (size_t i = 0; i < req->header_count; i++) {
+		if (req->headers[i].name != NULL &&
+		    strcasecmp(req->headers[i].name, "X-PMC-Token") == 0) {
+			return req->headers[i].value;
+		}
+	}
+	return NULL;
+}
+
+static void ota_finish(struct http_response_ctx *rsp, const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = vsnprintk(s_ota_reply, sizeof(s_ota_reply), fmt, ap);
+	va_end(ap);
+
+	rsp->status = HTTP_200_OK;
+	rsp->body = (const uint8_t *)s_ota_reply;
+	rsp->body_len = (n < 0) ? 0U : (size_t)n;
+	rsp->final_chunk = true;
+}
+
+static void ota_abandon(void)
+{
+	s_ota_open = false;
+	s_ota_bad = false;
+	s_ota_owner = NULL;
+}
+
+static int ota_handler(struct http_client_ctx *client,
+		       enum http_transaction_status status,
+		       const struct http_request_ctx *request_ctx,
+		       struct http_response_ctx *response_ctx, void *user_data)
+{
+	ARG_UNUSED(user_data);
+
+	if (status == HTTP_SERVER_TRANSACTION_COMPLETE) {
+		/* The connection is done with, whatever happened. */
+		if (s_ota_owner == client) {
+			ota_abandon();
+		}
+		return 0;
+	}
+
+	/* GET: just the staged byte count. No token - it reveals nothing and
+	 * it is the number someone needs when a transfer has just died.
+	 */
+	if (request_ctx != NULL && request_ctx->data_len == 0U && !s_ota_open &&
+	    status == HTTP_SERVER_REQUEST_DATA_FINAL && s_ota_owner == NULL) {
+		ota_finish(response_ctx, "staged %u bytes\n",
+			   (unsigned)flash_img_bytes_written(&s_ota));
+		pmc_health_note_http_200();
+		return 0;
+	}
+
+	if (!s_ota_open && !s_ota_bad) {
+		const char *tok = ota_token(request_ctx);
+
+		if (s_ota_owner != NULL && s_ota_owner != client) {
+			s_ota_bad = true;
+			snprintk(s_ota_why, sizeof(s_ota_why),
+				 "another upload is already running");
+			goto reply;
+		}
+		if (!pmc_auth_configured()) {
+			pmc_auth_note_refusal();
+			s_ota_bad = true;
+			snprintk(s_ota_why, sizeof(s_ota_why),
+				 "no SECRET_API_TOKEN compiled in");
+			goto reply;
+		}
+		if (!pmc_auth_ok(tok)) {
+			pmc_auth_note_refusal();
+			s_ota_bad = true;
+			/* Name what arrived. A header that was never captured
+			 * and a token that did not match are different faults,
+			 * and the first one is the server's mistake.
+			 */
+			snprintk(s_ota_why, sizeof(s_ota_why),
+				 "token %s; %u header(s) captured, status %d",
+				 tok ? "did not match" : "header absent",
+				 (unsigned)(request_ctx ?
+					    request_ctx->header_count : 0),
+				 (int)(request_ctx ?
+				       (int)request_ctx->headers_status : -1));
+			goto reply;
+		}
+
+		int err = flash_img_init(&s_ota);
+
+		if (err != 0) {
+			s_ota_bad = true;
+			snprintk(s_ota_why, sizeof(s_ota_why),
+				 "flash_img_init failed (%d)", err);
+			goto reply;
+		}
+		s_ota_open = true;
+		s_ota_owner = client;
+		LOG_INF("upload started");
+	}
+
+	if (s_ota_open && request_ctx != NULL && request_ctx->data_len > 0U) {
+		int err = flash_img_buffered_write(
+			&s_ota, (const uint8_t *)request_ctx->data,
+			request_ctx->data_len, false);
+
+		if (err != 0) {
+			snprintk(s_ota_why, sizeof(s_ota_why),
+				 "flash write failed at %u (%d)",
+				 (unsigned)flash_img_bytes_written(&s_ota),
+				 err);
+			s_ota_bad = true;
+			s_ota_open = false;
+		}
+	}
+
+reply:
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;   /* more body to come */
+	}
+
+	if (s_ota_bad) {
+		ota_finish(response_ctx, "refused: %s\n",
+			   s_ota_why[0] ? s_ota_why : "no reason recorded");
+		s_ota_why[0] = '\0';
+		ota_abandon();
+		return 0;
+	}
+
+	/* Flush the tail of the block buffer. Without this the last partial
+	 * 512-byte block is never written and the image is short by up to 511
+	 * bytes - which MCUboot reports only as a failed signature.
+	 */
+	int err = flash_img_buffered_write(&s_ota, NULL, 0, true);
+	size_t n = flash_img_bytes_written(&s_ota);
+
+	if (err != 0) {
+		LOG_ERR("flush failed: %d", err);
+		ota_finish(response_ctx, "refused: flush failed (%d)\n", err);
+	} else {
+		LOG_INF("upload complete: %u bytes staged", (unsigned)n);
+		ota_finish(response_ctx,
+			   "staged %u bytes; now arm it with do=otatest\n",
+			   (unsigned)n);
+	}
+	ota_abandon();
+	pmc_health_note_http_200();
+	return 0;
+}
+
+static struct http_resource_detail_dynamic ota_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods =
+			BIT(HTTP_POST) | BIT(HTTP_GET),
+	},
+	.cb = ota_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(ota_resource, pmc_service, "/ota", &ota_detail);
 
 /* --------------------------------------------------------------- start --- */
 

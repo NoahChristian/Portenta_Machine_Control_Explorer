@@ -29,6 +29,8 @@ extern "C" {
 #include "temp.h"
 #include "rs485.h"
 
+#include <zephyr/dfu/mcuboot.h>
+
 #include <ctype.h>
 
 LOG_MODULE_REGISTER(pmc_post, LOG_LEVEL_INF);
@@ -367,6 +369,28 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 	 * scrollback anyone wants - it asks the heap and reports the answer,
 	 * including on refusal. See docs/ARCHITECTURE.md.
 	 */
+	/*
+	 * ARM THE IMAGE STAGED BY POST /ota. Deliberately separate from the
+	 * upload: staging writes slot1, arming changes what the board boots,
+	 * and conflating them means a half-considered upload reboots the
+	 * board. Mirrors smpmgr's upload / state-write split, and the image
+	 * still has to pass MCUboot's signature check and then our own health
+	 * gate before it confirms itself.
+	 */
+	if (strcmp(verb, "otatest") == 0) {
+		int err = boot_request_upgrade(BOOT_UPGRADE_TEST);
+
+		if (err != 0) {
+			n = refuse("refused: boot_request_upgrade failed "
+				   "(%d)\n", err);
+		} else {
+			n = refuse("armed: slot1 is pending; reset to swap, "
+				   "and it reverts on the next reset unless "
+				   "the health gate confirms it\n");
+		}
+		goto done;
+	}
+
 	if (strcmp(verb, "485arm") == 0) {
 		char nb[12];
 
