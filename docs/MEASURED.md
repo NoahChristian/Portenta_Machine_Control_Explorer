@@ -1165,6 +1165,57 @@ Recorded as unresolved for the second time. What is new is that the panel and
 `net mem` now instrument it, and that one wrong explanation has been eliminated
 by measurement rather than left standing because it was plausible.
 
+### The PHY's control register, and one cause for both symptoms (2026-11-17)
+
+Read and written over the MDIO shell, no reflash. Every value below was read
+three times identically, and the ID registers were correct in the same pass,
+so the bus is reliable rather than returning noise.
+
+```
+reg 0 BMCR   0x0000   autoneg DISABLED, 10BASE-T, half duplex
+reg 1 BMSR   0x780d   link up, autoneg capable, autoneg NOT complete
+reg 18       0x9b9d
+reg 27, 31   0xffff   not registers on this part
+```
+
+**`BMCR` 0x0000 is the post-reset strap state, not something software chose.**
+`phy_configure_link()` is never called by `eth_stm32_hal_*`, and `phy_mii`'s
+init only issues `MII_BMCR_RESET` - so the PHY is left exactly as its straps
+leave it. (`phy_mii` IS running, and logs `PHY (0) is down`; an earlier note
+here guessed it had never initialized.)
+
+Confirmed by experiment: writing `BMCR` 0x1200 - autoneg enable plus restart -
+**dropped the link and it never returned**, with the link partner still
+advertising nothing after 16 s. Writing 0x0000 back brought the link straight
+up. Restored as found.
+
+**One cause fits all of it.** On the LAN8742A the `nINTSEL` strap selects
+REF_CLK In or REF_CLK Out, it is latched at power-on and on the rising edge of
+nRST, it **shares the LED2 pin**, and its default is REF_CLK *In* through an
+internal pull-up - in which mode the PHY drives no 50 MHz clock. The same LED
+pins carry the MODE straps, and mode 000 is exactly 10BASE-T half with autoneg
+off.
+
+| observed | follows from |
+|---|---|
+| `swr` stuck, DMA reset never finishes | no REF_CLK for the reset to clock |
+| `BMCR` 0x0000 | MODE strap 000 |
+| autoneg enabled loses the link entirely | 000 is not an autoneg mode |
+| PHY alive, MDIO fine, jack LEDs lit | the PHY runs off its own 25 MHz crystal |
+
+On this carrier LED1 and LED2 go to the RJ45's lamps, so that LED circuit is
+what sets those straps. Per the datasheet the strap is the only control for
+REFCLKO - there is no register bit - so the link mode is fixable in firmware
+and **the clock is not**.
+
+**Two caveats, because this is a conclusion and not a measurement.** The "no
+register" point rests on a forum reading plus a Rev A schematic checklist that
+ambiguously names `WUCSR` for LED2's function. And the Portenta H7 ships with
+working Ethernet under mbed, which implies the module is normally strapped
+correctly. Settle it by scoping PA1 for 50 MHz, or by booting the mbed
+`PortentaEthernet` example on this assembly: if Ethernet works there, this
+conclusion is wrong and the fault is in software after all.
+
 ### What is left, and it is hardware
 
 Three questions this bench cannot answer from software, and the next step is a
