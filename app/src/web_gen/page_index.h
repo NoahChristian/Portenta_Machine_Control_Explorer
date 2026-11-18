@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "8b72b37b"
-#define PAGE_INDEX_BYTES 70604
+#define PAGE_INDEX_BUILD "84663f02"
+#define PAGE_INDEX_BYTES 72656
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -675,6 +675,15 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     <div class="row"><button type="button" id="bapply">apply</button>
       <button type="button" id="bclear">clear</button></div>
 
+    
+    <div class="row"><label for="capbytes">capture</label>
+      <input type="number" id="capbytes" min="4096" max="1048576"
+             step="4096" value="65536" style="width:5.4rem"
+             title="bytes of receive scrollback to hold on the board">
+      <button type="button" id="caparm">arm</button>
+      <button type="button" id="caprelease">release</button></div>
+    <p class="turn" id="capinfo"></p>
+
     <hr style="border:0;border-top:1px solid #8884;margin:.9rem 0">
 
     
@@ -1173,6 +1182,23 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     if (termEl) { termEl.textContent = ''; }
     post485({ do: '485clear' }, 'clearing');
   }); }
+  /*
+   * Arming resets the reader's cursor on purpose. The swap changes the
+   * ring's modulus, so the board reports `lost` once for the old window -
+   * asking from 0 again makes that one notice instead of a confusing gap.
+   */
+  el = document.getElementById('caparm');
+  if (el) { el.addEventListener('click', function () {
+    var b = document.getElementById('capbytes');
+
+    post485({ do: '485arm', bytes: b ? b.value : '' }, 'arming').then(
+      function () { termFrom = 0; termFirst = true; });
+  }); }
+  el = document.getElementById('caprelease');
+  if (el) { el.addEventListener('click', function () {
+    post485({ do: '485release' }, 'releasing').then(
+      function () { termFrom = 0; termFirst = true; });
+  }); }
   el = document.getElementById('bsend');
   if (el) { el.addEventListener('click', function () {
     var h = document.getElementById('txhex').value;
@@ -1376,6 +1402,25 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
             'RTU frame boundary). rx ' + j.rxTotal + ' &middot; tx ' +
             j.txTotal + (j.repMs ? ' &middot; repeating every ' + j.repMs +
             ' ms' : '');
+        }
+
+        /*
+         * The budget, stated in the units of the decision: how long the
+         * buffer holds at THIS baud, not just how many bytes it is. A
+         * number of bytes does not tell anyone whether it is enough.
+         */
+        var ci = document.getElementById('capinfo');
+        if (ci && j.heapTotal) {
+          var held = j.capArmed || j.capResident;
+          var ms = Math.round((held * j.charUs) / 1000);
+          var span = (ms >= 1000) ? (ms / 1000).toFixed(1) + ' s'
+                                  : ms + ' ms';
+          ci.innerHTML = (j.capArmed
+              ? 'capture <b>armed</b>, ' + j.capArmed + ' bytes'
+              : 'resident ' + j.capResident + ' bytes, nothing armed') +
+            ' &middot; holds <b>' + span + '</b> of a saturated line at ' +
+            j.baud + ' &middot; heap ' + j.heapFree + ' free of ' +
+            j.heapTotal;
         }
 
         if (termFirst) {

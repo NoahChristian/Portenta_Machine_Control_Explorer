@@ -187,9 +187,22 @@ HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
  * changes it, because the WiFi link is then the limit. The old 768 sustained
  * only 19200.
  *
- * 2048 bytes is 4096 hex characters plus ~215 of fields, so this is 4608.
+ * THE WORST CASE, counted rather than estimated - getting this wrong truncates
+ * the document into invalid JSON, which the page's .catch() reports as a missed
+ * poll, so it fails silently:
+ *
+ *   2048-byte window as hex   4096
+ *   a 256-byte repeat frame    512   (PMC_485_TX_MAX, raised from 64)
+ *   the scalar fields          ~215
+ *   the capture budget          ~90
+ *                             ----
+ *                              4913
+ *
+ * 6144 leaves room for another field or two. 4608 did not: it was sized when
+ * PMC_485_TX_MAX was 64, and raising that to 256 quietly made the worst case
+ * 4823.
  */
-static char rs485_buf[4608];
+static char rs485_buf[6144];
 
 static int rs485_handler(struct http_client_ctx *client,
 			 enum http_transaction_status status,
@@ -235,6 +248,14 @@ static int rs485_handler(struct http_client_ctx *client,
 	uint32_t rep_ms = 0;
 	size_t w = 0;
 
+	/* The budget travels with the terminal's own poll, because this is
+	 * where someone deciding whether to arm a capture is already looking.
+	 * sys_heap keeps these as counters, so reading them is O(1) and safe
+	 * at the panel's 400 ms rate. */
+	size_t cap_armed = 0, cap_resident = 0, heap_free = 0, heap_total = 0;
+
+	pmc_rs485_cap_info(&cap_armed, &cap_resident, &heap_free, &heap_total);
+
 	pmc_rs485_cfg_get(&c);
 	pmc_rs485_repeat_get(rep, sizeof(rep), &rep_len, &rep_ms);
 
@@ -244,6 +265,8 @@ static int rs485_handler(struct http_client_ctx *client,
 		      "\"slew\":%s,\"echo\":%s,\"charUs\":%u,"
 		      "\"turnaroundUs\":%u,\"rxTotal\":%llu,"
 		      "\"txTotal\":%llu,\"errors\":%u,\"repMs\":%u,"
+		      "\"capArmed\":%u,\"capResident\":%u,"
+		      "\"heapFree\":%u,\"heapTotal\":%u,"
 		      "\"lost\":%s,\"next\":%llu,\"hex\":\"",
 		      (unsigned)c.baud, (unsigned)c.data_bits, c.parity,
 		      (unsigned)c.stop_bits,
@@ -256,6 +279,8 @@ static int rs485_handler(struct http_client_ctx *client,
 		      (unsigned long long)pmc_rs485_rx_total(),
 		      (unsigned long long)pmc_rs485_tx_total(),
 		      (unsigned)pmc_rs485_errors(), (unsigned)rep_ms,
+		      (unsigned)cap_armed, (unsigned)cap_resident,
+		      (unsigned)heap_free, (unsigned)heap_total,
 		      lost ? "true" : "false", (unsigned long long)next);
 
 	for (size_t i = 0; i < n && w + 3 < sizeof(rs485_buf); i++) {

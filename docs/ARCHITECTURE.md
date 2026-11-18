@@ -193,12 +193,24 @@ Three details that are not obvious and are load-bearing:
 - **`pmc_rs485_clear()` must reset `rx_base` with `rx_total`.** Left behind, it
   sits ahead of the stream and every subsequent read returns nothing, forever.
 
-**Not yet built** - the budget on the panel. `app/src/snapshot.c`,
-`app/src/page_vars.cpp` and `web/index.html` still need to render armed size,
-heap free and heap total from `pmc_rs485_cap_info()`. Until then the numbers are
-visible only in the reply to a POST, which is the one place a user who just
-asked for memory is certain to look, but not where someone deciding what to ask
-for would look first.
+The budget is on the panel too, and it travels with the terminal's own
+`/rs485.json` poll rather than through the template registry - that poll is
+already running, and it is what someone deciding whether to arm is looking at.
+`capArmed`, `capResident`, `heapFree` and `heapTotal` ride along with it;
+`sys_heap` keeps those as counters, so reading them is O(1) and safe at the
+panel's 400 ms rate.
+
+It is stated in the units of the decision, not just in bytes - a byte count
+does not tell anyone whether it is enough:
+
+```
+resident 2048 bytes, nothing armed - holds 178 ms of a saturated line
+at 115200 - heap 130900 free of 131172
+```
+
+**Still fixed, deliberately:** the HTTP client array (upstream, 6.3 KB, the
+worst value of the four) and the network fragment pools. Neither is a settled
+argument against making them dynamic; they are cost decisions recorded as such.
 
 ### Variable-size network buffers are a different thing
 
