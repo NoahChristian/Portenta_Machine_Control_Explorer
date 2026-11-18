@@ -132,6 +132,16 @@ struct pmc_eth {
 	uint16_t phy_id2;      /* MDIO register 3 */
 };
 
+/*
+ * The analog trend. `points` is an SVG polyline attribute built from a ring
+ * sampled on its own timer - see snapshot.c on why it is not derived at render
+ * time. Y is fixed at 0..10 V; a failed read leaves a gap in the line.
+ */
+size_t pmc_snapshot_ai_points(size_t ch, char *out, size_t cap);
+
+/* Seconds the trend currently spans; 0 before two samples exist. */
+uint32_t pmc_snapshot_ai_span_s(void);
+
 struct pmc_snapshot {
 	const char *host;
 	const char *fw;
@@ -148,6 +158,10 @@ struct pmc_snapshot {
 
 	/* The DO logic lines, off the GPIO registers; -1 = port not ready. */
 	int8_t                 do_out[8];
+
+	/* ms since the last RS485 byte each way; -1 = never. Drives the lamps. */
+	int32_t                rs485_tx_age;
+	int32_t                rs485_rx_age;
 
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;

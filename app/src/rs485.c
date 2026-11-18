@@ -125,6 +125,10 @@ static struct k_mutex cfg_lock;
 static uint8_t  ring[PMC_485_RING];
 static uint64_t rx_total;
 static uint64_t tx_total;
+/* Uptime of the last byte each way, 0 = never. Drives the panel's TX/RX
+   lamps: a total cannot say "recently", and a lamp needs that. */
+static int64_t  tx_stamp;
+static int64_t  rx_stamp;
 static atomic_t rx_errors;
 static struct k_spinlock ring_lock;
 
@@ -324,6 +328,7 @@ static void ring_put(uint8_t b)
 
 	ring[rx_total % PMC_485_RING] = b;
 	rx_total++;
+	rx_stamp = k_uptime_get();
 	k_spin_unlock(&ring_lock, k);
 }
 
@@ -374,9 +379,23 @@ void pmc_rs485_clear(void)
 	k_spinlock_key_t k = k_spin_lock(&ring_lock);
 
 	rx_total = 0;
+	rx_stamp = 0;
 	k_spin_unlock(&ring_lock, k);
 	tx_total = 0;
+	tx_stamp = 0;
 	atomic_set(&rx_errors, 0);
+}
+
+void pmc_rs485_activity(int32_t *tx_age_ms, int32_t *rx_age_ms)
+{
+	const int64_t now = k_uptime_get();
+	k_spinlock_key_t k = k_spin_lock(&ring_lock);
+	const int64_t rx = rx_stamp;
+
+	k_spin_unlock(&ring_lock, k);
+
+	*tx_age_ms = (tx_stamp == 0) ? -1 : (int32_t)(now - tx_stamp);
+	*rx_age_ms = (rx == 0) ? -1 : (int32_t)(now - rx);
 }
 
 static void rx_isr(const struct device *dev, void *user)
@@ -418,6 +437,7 @@ int pmc_rs485_send_raw(const uint8_t *buf, size_t len, char *detail, size_t cap)
 	}
 
 	tx_total += len;
+	tx_stamp = k_uptime_get();
 	(void)snprintk(detail, cap,
 		       "raw: %u bytes shifted out, control pins untouched\n",
 		       (unsigned)len);
@@ -478,6 +498,7 @@ int pmc_rs485_send(const uint8_t *buf, size_t len, char *detail, size_t cap)
 	(void)pin_set(&p_re, RE_ENABLE);
 
 	tx_total += len;
+	tx_stamp = k_uptime_get();
 	k_mutex_unlock(&cfg_lock);
 
 	(void)snprintk(detail, cap, "sent %u bytes\n", (unsigned)len);

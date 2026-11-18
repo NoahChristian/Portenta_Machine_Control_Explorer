@@ -94,6 +94,15 @@ static char     vLink[64];
 static char     vEth[72];
 static char     vEthLedG[12];
 static char     vEthLedA[12];
+static char     vTx485Cls[20];
+static char     vRx485Cls[20];
+static char     vTxCanCls[20];
+static char     vRxCanCls[20];
+static char     vCanNote[56];
+static char     vAiHist0[1100];
+static char     vAiHist1[1100];
+static char     vAiHist2[1100];
+static char     vAiSpan[40];
 static char     vHost[48];
 static char     vFw[24];
 static uint32_t vUptime;
@@ -197,6 +206,58 @@ static void fillLink(void)
  * different actions: not built, built with no cable, and a cable whose PHY
  * will not come up.
  */
+/*
+ * THE FOUR BUS LAMPS.
+ *
+ * RS485 is real: this firmware owns UART4, so it knows when a byte moved and
+ * the lamp blinks for a window after one did. CAN IS NOT - there is no CAN
+ * driver in this image at all, so both CAN lamps are held dark and the note
+ * says why. A blinking lamp over a bus nothing is driving would be the one
+ * kind of lie this panel exists to avoid.
+ */
+#define LAMP_WINDOW_MS 3000
+
+static void fillBusLamps(void)
+{
+	const bool tx = (gSnap.rs485_tx_age >= 0 &&
+			 gSnap.rs485_tx_age < LAMP_WINDOW_MS);
+	const bool rx = (gSnap.rs485_rx_age >= 0 &&
+			 gSnap.rs485_rx_age < LAMP_WINDOW_MS);
+
+	PUT(vTx485Cls, tx ? "led amber act" : "led amber");
+	PUT(vRx485Cls, rx ? "led green act" : "led green");
+
+	PUT(vTxCanCls, "led amber");
+	PUT(vRxCanCls, "led green");
+	PUT(vCanNote, "CAN lamps dark: no CAN driver in this image");
+}
+
+/*
+ * The analog trend, rendered server-side into three polyline attributes.
+ *
+ * NO JAVASCRIPT AND NO SECOND REQUEST: the scaling is done where the data is,
+ * in C, so the page carries the finished geometry. A JSON endpoint plus a
+ * client-side plotter would be a second thing to keep in step with the ring.
+ */
+static void fillAiHist(void)
+{
+	(void)pmc_snapshot_ai_points(0, vAiHist0, sizeof(vAiHist0));
+	(void)pmc_snapshot_ai_points(1, vAiHist1, sizeof(vAiHist1));
+	(void)pmc_snapshot_ai_points(2, vAiHist2, sizeof(vAiHist2));
+
+	const uint32_t span = pmc_snapshot_ai_span_s();
+
+	if (span == 0U) {
+		PUT(vAiSpan, "filling - 10 s per sample");
+	} else if (span < 120U) {
+		(void)snprintk(vAiSpan, sizeof(vAiSpan),
+			       "last %u s, 0-10 V", (unsigned)span);
+	} else {
+		(void)snprintk(vAiSpan, sizeof(vAiSpan),
+			       "last %u min, 0-10 V", (unsigned)(span / 60U));
+	}
+}
+
 static void fillEth(void)
 {
 	/*
@@ -540,6 +601,15 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_STR_RO("eth", vEth)
 	TPL_STR_RO("ethLedG", vEthLedG)
 	TPL_STR_RO("ethLedA", vEthLedA)
+	TPL_STR_RO("tx485Cls", vTx485Cls)
+	TPL_STR_RO("rx485Cls", vRx485Cls)
+	TPL_STR_RO("txCanCls", vTxCanCls)
+	TPL_STR_RO("rxCanCls", vRxCanCls)
+	TPL_STR_RO("canNote", vCanNote)
+	TPL_STR_RO("aiHist0", vAiHist0)
+	TPL_STR_RO("aiHist1", vAiHist1)
+	TPL_STR_RO("aiHist2", vAiHist2)
+	TPL_STR_RO("aiSpan", vAiSpan)
 	TPL_STR_RO("host", vHost)
 	TPL_STR_RO("fw", vFw)
 	TPL_VAR_RO("uptime", vUptime)
@@ -758,6 +828,8 @@ extern "C" void pmc_page_init(void)
 	fillRail();
 	fillLink();
 	fillEth();
+	fillBusLamps();
+	fillAiHist();
 
 	const uint16_t faults = gTpl.selfTest(TPL_FROM_FLASH(PAGE_INDEX), sink);
 
@@ -801,6 +873,8 @@ extern "C" int pmc_page_step(enum http_transaction_status status,
 		fillRail();
 		fillLink();
 		fillEth();
+		fillBusLamps();
+		fillAiHist();
 		pick(query, qlen);
 	}
 

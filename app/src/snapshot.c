@@ -28,6 +28,7 @@
 #include "expander.h"
 #include "health.h"
 #include "io_write.h"
+#include "rs485.h"
 #include "snapshot.h"
 #include "temp.h"
 
@@ -160,6 +161,7 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	pmc_io_read(&s->io);
 	pmc_rail_read(&s->rail);
 	(void)pmc_do_read(s->do_out, ARRAY_SIZE(s->do_out));
+	pmc_rs485_activity(&s->rs485_tx_age, &s->rs485_rx_age);
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {
@@ -209,6 +211,120 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 		 */
 		s->slot[i].confirmed = (i == 0) && boot_is_img_confirmed();
 	}
+}
+
+/* ------------------------------------------------- the analog history --- */
+
+/*
+ * A ring of past AI readings, and the polyline the panel draws from it.
+ *
+ * SAMPLED ON ITS OWN TIMER, not when a page renders. A trend built from page
+ * loads would be a graph of when somebody was looking, with gaps shaped like
+ * lunch - and two clients would corrupt each other's spacing. This is the one
+ * thing on the panel that cannot be derived at render time.
+ *
+ * Y IS FIXED AT 0..10 V, the board's own input range, rather than autoscaled.
+ * An autoscaled trace makes 3 mV of noise look identical to a 10 V ramp, and
+ * the whole point of a trend here is to see a signal against its range.
+ *
+ * mV is stored, not raw counts, because raw is meaningless once the mode
+ * switches. INT16_MIN marks a slot whose read failed, so a gap renders as a
+ * gap rather than as a plunge to zero.
+ */
+#define AI_HIST_N    120U
+#define AI_HIST_MS   10000U
+#define AI_HIST_GAP  INT16_MIN
+#define AI_FULLSCALE 10000       /* mV at the top of the plot */
+#define AI_PLOT_W    318
+#define AI_PLOT_H    88
+
+static int16_t  s_hist[PMC_SNAP_AI][AI_HIST_N];
+static uint16_t s_hist_n;
+static uint16_t s_hist_head;
+static struct k_work_delayable s_hist_work;
+
+static void ai_hist_sample(struct k_work *w)
+{
+	ARG_UNUSED(w);
+
+	for (size_t i = 0; i < PMC_SNAP_AI && i < ARRAY_SIZE(ai_spec); i++) {
+		int16_t raw = 0;
+		int32_t mv = 0;
+
+		s_hist[i][s_hist_head] = (read_ai(i, &raw, &mv) == 0)
+						 ? (int16_t)mv
+						 : AI_HIST_GAP;
+	}
+
+	s_hist_head = (uint16_t)((s_hist_head + 1U) % AI_HIST_N);
+	if (s_hist_n < AI_HIST_N) {
+		s_hist_n++;
+	}
+
+	k_work_reschedule(&s_hist_work, K_MSEC(AI_HIST_MS));
+}
+
+static int ai_hist_init(void)
+{
+	for (size_t c = 0; c < PMC_SNAP_AI; c++) {
+		for (size_t j = 0; j < AI_HIST_N; j++) {
+			s_hist[c][j] = AI_HIST_GAP;
+		}
+	}
+
+	k_work_init_delayable(&s_hist_work, ai_hist_sample);
+	k_work_reschedule(&s_hist_work, K_MSEC(2000));
+	return 0;
+}
+
+SYS_INIT(ai_hist_init, APPLICATION, 50);
+
+size_t pmc_snapshot_ai_points(size_t ch, char *out, size_t cap)
+{
+	size_t n = 0;
+
+	if (out == NULL || cap == 0) {
+		return 0;
+	}
+	out[0] = '\0';
+	if (ch >= PMC_SNAP_AI || s_hist_n < 2U) {
+		return 0;
+	}
+
+	/*
+	 * Oldest first. The ring is only full once s_hist_n saturates, so
+	 * before that the oldest sample is index 0, not head.
+	 */
+	const uint16_t first = (s_hist_n == AI_HIST_N) ? s_hist_head : 0U;
+
+	for (uint16_t k = 0; k < s_hist_n; k++) {
+		const uint16_t idx = (uint16_t)((first + k) % AI_HIST_N);
+		const int16_t mv = s_hist[ch][idx];
+		int32_t y;
+
+		if (mv == AI_HIST_GAP) {
+			continue;   /* a gap breaks the line, honestly */
+		}
+
+		y = AI_PLOT_H - ((int32_t)mv * AI_PLOT_H) / AI_FULLSCALE;
+		y = CLAMP(y, 0, AI_PLOT_H);
+
+		n += snprintk(out + n, (n < cap) ? cap - n : 0, "%d,%d ",
+			      (int)(((int32_t)k * AI_PLOT_W) /
+				    (int32_t)(s_hist_n - 1U)),
+			      (int)y);
+		if (n >= cap) {
+			return cap - 1;
+		}
+	}
+
+	return n;
+}
+
+uint32_t pmc_snapshot_ai_span_s(void)
+{
+	return (s_hist_n < 2U) ? 0U
+			       : ((uint32_t)(s_hist_n - 1U) * AI_HIST_MS) / 1000U;
 }
 
 int pmc_snapshot_reading(const struct pmc_snapshot *s, const char *chan,

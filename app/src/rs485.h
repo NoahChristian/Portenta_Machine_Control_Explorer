@@ -106,6 +106,12 @@ size_t pmc_rs485_rx_read(uint64_t from, uint8_t *out, size_t cap,
 uint64_t pmc_rs485_rx_total(void);
 uint64_t pmc_rs485_tx_total(void);
 uint32_t pmc_rs485_errors(void);
+
+/*
+ * Milliseconds since the last byte each way, or -1 for never. The panel's
+ * TX/RX lamps need "recently", which a running total cannot express.
+ */
+void pmc_rs485_activity(int32_t *tx_age_ms, int32_t *rx_age_ms);
 void pmc_rs485_clear(void);
 
 #ifdef __cplusplus

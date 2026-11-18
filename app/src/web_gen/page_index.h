@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "454b0994"
-#define PAGE_INDEX_BYTES 66319
+#define PAGE_INDEX_BUILD "155c5f88"
+#define PAGE_INDEX_BYTES 69354
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -109,6 +109,19 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
      the link is up: the blink is decoration for "there is a live wire here",
      not a packet count, because nothing on this board can offer one. Unlit is
      the color darkened so an off lamp still reads as the right lamp. */
+  /* The analog trend. Fixed height so the aspect does not change with the
+     column, and vector-effect so a non-uniform scale does not thicken the
+     strokes unevenly. */
+  #aitrend { margin:1rem 0; }
+  #aitrend svg { width:100%; height:120px; display:block;
+                 background:#0d1013; border:1px solid #232a31; border-radius:4px; }
+  #aitrend .grid line { stroke:#232a31; stroke-width:.5;
+                        vector-effect:non-scaling-stroke; }
+  #aitrend .tr { fill:none; stroke-width:1.4;
+                 vector-effect:non-scaling-stroke;
+                 stroke-linejoin:round; stroke-linecap:round; }
+  #aitrend .tr0 { stroke:#5ac8f5; } #aitrend .tr1 { stroke:#f5c35c; }
+  #aitrend .tr2 { stroke:#c88cf5; }
   .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
   .ledg.off { fill:#10301a; } .leda.off { fill:#3a2608; }
   @keyframes ethact { 0%,38% { opacity:1 } 44%,92% { opacity:.16 } 100% { opacity:1 } }
@@ -127,6 +140,23 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                                                filter:drop-shadow(0 0 3px #f5c35c); }
   .led.green { fill:#123a1c; } .led.green.on { fill:#38d16a;
                                                filter:drop-shadow(0 0 3px #38d16a); }
+  /* Bus traffic lamps. `.act` blinks for a window after a byte moved, rather
+     than tracking individual bytes - a lamp cannot show 19200 baud and a 2 s
+     page render could not sample it anyway. */
+  @keyframes buslamp {
+    0%,40% { fill:#f5c35c; filter:drop-shadow(0 0 3px #f5c35c); }
+    46%,100% { fill:#3f3310; filter:none; }
+  }
+  @keyframes buslampg {
+    0%,40% { fill:#38d16a; filter:drop-shadow(0 0 3px #38d16a); }
+    46%,100% { fill:#123a1c; filter:none; }
+  }
+  .led.amber.act { animation:buslamp .5s steps(1,end) infinite; }
+  .led.green.act { animation:buslampg .5s steps(1,end) infinite; }
+  @media (prefers-reduced-motion: reduce) {
+    .led.amber.act { animation:none; fill:#f5c35c; }
+    .led.green.act { animation:none; fill:#38d16a; }
+  }
   .brand  { fill:#cfd4da; font:14px ui-monospace,monospace;
             text-anchor:middle; letter-spacing:.15em; }
   .brand2 { fill:#8d959e; font:10px ui-monospace,monospace;
@@ -496,13 +526,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </g>
 
 
-<circle class="led" cx="46" cy="282" r="4.4"/>
+<circle data-tpl-attr="class tx485Cls" class="led amber" cx="46" cy="282" r="4.4"/>
 <text class="ledlbl" x="58" y="285.4">RS485 TX</text>
-<circle class="led" cx="46" cy="302" r="4.4"/>
+<circle data-tpl-attr="class rx485Cls" class="led green" cx="46" cy="302" r="4.4"/>
 <text class="ledlbl" x="58" y="305.4">RS485 RX</text>
-<circle class="led" cx="46" cy="322" r="4.4"/>
+<circle data-tpl-attr="class txCanCls" class="led amber" cx="46" cy="322" r="4.4"/>
 <text class="ledlbl" x="58" y="325.4">CAN TX</text>
-<circle class="led" cx="46" cy="342" r="4.4"/>
+<circle data-tpl-attr="class rxCanCls" class="led green" cx="46" cy="342" r="4.4"/>
 <text class="ledlbl" x="58" y="345.4">CAN RX</text>
 <circle class="led red on" cx="46" cy="362" r="4.4"/>
 <text class="ledlbl" x="58" y="365.4">3V3</text>
@@ -522,6 +552,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <span><i class="sw" style="background:#ff3b30"></i>channel LED lit &mdash; output on</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
+  <span><!--#v canNote--></span>
 </p>
 
 <div id="pick">
@@ -752,6 +783,34 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <!--#/each-->
   </tbody>
 </table>
+
+<!-- The trend. Sampled every 10 s on its own timer, NOT when this page loads,
+     so the shape is the signal's and not the reader's. Y is fixed to the
+     board's 0-10 V input range rather than autoscaled: against a fixed range
+     a flat trace means a flat signal, where an autoscaled one would make
+     millivolts of noise look like a waveform. A failed read leaves a gap. -->
+<figure id="aitrend">
+  <figcaption>Analog trend &middot; <span class="dim"><!--#v aiSpan--></span></figcaption>
+  <svg viewBox="0 0 318 88" preserveAspectRatio="none" role="img"
+       aria-label="Analog input history, 0 to 10 volts">
+    <g class="grid">
+      <line x1="0" y1="0"    x2="318" y2="0"/>
+      <line x1="0" y1="22"   x2="318" y2="22"/>
+      <line x1="0" y1="44"   x2="318" y2="44"/>
+      <line x1="0" y1="66"   x2="318" y2="66"/>
+      <line x1="0" y1="87.5" x2="318" y2="87.5"/>
+    </g>
+    <polyline class="tr tr0" points="<!--#v aiHist0-->"/>
+    <polyline class="tr tr1" points="<!--#v aiHist1-->"/>
+    <polyline class="tr tr2" points="<!--#v aiHist2-->"/>
+  </svg>
+  <p class="legend">
+    <span><i class="sw" style="background:#5ac8f5"></i>AI0</span>
+    <span><i class="sw" style="background:#f5c35c"></i>AI1</span>
+    <span><i class="sw" style="background:#c88cf5"></i>AI2</span>
+    <span>grid lines every 2.5&nbsp;V</span>
+  </p>
+</figure>
 
 <p class="note">
   The board above is drawn from <code>tools/terminals.csv</code>, not traced
