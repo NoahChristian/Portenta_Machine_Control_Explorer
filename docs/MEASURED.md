@@ -1506,14 +1506,44 @@ The AIROC driver turned out to contain no power-save handling at all - no
 which is why `wifi ps` answers "Failed to get PS config". So power save was
 never configured either way, and the ping timing shows the radio awake.
 
+### WHICH datagram was lost: the board's reply, and it left the stack
+
+The last thing either SMP thread did was a completed transmit. Trimmed to the
+control path, with addresses removed:
+
+```
+<dbg> net_pkt.net_pkt_skip:        (mcumgr smp): pkt 0x2405e838 skip 8
+<dbg> net_if.net_if_tx:            (mcumgr smp): Processing (pkt 0x2405e838 ...)
+<dbg> net_arp.arp_entry_find:      (mcumgr smp): found dst <the client>
+<dbg> net_arp.net_arp_prepare:     (mcumgr smp): ARP using ll <the client>
+<dbg> net_ethernet.ethernet_send:  (mcumgr smp): Found ARP entry, sending pkt
+<dbg> net_ethernet.ethernet_fill_header: (mcumgr smp): src <board> dst <client>
+<dbg> net_pkt.net_pkt_read:        (mcumgr smp): pkt ... length 61
+<dbg> net_if.net_if_tx:            (mcumgr smp): Calling context send cb status 61
+```
+
+ARP was already resolved, the Ethernet header was filled, 61 bytes were read
+out of the packet for the driver, and `net_if_tx` called the context send
+callback with a **non-negative** status. Nothing in that sequence failed.
+
+And `smp_udp4` logged nothing afterwards, which means no further request
+arrived - which is exactly what a lockstep client does while it waits for a
+reply it never got.
+
+So the missing datagram is the **board's outbound reply**, and it was lost at
+or beyond the radio: after `net_if_tx` handed it to the WiFi driver. The
+network stack did its job. That narrows the remaining suspects to the WHD
+driver, the 4343W firmware, or the air itself - the board-to-AP direction.
+
 ### Still open
 
-- Whether the lost datagram is the client's request or the board's reply.
-- Whether it is lost on the air or inside the stack. The board's UDP drop
-  counter (2,256) is dominated by ambient traffic with no listener - mDNS to
-  5353, a foreign DHCP conversation, and 0x88ca frames - because the broadcast
-  domain is a /22, so it does not separate the two cases.
+- Where in the board-to-AP path the reply dies: the WHD SDIO handoff, the
+  radio firmware's own queue, or the air. The driver reports no error, and
+  `whd_bus_sdio_sleep`/`wakeup` were already found to be no-ops.
 - `Processing err 692` on the WiFi interface is unexplained.
+- The board's UDP drop counter (2,256) does not help separate any of this: it
+  is dominated by ambient traffic with no listener - mDNS to 5353, a foreign
+  DHCP conversation, and 0x88ca frames - because the broadcast domain is a /22.
 
 ### DTLS does not address this
 
