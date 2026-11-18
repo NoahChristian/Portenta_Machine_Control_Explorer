@@ -49,6 +49,7 @@
 #include <zephyr/mgmt/mcumgr/transport/smp_udp.h>
 
 #include <zephyr/net/dhcpv4.h>
+#include <zephyr/net/dns_resolve.h>
 #include <zephyr/net/phy.h>
 
 #include "clock.h"
@@ -655,6 +656,80 @@ void pmc_net_eth_read(struct pmc_eth *out)
 }
 
 #endif
+
+/*
+ * The addresses, as strings, for the panel's network window.
+ *
+ * Read live rather than cached: these change on a DHCP renew and a stale
+ * gateway is worse than none - it sends someone to check a router that was
+ * never the one in use. The cost is a few net_if reads per render, which is
+ * nothing next to the ADC work already done there.
+ */
+static void ip_fill(struct net_if *iface, struct pmc_ipinfo *out)
+{
+	struct net_in_addr *a;
+	struct net_in_addr m, g;
+
+	memset(out, 0, sizeof(*out));
+	if (iface == NULL) {
+		return;
+	}
+
+	a = net_if_ipv4_get_global_addr(iface, NET_ADDR_PREFERRED);
+	if (a == NULL) {
+		return;
+	}
+
+	out->have = 1U;
+	(void)net_addr_ntop(NET_AF_INET, a, out->ip, sizeof(out->ip));
+
+	m = net_if_ipv4_get_netmask_by_addr(iface, a);
+	(void)net_addr_ntop(NET_AF_INET, &m, out->mask, sizeof(out->mask));
+
+	g = net_if_ipv4_get_gw(iface);
+	(void)net_addr_ntop(NET_AF_INET, &g, out->gw, sizeof(out->gw));
+}
+
+void pmc_net_info_read(struct pmc_netinfo *out)
+{
+	struct dns_resolve_context *ctx;
+
+	memset(out, 0, sizeof(*out));
+
+	ip_fill(net_if_get_first_wifi(), &out->wifi);
+#if PMC_HAVE_ETH
+	ip_fill(device_is_ready(s_eth_dev) ? net_if_lookup_by_dev(s_eth_dev)
+					   : NULL,
+		&out->eth);
+#endif
+
+	/*
+	 * DNS is resolver-wide, not per interface. mDNS and LLMNR entries are
+	 * skipped: they are link-local responders this image registers itself,
+	 * not servers anybody configured, and listing them as "DNS" would send
+	 * a reader looking for a resolver that does not exist.
+	 */
+	ctx = dns_resolve_get_default();
+	if (ctx == NULL) {
+		return;
+	}
+
+	for (size_t i = 0; i < ARRAY_SIZE(ctx->servers) &&
+			   out->n_dns < ARRAY_SIZE(out->dns); i++) {
+		const struct net_sockaddr *sa = &ctx->servers[i].dns_server;
+
+		if (sa->sa_family != NET_AF_INET || ctx->servers[i].is_mdns ||
+		    ctx->servers[i].is_llmnr) {
+			continue;
+		}
+
+		(void)net_addr_ntop(NET_AF_INET,
+				    &net_sin(sa)->sin_addr,
+				    out->dns[out->n_dns],
+				    sizeof(out->dns[0]));
+		out->n_dns++;
+	}
+}
 
 static void wifi_event(struct net_mgmt_event_callback *cb,
 		       uint64_t mgmt_event, struct net_if *iface)

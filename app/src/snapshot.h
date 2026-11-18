@@ -133,6 +133,35 @@ struct pmc_eth {
 };
 
 /*
+ * THE NETWORK DETAIL, AND THE RULE IT BENDS ON PURPOSE.
+ *
+ * These are real addresses. Everything else here avoids them - `pmc_eth`
+ * carries `has_addr` as a BOOLEAN precisely so a screenshot could not leak
+ * one. They exist because a bench instrument that cannot tell you its own
+ * gateway is missing the first thing anyone checks when the link is up and
+ * nothing works.
+ *
+ * THEY MUST NOT REACH THE REPOSITORY. No screenshot of this block, and no
+ * capture of /state.json pasted into docs/. The panel labels the block so
+ * that is hard to forget, and tools/pre-commit's dotted-quad rule is the
+ * backstop - not the control. Strings, not binary addresses, so nothing
+ * downstream has to format them and accidentally log one.
+ */
+struct pmc_ipinfo {
+	uint8_t have;      /* an address is bound on this interface */
+	char    ip[16];
+	char    mask[16];
+	char    gw[16];
+};
+
+struct pmc_netinfo {
+	struct pmc_ipinfo wifi;
+	struct pmc_ipinfo eth;
+	char    dns[2][16];  /* resolver-wide, not per interface */
+	uint8_t n_dns;
+};
+
+/*
  * The analog trend. `points` is an SVG polyline attribute built from a ring
  * sampled on its own timer - see snapshot.c on why it is not derived at render
  * time. Y is fixed at 0..10 V; a failed read leaves a gap in the line.
@@ -162,6 +191,8 @@ struct pmc_snapshot {
 	/* ms since the last RS485 byte each way; -1 = never. Drives the lamps. */
 	int32_t                rs485_tx_age;
 	int32_t                rs485_rx_age;
+
+	struct pmc_netinfo     net;    /* REAL ADDRESSES - see the struct */
 
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;

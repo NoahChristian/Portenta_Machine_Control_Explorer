@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "155c5f88"
-#define PAGE_INDEX_BYTES 69354
+#define PAGE_INDEX_BUILD "8b72b37b"
+#define PAGE_INDEX_BYTES 70604
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -109,6 +109,17 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
      the link is up: the blink is decoration for "there is a live wire here",
      not a packet count, because nothing on this board can offer one. Unlit is
      the color darkened so an off lamp still reads as the right lamp. */
+  /* The network window. `.addr` values are tinted and get a left rule, so an
+     address is visually obvious in a screenshot rather than reading as just
+     another row of diagnostics. */
+  #netwin { margin:1rem 0; }
+  #netwin table { border-collapse:collapse; width:100%; max-width:34rem; }
+  #netwin th { text-align:left; font-weight:400; color:#9aa3ad;
+               padding:.18rem .6rem .18rem 0; white-space:nowrap; }
+  #netwin td { font-family:ui-monospace,monospace; padding:.18rem 0; }
+  #netwin td.addr { color:#f5c35c; border-left:3px solid #f5c35c;
+                    padding-left:.5rem; }
+  #netwin .warn { color:#f5c35c; font-size:.82rem; margin:.1rem 0 .5rem; }
   /* The analog trend. Fixed height so the aspect does not change with the
      column, and vector-effect so a non-uniform scale does not thicken the
      strokes unevenly. */
@@ -769,6 +780,22 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   Seebeck coefficients and has never been checked against a J probe here,
   which is why the raw K reading is kept in the table beside it.
 </p>
+
+<!-- THE NETWORK WINDOW. Rows whose value is an address are marked, because the
+     standing rule is that no address reaches the repository and a screenshot
+     is the one leak no text scan catches. Redact or crop before publishing. -->
+<section id="netwin">
+  <h2>Network</h2>
+  <p class="warn">Contains addresses &mdash; redact before screenshotting.</p>
+  <table>
+    <tbody>
+    <!--#each net-->
+      <tr><th scope="row"><!--#v nName--></th>
+        <td data-tpl-attr="class nCls"><!--#v nValue--></td></tr>
+    <!--#/each-->
+    </tbody>
+  </table>
+</section>
 
 <table id="aitable">
   <caption>Analog inputs &middot; <span class="dim" style="font-weight:400;font-size:.8rem">updating every 2 s</span></caption>

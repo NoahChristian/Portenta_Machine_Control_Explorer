@@ -35,6 +35,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/net/wifi.h>   /* wifi_state_txt, wifi_link_mode_txt */
 
 #include <HtmlTplEngine.h>
 #include <HtmlTplServerZephyr.h>
@@ -420,6 +421,143 @@ static void fillClock(void)
 
 /* ---------------------------------------------------------- row providers */
 
+/*
+ * THE NETWORK WINDOW.
+ *
+ * An each-block rather than a dozen flat variables: the list will grow, and
+ * the whole cost is four registry slots instead of one per field.
+ *
+ * Rows whose value is an address carry class "addr", which the page renders
+ * with a visible marker. That is not security - it is a reminder, because the
+ * standing rule is that no address reaches the repository and a screenshot is
+ * the one leak no text scan catches.
+ */
+struct netrow {
+	char name[20];
+	char value[44];
+	char cls[8];
+};
+
+static struct netrow s_net[20];
+static size_t        s_nnet;
+static char          rNName[20];
+static char          rNValue[44];
+static char          rNCls[8];
+
+static void netAdd(const char *name, const char *value, bool addr)
+{
+	if (s_nnet >= ARRAY_SIZE(s_net)) {
+		return;
+	}
+	put(s_net[s_nnet].name, sizeof(s_net[0].name), name);
+	put(s_net[s_nnet].value, sizeof(s_net[0].value),
+	    (value != nullptr && value[0] != '\0') ? value : "-");
+	put(s_net[s_nnet].cls, sizeof(s_net[0].cls), addr ? "addr" : "");
+	s_nnet++;
+}
+
+static uint16_t netCount(void)
+{
+	return (uint16_t)s_nnet;
+}
+
+static bool netSelect(uint16_t i)
+{
+	if (i >= s_nnet) {
+		return false;
+	}
+	PUT(rNName, s_net[i].name);
+	PUT(rNValue, s_net[i].value);
+	PUT(rNCls, s_net[i].cls);
+	return true;
+}
+
+static void fillNet(void)
+{
+	char v[44];
+
+	s_nnet = 0;
+
+	netAdd("hostname", gSnap.host, false);
+
+	/* --- the radio ------------------------------------------------- */
+	netAdd("WiFi state", wifi_state_txt((enum wifi_iface_state)
+					    gSnap.link.state), false);
+
+	if (gSnap.link.age_ms < 0) {
+		netAdd("signal", "never sampled", false);
+	} else {
+		(void)snprintk(v, sizeof(v), "%d dBm, channel %u",
+			       (int)gSnap.link.rssi,
+			       (unsigned)gSnap.link.chan);
+		netAdd("signal", v, false);
+
+		(void)snprintk(v, sizeof(v), "%u.%u Mbit, %s",
+			       (unsigned)(gSnap.link.rate_tenths / 10U),
+			       (unsigned)(gSnap.link.rate_tenths % 10U),
+			       wifi_link_mode_txt((enum wifi_link_mode)
+						  gSnap.link.mode));
+		netAdd("PHY rate", v, false);
+	}
+
+	if (gSnap.net.wifi.have) {
+		(void)snprintk(v, sizeof(v), "%s / %s", gSnap.net.wifi.ip,
+			       gSnap.net.wifi.mask);
+		netAdd("WiFi IPv4", v, true);
+		netAdd("gateway", gSnap.net.wifi.gw, true);
+	} else {
+		netAdd("WiFi IPv4", "no address bound", false);
+	}
+
+	for (uint8_t i = 0; i < gSnap.net.n_dns; i++) {
+		(void)snprintk(v, sizeof(v), "DNS %u", (unsigned)(i + 1U));
+		netAdd(v, gSnap.net.dns[i], true);
+	}
+	if (gSnap.net.n_dns == 0U) {
+		netAdd("DNS", "none configured", false);
+	}
+
+	/* --- the wire -------------------------------------------------- */
+	if (!gSnap.eth.present) {
+		netAdd("Ethernet", "not in this build", false);
+		return;
+	}
+
+	if (gSnap.eth.probed) {
+		(void)snprintk(v, sizeof(v), "init failed, errno %d",
+			       (int)gSnap.eth.init_res);
+		netAdd("Ethernet MAC", v, false);
+
+		(void)snprintk(v, sizeof(v), "%04x:%04x at MDIO %d",
+			       (unsigned)gSnap.eth.phy_id1,
+			       (unsigned)gSnap.eth.phy_id2,
+			       (int)gSnap.eth.phy_addr);
+		netAdd("Ethernet PHY", v, false);
+	} else {
+		netAdd("Ethernet MAC", "initialized", false);
+	}
+
+	if (!gSnap.eth.link_up) {
+		netAdd("Ethernet link", "down", false);
+	} else if (gSnap.eth.speed_mbit == 0U) {
+		netAdd("Ethernet link", "up, speed unnegotiated", false);
+	} else {
+		(void)snprintk(v, sizeof(v), "up, %u Mbit %s",
+			       (unsigned)gSnap.eth.speed_mbit,
+			       gSnap.eth.full_duplex ? "full" : "half");
+		netAdd("Ethernet link", v, false);
+	}
+
+	if (gSnap.net.eth.have) {
+		(void)snprintk(v, sizeof(v), "%s / %s", gSnap.net.eth.ip,
+			       gSnap.net.eth.mask);
+		netAdd("Ethernet IPv4", v, true);
+		netAdd("Ethernet gateway", gSnap.net.eth.gw, true);
+	} else {
+		netAdd("Ethernet IPv4", "no address bound", false);
+	}
+}
+
 static uint16_t healthCount(void)
 {
 	return (uint16_t)pmc_health_check_count();
@@ -610,6 +748,11 @@ TPL_REGISTRY_BEGIN(gPmcVars)
 	TPL_STR_RO("aiHist1", vAiHist1)
 	TPL_STR_RO("aiHist2", vAiHist2)
 	TPL_STR_RO("aiSpan", vAiSpan)
+
+	TPL_EACH("net", netCount, netSelect)
+	TPL_ROW_STR("nName", rNName)
+	TPL_ROW_STR("nValue", rNValue)
+	TPL_ROW_STR("nCls", rNCls)
 	TPL_STR_RO("host", vHost)
 	TPL_STR_RO("fw", vFw)
 	TPL_VAR_RO("uptime", vUptime)
@@ -830,6 +973,7 @@ extern "C" void pmc_page_init(void)
 	fillEth();
 	fillBusLamps();
 	fillAiHist();
+	fillNet();
 
 	const uint16_t faults = gTpl.selfTest(TPL_FROM_FLASH(PAGE_INDEX), sink);
 
@@ -875,6 +1019,7 @@ extern "C" int pmc_page_step(enum http_transaction_status status,
 		fillEth();
 		fillBusLamps();
 		fillAiHist();
+		fillNet();
 		pick(query, qlen);
 	}
 
