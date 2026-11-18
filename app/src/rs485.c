@@ -35,6 +35,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/mem_stats.h>
+#include <zephyr/sys/sys_heap.h>
 #include <string.h>
 
 LOG_MODULE_REGISTER(pmc_485, LOG_LEVEL_INF);
@@ -121,8 +123,30 @@ static struct k_mutex cfg_lock;
 /* --- the receive ring ---------------------------------------------------
  * Absolute positions, not indices, so a reader can tell the difference
  * between "nothing new" and "so much arrived that your window is gone".
+ *
+ * THE BUFFER IS A VARIABLE, not an array the compiler sized. `resident_ring`
+ * is what exists when nobody asked for anything; an armed capture points
+ * rx_buf at heap memory instead. Both the ISR and the reader take ring_lock
+ * before touching rx_buf or rx_cap, which is what makes the swap safe.
+ *
+ * rx_base is the oldest position still readable out of the CURRENT buffer.
+ * Changing capacity moves every stored byte's modulus, so a swap sets
+ * rx_base = rx_total and the next read says `lost` once rather than handing
+ * back bytes that are now at the wrong index.
+ *
+ * THE CAPACITY IS ALWAYS A POWER OF TWO, so the index is a mask and not a
+ * modulus. rx_total is 64-bit: `% rx_cap` against a variable would put a
+ * 64-bit division in the UART receive ISR, which the old compile-time 2048
+ * never did because the compiler folded it to an AND. The configuration
+ * accepts baud rates up to 20 Mbaud, where that division would not fit
+ * between characters.
  */
-static uint8_t  ring[PMC_485_RING];
+static uint8_t  resident_ring[PMC_485_RESIDENT];
+static uint8_t *rx_buf = resident_ring;
+static size_t   rx_cap = PMC_485_RESIDENT;
+static uint64_t rx_mask = PMC_485_RESIDENT - 1;
+static size_t   rx_armed;     /* 0 = running on resident_ring */
+static uint64_t rx_base;
 static uint64_t rx_total;
 static uint64_t tx_total;
 /* Uptime of the last byte each way, 0 = never. Drives the panel's TX/RX
@@ -326,7 +350,7 @@ static void ring_put(uint8_t b)
 {
 	k_spinlock_key_t k = k_spin_lock(&ring_lock);
 
-	ring[rx_total % PMC_485_RING] = b;
+	rx_buf[rx_total & rx_mask] = b;
 	rx_total++;
 	rx_stamp = k_uptime_get();
 	k_spin_unlock(&ring_lock, k);
@@ -337,8 +361,14 @@ size_t pmc_rs485_rx_read(uint64_t from, uint8_t *out, size_t cap,
 {
 	k_spinlock_key_t k = k_spin_lock(&ring_lock);
 	const uint64_t total = rx_total;
-	uint64_t oldest = (total > PMC_485_RING) ? total - PMC_485_RING : 0;
+	uint64_t oldest = (total > rx_cap) ? total - rx_cap : 0;
 	size_t n = 0;
+
+	/* A swap invalidated everything before rx_base whatever the capacity
+	 * arithmetic says, so it wins. */
+	if (oldest < rx_base) {
+		oldest = rx_base;
+	}
 
 	*lost = false;
 	if (from < oldest) {
@@ -347,7 +377,7 @@ size_t pmc_rs485_rx_read(uint64_t from, uint8_t *out, size_t cap,
 		from = oldest;
 	}
 	while (from < total && n < cap) {
-		out[n++] = ring[from % PMC_485_RING];
+		out[n++] = rx_buf[from & rx_mask];
 		from++;
 	}
 	*next = from;
@@ -379,11 +409,158 @@ void pmc_rs485_clear(void)
 	k_spinlock_key_t k = k_spin_lock(&ring_lock);
 
 	rx_total = 0;
+	/* MUST follow rx_total. Left behind, rx_base sits ahead of the stream
+	 * and every read returns nothing, permanently. */
+	rx_base = 0;
 	rx_stamp = 0;
 	k_spin_unlock(&ring_lock, k);
 	tx_total = 0;
 	tx_stamp = 0;
 	atomic_set(&rx_errors, 0);
+}
+
+/* --- the armed capture --------------------------------------------------
+ * The user decides how deep a capture to keep; this file does not guess.
+ * docs/ARCHITECTURE.md carries the reasoning.
+ *
+ * `_system_heap` is what k_malloc() draws on. It has no public declaration -
+ * K_HEAP_DEFINE makes it a plain global in kernel/mempool.c - so it is
+ * declared here to read its statistics. Without the numbers a refusal cannot
+ * say what is free, and a refusal that cannot say that is just a failure.
+ */
+extern struct k_heap _system_heap;
+
+static void heap_numbers(size_t *freeb, size_t *total)
+{
+	struct sys_memory_stats st = { 0 };
+
+	(void)sys_heap_runtime_stats_get(&_system_heap.heap, &st);
+	*freeb = st.free_bytes;
+	*total = st.free_bytes + st.allocated_bytes;
+}
+
+int pmc_rs485_cap_arm(size_t bytes, char *why, size_t whycap)
+{
+	size_t freeb = 0, total = 0;
+	const size_t asked = bytes;
+	uint8_t *fresh;
+
+	heap_numbers(&freeb, &total);
+
+	if (bytes < PMC_485_CAP_MIN || bytes > PMC_485_CAP_MAX) {
+		snprintk(why, whycap,
+			 "refused: %u bytes is outside %u..%u\n",
+			 (unsigned)bytes, (unsigned)PMC_485_CAP_MIN,
+			 (unsigned)PMC_485_CAP_MAX);
+		return -EINVAL;
+	}
+
+	/* Round UP to a power of two, because the ring is indexed with a mask
+	 * - see the note on rx_mask. Reported below, so a request for 100000
+	 * does not quietly become 131072.
+	 */
+	while ((bytes & (bytes - 1U)) != 0U) {
+		bytes += (bytes & (~bytes + 1U));   /* add the lowest set bit */
+	}
+	if (bytes > PMC_485_CAP_MAX) {
+		snprintk(why, whycap,
+			 "refused: %u rounds up to %u, past the %u ceiling\n",
+			 (unsigned)asked, (unsigned)bytes,
+			 (unsigned)PMC_485_CAP_MAX);
+		return -EINVAL;
+	}
+
+	if (rx_armed != 0U) {
+		snprintk(why, whycap,
+			 "refused: %u bytes already armed - release it first\n",
+			 (unsigned)rx_armed);
+		return -EBUSY;
+	}
+
+	/* Allocate BEFORE taking the lock: k_malloc may block on the heap's
+	 * own mutex, and a spinlock is held with interrupts masked. */
+	fresh = k_malloc(bytes);
+	if (fresh == NULL) {
+		snprintk(why, whycap,
+			 "refused: %u bytes requested, %u free of %u in the "
+			 "heap. Release a capture, or ask for less.\n",
+			 (unsigned)bytes, (unsigned)freeb, (unsigned)total);
+		return -ENOMEM;
+	}
+
+	k_spinlock_key_t k = k_spin_lock(&ring_lock);
+
+	/* Nothing to free: a second arm was refused above, so the buffer being
+	 * replaced is always resident_ring. */
+	rx_buf = fresh;
+	rx_cap = bytes;
+	rx_mask = (uint64_t)bytes - 1U;
+	rx_armed = bytes;
+	/* Everything already buffered lived at a different modulus. */
+	rx_base = rx_total;
+	k_spin_unlock(&ring_lock, k);
+
+	heap_numbers(&freeb, &total);
+	snprintk(why, whycap,
+		 "armed %u bytes%s (%u ms of a saturated line at this baud), "
+		 "%u free of %u left in the heap\n",
+		 (unsigned)bytes,
+		 (bytes == asked) ? "" : " - rounded up to a power of two",
+		 (unsigned)((bytes * (pmc_rs485_char_us() | 1U)) / 1000U),
+		 (unsigned)freeb, (unsigned)total);
+	LOG_INF("capture armed: %u bytes", (unsigned)bytes);
+	return 0;
+}
+
+void pmc_rs485_cap_release(char *why, size_t whycap)
+{
+	size_t freeb = 0, total = 0;
+	uint8_t *old;
+	size_t was;
+
+	k_spinlock_key_t k = k_spin_lock(&ring_lock);
+
+	old = (rx_armed != 0U) ? rx_buf : NULL;
+	was = rx_armed;
+	rx_buf = resident_ring;
+	rx_cap = PMC_485_RESIDENT;
+	rx_mask = PMC_485_RESIDENT - 1U;
+	rx_armed = 0U;
+	rx_base = rx_total;
+	k_spin_unlock(&ring_lock, k);
+
+	if (old != NULL) {
+		k_free(old);
+	}
+
+	heap_numbers(&freeb, &total);
+	if (was == 0U) {
+		snprintk(why, whycap,
+			 "nothing was armed; on the resident %u bytes, %u "
+			 "free of %u in the heap\n",
+			 (unsigned)PMC_485_RESIDENT, (unsigned)freeb,
+			 (unsigned)total);
+		return;
+	}
+	snprintk(why, whycap,
+		 "released %u bytes, back to the resident %u, %u free of %u "
+		 "in the heap\n",
+		 (unsigned)was, (unsigned)PMC_485_RESIDENT, (unsigned)freeb,
+		 (unsigned)total);
+	LOG_INF("capture released: %u bytes", (unsigned)was);
+}
+
+void pmc_rs485_cap_info(size_t *armed, size_t *resident, size_t *heap_free,
+			size_t *heap_total)
+{
+	k_spinlock_key_t k = k_spin_lock(&ring_lock);
+	const size_t a = rx_armed;
+
+	k_spin_unlock(&ring_lock, k);
+
+	*armed = a;
+	*resident = PMC_485_RESIDENT;
+	heap_numbers(heap_free, heap_total);
 }
 
 void pmc_rs485_activity(int32_t *tx_age_ms, int32_t *rx_age_ms)

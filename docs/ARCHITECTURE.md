@@ -92,18 +92,29 @@ intermittent OTA stall. It did not, and it was never meant to stay.
 Measured 2026-11-18 from `zephyr.elf`. Total 363,048 B of 512 KB.
 
 ```
-48000  net_buf_data_airoc_pool     WiFi driver, not ours
-40960  net_buf_data_tx_bufs        320 fragments x 128 B
-32860  kheap__system_heap
-32768  net_buf_data_rx_bufs        256 fragments x 128 B
-16384  ring                        RS485 receive window
-14080  net_pkt_allocs              DIAGNOSTIC ONLY
-11264  tcp_conns_slab
- 8960  _net_buf_tx_bufs            320 descriptors x 28 B
- 8256  z_main_stack
- 7168  _net_buf_rx_bufs            256 descriptors x 28 B
- 6328  server_ctx                  4 HTTP clients
+131172  kheap__system_heap         THE BUDGET - shared, allocated at runtime
+ 48000  net_buf_data_airoc_pool    WiFi driver, not ours
+ 40960  net_buf_data_tx_bufs       320 fragments x 128 B
+ 32768  net_buf_data_rx_bufs       256 fragments x 128 B
+ 14080  net_pkt_allocs             DIAGNOSTIC ONLY
+ 11264  tcp_conns_slab
+  8960  _net_buf_tx_bufs           320 descriptors x 28 B
+  8376  server_ctx                 4 HTTP clients
+  8256  z_main_stack
+  7168  _net_buf_rx_bufs           256 descriptors x 28 B
+  2048  resident_ring              RS485 when nothing is armed
 ```
+
+The system heap is the largest line and that is the point: it is not spoken
+for. An armed RS485 capture, WHD's SDIO transfers and `getaddrinfo` all draw on
+it, so it is a budget rather than a reservation. A 128 KB static ring would
+have served RS485 and nothing else.
+
+It is also mostly not new RAM. With the arena being the leftover and nothing in
+this application calling libc `malloc`, moving that leftover into the kernel
+heap makes it both allocatable and **reportable** - `sys_heap_runtime_stats_get`
+can read this pool and cannot read the arena. That is what lets a refusal name
+what is free.
 
 A network fragment costs 156 bytes, not 128: 128 of payload plus a 28-byte
 `struct net_buf` descriptor. A full-MTU frame chains twelve of them.
@@ -151,22 +162,43 @@ and does not pick.
 
 | resource | fixed cost now | what a user might want instead |
 |---|---|---|
-| RS485 ring | 16 KB | arm a capture and take what the heap allows |
+| RS485 ring | 2 KB resident | **built** - arm a capture and take what the heap allows |
 | HTTP clients | 4 x 1.57 KB (measured) | more clients while nothing is capturing |
 | net buffer fragments | 576 x 156 B, 128 B of payload each | `NET_BUF_VARIABLE_DATA_SIZE` allocates by requested length, so a 54-byte ACK stops paying 156 bytes for 54 |
 | `net_pkt_allocs` | 14 KB | nothing, once the logging investigation closes |
 
 ### Status
 
-Today all four rows above are static. The arm/release mechanism described here
-is the decided architecture and is **not yet built**. What it will touch:
+**Built** - the RS485 capture, as the first application of the pattern:
 
-- `app/src/rs485.c` - the ring becomes a runtime allocation with an arm/release
-  verb, replacing `static uint8_t ring[PMC_485_RING]`.
-- `app/src/io_post.cpp` - the arm and release verbs, token-gated like every
-  other write.
-- `app/src/snapshot.c`, `app/src/page_vars.cpp`, `web/index.html` - the budget
-  on the panel: allocated, free, and the reason for any refusal.
+- `app/src/rs485.c` - the ring is a pointer and a capacity, not an array. The
+  resident buffer is 2 KB; `pmc_rs485_cap_arm()` takes heap memory and points
+  the receive path at it, `pmc_rs485_cap_release()` gives it back.
+- `app/src/io_post.cpp` - `do=485arm&bytes=N` and `do=485release`, token-gated
+  like every other write. Both reply with a sentence, and the refusal names what
+  was asked for, what is free, and the pool total.
+- `app/prj.conf` - `CONFIG_HEAP_MEM_POOL_SIZE=131072`, the budget itself.
+
+Three details that are not obvious and are load-bearing:
+
+- **The capacity is always a power of two.** `rx_total` is 64-bit, so a
+  modulus against a variable capacity would compile to a 64-bit division inside
+  the UART receive ISR - the old compile-time 2048 folded to an AND and hid
+  this. A request is rounded up and the reply says so. Verified in the
+  disassembly: the store is one `ands` and one `strb`.
+- **A swap invalidates what came before it.** Capacity changes every stored
+  byte's index, so arm and release both set `rx_base = rx_total`, and the next
+  read reports `lost` exactly once. The reader resynchronizes through the
+  cursor protocol it already had.
+- **`pmc_rs485_clear()` must reset `rx_base` with `rx_total`.** Left behind, it
+  sits ahead of the stream and every subsequent read returns nothing, forever.
+
+**Not yet built** - the budget on the panel. `app/src/snapshot.c`,
+`app/src/page_vars.cpp` and `web/index.html` still need to render armed size,
+heap free and heap total from `pmc_rs485_cap_info()`. Until then the numbers are
+visible only in the reply to a POST, which is the one place a user who just
+asked for memory is certain to look, but not where someone deciding what to ask
+for would look first.
 
 ### Variable-size network buffers are a different thing
 

@@ -20,20 +20,42 @@ extern "C" {
 #endif
 
 /*
- * Bytes kept of the receive stream - this sizes the RX ring only; the transmit
- * side is one frame at a time, bounded by PMC_485_TX_MAX below.
+ * THE RESIDENT RECEIVE RING. Sizes the RX path only; the transmit side is one
+ * frame at a time, bounded by PMC_485_TX_MAX below.
  *
- * Sized against the panel's poll interval, not
- * against a frame: the browser holds the scrollback and reads through a cursor,
- * so this only has to cover the gap between polls.
- *
- * The panel polls every 400 ms whenever bytes are flowing - it backs off to
- * 3 s only after eight consecutive EMPTY polls, so a busy line never backs
- * off. At 115200 8N1 that is 11,520 B/s, or 4,608 bytes per poll, so 16 KB is
- * 1.4 s: a few missed polls do not lose data. The old 2048 was 178 ms, less
- * than one poll interval, so a continuously busy line always raised `lost`.
+ * Deliberately small. This is what the board costs when nobody has asked for
+ * anything, and it is not a guess at what a session needs: 2048 bytes is
+ * 178 ms at 115200 8N1, which is under one of the panel's 400 ms polls, so a
+ * continuously busy line at that speed raises `lost`. That is the honest
+ * default - a user who needs more arms a capture and is told what it costs.
+ * See docs/ARCHITECTURE.md, "Memory and processing constraints".
  */
-#define PMC_485_RING 16384
+#define PMC_485_RESIDENT 2048
+
+/* An armed capture is refused outside these bounds before the heap is asked. */
+#define PMC_485_CAP_MIN  4096
+#define PMC_485_CAP_MAX  (1024 * 1024)
+
+/*
+ * Arm a capture: take `bytes` from the system heap and receive into it until
+ * released. Returns 0 on success or a negative errno, and writes a sentence to
+ * `why` EITHER WAY - on refusal it names what was asked for, what is free, and
+ * what is holding the rest, because that refusal is the information the user
+ * came for.
+ *
+ * Arming discards what is already buffered: absolute positions are kept, but
+ * the bytes behind them lived at a different modulus, so the next read reports
+ * `lost` once and the reader resynchronizes.
+ */
+int  pmc_rs485_cap_arm(size_t bytes, char *why, size_t whycap);
+
+/* Release an armed capture and fall back to the resident ring. Safe to call
+ * when nothing is armed. Also writes a sentence to `why`. */
+void pmc_rs485_cap_release(char *why, size_t whycap);
+
+/* The budget, for the panel. `armed` is 0 when running on the resident ring. */
+void pmc_rs485_cap_info(size_t *armed, size_t *resident, size_t *heap_free,
+			size_t *heap_total);
 
 /* The longest frame the repeater will send. A Modbus RTU ADU is 256 bytes, so
  * anything smaller cannot express a full write-multiple-registers request.

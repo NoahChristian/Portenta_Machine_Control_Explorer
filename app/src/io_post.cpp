@@ -362,6 +362,30 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 		goto done;
 	}
 
+	/*
+	 * The capture the USER asks for. This file does not decide how deep a
+	 * scrollback anyone wants - it asks the heap and reports the answer,
+	 * including on refusal. See docs/ARCHITECTURE.md.
+	 */
+	if (strcmp(verb, "485arm") == 0) {
+		char nb[12];
+
+		if (field(s_body, "bytes", nb, sizeof(nb)) == nullptr) {
+			n = refuse("refused: 485arm needs bytes\n");
+			goto done;
+		}
+		(void)pmc_rs485_cap_arm((size_t)strtoul(nb, nullptr, 10),
+					detail, sizeof(detail));
+		n = refuse("%s", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "485release") == 0) {
+		pmc_rs485_cap_release(detail, sizeof(detail));
+		n = refuse("%s", detail);
+		goto done;
+	}
+
 	n = refuse("refused: unknown verb '%s'\n", verb);
 
 done:
