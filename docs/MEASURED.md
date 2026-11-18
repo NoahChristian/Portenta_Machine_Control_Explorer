@@ -1102,7 +1102,59 @@ The lesson is the probe's, not the fix's: the knob, the generated `.config` and
 the hardware all have to be read separately. Two of the three agreed and were
 wrong.
 
-### The OTA stall IS the radio link, and this time with a control (2026-11-17)
+### RETRACTED: the radio-loss conclusion below, and the heap theory that followed
+
+Both wrong, and the measurements that killed them are worth more than either.
+
+**The loss figures below are an artifact.** They came from `ping -w 1000`, which
+counts a merely LATE reply as lost - and larger frames take longer, which
+manufactures a loss-versus-size curve out of nothing. The board's own counters
+said so at the time and were not read properly: `ICMP recv` rose by 5 while
+`ICMP drop` rose by 12, and IPv4 `recv +67 / drop +45`. Those packets REACHED
+the board. A frame lost on the air never reaches a counter.
+
+**The system-heap theory was also wrong.** A sibling Zephyr board on this bench
+with the same SoC and radio, up 41 h, sets `CONFIG_HEAP_MEM_POOL_SIZE=32768`
+where this app set nothing, and WHD does allocate from the system heap
+(`airoc_whd_hal_common.c:70` is `k_malloc`). But:
+
+- `CONFIG_HEAP_MEM_POOL_SIZE` is only a requested MINIMUM. The adds -
+  `ADD_SIZE_BOARD=20480`, SDHC 2048, getaddrinfo 280 - already gave ~22.8 KB,
+  so `k_malloc` was never failing. That is why WiFi associated at all.
+- With `CONFIG_SYS_HEAP_RUNTIME_STATS=y`, `kernel heap` reports peak demand of
+  **15,864 bytes** - comfortably inside the old 22.8 KB.
+- Twelve full 144 KB page fetches, ~1.7 MB, all succeeded and left
+  `max. allocated` **unchanged at 15,864**. WHD does not allocate per packet.
+
+Kept anyway as hygiene, not as a fix. `sysworkq` was at 1536 of 2048 (75%);
+at 4096 its high-water is the same 1536 absolute, so it was tight but never
+overflowing.
+
+### What that stress run DID establish: the TX pool, with a number
+
+```
+RX DATA    14 of 1024 used
+TX DATA   184 of 512 used     for ONE 144 KB page
+```
+
+**TX peaked at 184 fragments.** The original 32 could not render this page, and
+an intermediate 128 would not have either. Sizing to the ceiling rather than to
+the last measurement was the right call; incrementing would have failed twice
+more. 1.7 MB moved with zero failures at 802.11n / 104 Mbit.
+
+### The variable that actually tracks the failures
+
+The link mode. Uploads failed while `wifi status` read **WIFI 1 (802.11b)** at
+43 Mbit; they succeed at **WIFI 4 (802.11n/HT)** at 104 Mbit. RSSI was -43 to
+-45 dBm throughout and the antenna never moved, so this is not the RF
+environment - the radio drops to a legacy mode and recovers on a reboot.
+
+Both are now published on the panel (`mode` and `rateTenths`), which is what
+makes the correlation visible at all. The open question is why it falls back,
+and the obvious next step is a watchdog: notice the mode or rate collapsing
+while associated, and force a reconnect.
+
+### SUPERSEDED - the radio-loss measurement (2026-11-17)
 
 Power save is genuinely off: `wifiPsMode` reads **0**, read back from WHD after
 `whd_wifi_disable_powersave()` rather than assumed. Not sleeping, not
