@@ -1609,6 +1609,45 @@ Zephyr has no TCP transport for SMP (`smp_bt`, `smp_dummy`, `smp_lorawan`,
 `smp_raw_dummy`, `smp_raw_uart`, `smp_shell`, `smp_spi`, `smp_uart`,
 `smp_udp`).
 
+## Thread stacks on 0.98.0, and a wrong-board reading on the way (2026-11-18)
+
+Taken after the pulse thread had actually run, so its figure is a high-water
+mark and not an unused stack. `CONFIG_INIT_STACKS` and `THREAD_MONITOR` make
+the unused count real rather than an estimate.
+
+```
+net_mgmt             568 / 832     68%      <- the tightest
+net_socket_service  1024 / 1536    66%
+rx_q[0]             1016 / 1792    56%      was 80% in the logging build
+pmc_clock           1720 / 3072    55%      the 2048 it outgrew would be 84%
+usbd                 548 / 1024    53%
+mcumgr              1040 / 2048    50%
+pmc_pulse            208 / 1024    20%      new; 1024 is generous and stays
+http_server_tid     1504 / 8192    18%
+```
+
+Nothing above 68%, and `pmc_clock` at 55% of 3072 confirms the earlier raise:
+1720 bytes would have been 84% of the 2048 it used to have, against a
+measured 99% on the build that prompted it.
+
+**THE READING BEFORE THIS ONE WAS ANOTHER BOARD'S.** The first capture walked
+the COM ports in order, took the first one that answered `kernel thread list`,
+and reported 19 threads - `net_thread`, `http_server_tid`, `smp_udp4`, `WHD`,
+`airoc_event`, `net_socket_service` at 88%. Entirely plausible, and entirely
+about a different project: COM21 is another Zephyr app on this bench with the
+same CDC-ACM shell and the same subsystem thread names.
+
+The tell was an absence. No `pmc_*` thread appeared, which first read as a
+truncated capture - the window was lengthened from 3 s to 10 s, the list came
+back at the same 19, and only then did the absence mean what it meant.
+
+`tools/ota.ps1` has guarded against exactly this since it was written: it asks
+`mdnsname` and skips any port that does not answer for this project, because
+a mis-targeted update writes another board's flash. The lesson generalizes
+past flashing - **a measurement from an unidentified port is a measurement of
+an unidentified board** - and a reading that looks reasonable is the kind that
+gets believed. Identify first, then measure.
+
 ## The upload verification that could not fail (2026-11-18)
 
 `tools/ota.ps1` asked the board whether the bytes had arrived - the right
