@@ -19,11 +19,26 @@
 extern "C" {
 #endif
 
-/* Bytes kept of each direction. One Modbus RTU frame is at most 256. */
-#define PMC_485_RING 2048
+/*
+ * Bytes kept of the receive stream - this sizes the RX ring only; the transmit
+ * side is one frame at a time, bounded by PMC_485_TX_MAX below.
+ *
+ * Sized against the panel's poll interval, not
+ * against a frame: the browser holds the scrollback and reads through a cursor,
+ * so this only has to cover the gap between polls.
+ *
+ * The panel polls every 400 ms whenever bytes are flowing - it backs off to
+ * 3 s only after eight consecutive EMPTY polls, so a busy line never backs
+ * off. At 115200 8N1 that is 11,520 B/s, or 4,608 bytes per poll, so 16 KB is
+ * 1.4 s: a few missed polls do not lose data. The old 2048 was 178 ms, less
+ * than one poll interval, so a continuously busy line always raised `lost`.
+ */
+#define PMC_485_RING 16384
 
-/* The longest frame the repeater will send. */
-#define PMC_485_TX_MAX 64
+/* The longest frame the repeater will send. A Modbus RTU ADU is 256 bytes, so
+ * anything smaller cannot express a full write-multiple-registers request.
+ */
+#define PMC_485_TX_MAX 256
 
 enum pmc_485_mode {
 	PMC_485_HALF = 0,  /* two wires, driver and receiver share them */

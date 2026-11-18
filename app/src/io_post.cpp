@@ -38,8 +38,12 @@ LOG_MODULE_REGISTER(pmc_post, LOG_LEVEL_INF);
  * place and keeps pointers into them, so a buffer that dies with the handler
  * would leave those pointers in a dead frame. One request at a time is
  * guaranteed here because Zephyr runs a single server thread.
+ *
+ * 1024, because a 256-byte RS485 frame arrives as 512 hex characters and the
+ * token, verb and separators are another ~50. At 512 the longest Modbus frame
+ * could not be posted at all.
  */
-static char s_body[512];
+static char s_body[1024];
 static HtmlTplZephyrBody s_post = { s_body, sizeof(s_body), 0, false };
 static char s_reply[224];
 

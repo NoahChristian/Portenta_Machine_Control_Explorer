@@ -118,8 +118,14 @@ HTTP_RESOURCE_DEFINE(index_resource, pmc_service, "/", &index_detail);
  * buffer it should become a second HtmlTpl page rather than a bigger buffer -
  * the engine already streams, and a JSON template would be checked against the
  * same registry the HTML one is.
+ *
+ * SIZED AGAINST A MEASUREMENT: the live document is 1708 bytes, so 2048 was
+ * 83% full. A silent truncation here produces invalid JSON, the page's
+ * .json() throws, and its .catch() treats it as a missed poll - so the
+ * failure would be invisible. 3072 leaves room for the channels still to
+ * come.
  */
-static char json_buf[2048];
+static char json_buf[3072];
 
 static int state_handler(struct http_client_ctx *client,
 			 enum http_transaction_status status,
@@ -173,8 +179,17 @@ HTTP_RESOURCE_DEFINE(state_resource, pmc_service, "/state.json", &state_detail);
  * board to answer. The query carries ?from=<absolute byte position>, so the
  * browser asks only for what it has not seen - and the reply says plainly
  * when the window it asked for has already been overwritten.
+ *
+ * SIZED AGAINST THE DRAIN RATE, which is the constraint nobody looks at: the
+ * window below is what leaves per poll, so 2048 bytes every 400 ms sustains
+ * 5120 B/s, or a saturated line up to about 51200 baud. The ring absorbs
+ * bursts above that; past it, `lost` is the honest answer and no buffer size
+ * changes it, because the WiFi link is then the limit. The old 768 sustained
+ * only 19200.
+ *
+ * 2048 bytes is 4096 hex characters plus ~215 of fields, so this is 4608.
  */
-static char rs485_buf[2600];
+static char rs485_buf[4608];
 
 static int rs485_handler(struct http_client_ctx *client,
 			 enum http_transaction_status status,
@@ -185,7 +200,11 @@ static int rs485_handler(struct http_client_ctx *client,
 		{ .name = "Content-Type", .value = "application/json" },
 		{ .name = "Cache-Control", .value = "no-store" },
 	};
-	uint8_t bytes[768];
+	/* Static, not automatic: 2048 bytes would be half the server thread's
+	 * stack. One request at a time is guaranteed - Zephyr runs a single
+	 * HTTP server thread.
+	 */
+	static uint8_t bytes[2048];
 	uint64_t from = 0, next = 0;
 	bool lost = false;
 	size_t n;
