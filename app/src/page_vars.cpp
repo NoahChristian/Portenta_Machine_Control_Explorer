@@ -525,6 +525,46 @@ static void fillNet(void)
 		netAdd("DNS", "none configured", false);
 	}
 
+	/* --- throughput, measured on the board ------------------------- */
+	if (gSnap.thru.win_ms == 0U) {
+		netAdd("throughput", "no sample yet", false);
+	} else {
+		(void)snprintk(v, sizeof(v), "%u.%03u Mbit/s down",
+			       (unsigned)(gSnap.thru.rx_kbps / 1000U),
+			       (unsigned)(gSnap.thru.rx_kbps % 1000U));
+		netAdd("download", v, false);
+
+		(void)snprintk(v, sizeof(v), "%u.%03u Mbit/s up",
+			       (unsigned)(gSnap.thru.tx_kbps / 1000U),
+			       (unsigned)(gSnap.thru.tx_kbps % 1000U));
+		netAdd("upload", v, false);
+
+		(void)snprintk(v, sizeof(v), "%u ms window",
+			       (unsigned)gSnap.thru.win_ms);
+		netAdd("sampled over", v, false);
+	}
+
+	(void)snprintk(v, sizeof(v), "%llu rx / %llu tx bytes",
+		       (unsigned long long)gSnap.thru.rx_bytes,
+		       (unsigned long long)gSnap.thru.tx_bytes);
+	netAdd("total bytes", v, false);
+
+	/* Retransmission as a percentage, because the raw pair needs division
+	   to mean anything and that is the number being watched. */
+	if (gSnap.thru.tcp_sent > 0U) {
+		(void)snprintk(v, sizeof(v), "%u of %u bytes (%u%%)",
+			       (unsigned)gSnap.thru.tcp_resent,
+			       (unsigned)gSnap.thru.tcp_sent,
+			       (unsigned)((uint64_t)gSnap.thru.tcp_resent * 100U /
+					  gSnap.thru.tcp_sent));
+		netAdd("TCP resent", v, false);
+	}
+
+	(void)snprintk(v, sizeof(v), "%u dropped, %u resets",
+		       (unsigned)gSnap.thru.tcp_drop,
+		       (unsigned)gSnap.thru.tcp_rst);
+	netAdd("TCP faults", v, false);
+
 	/* --- the wire -------------------------------------------------- */
 	if (!gSnap.eth.present) {
 		netAdd("Ethernet", "not in this build", false);

@@ -49,6 +49,9 @@ void pmc_net_eth_read(struct pmc_eth *out);
  * struct pmc_netinfo in snapshot.h before putting these anywhere. */
 void pmc_net_info_read(struct pmc_netinfo *out);
 
+/* Throughput the board measured on itself; see struct pmc_thru. */
+void pmc_net_thru_read(struct pmc_thru *out);
+
 #define AI_SWITCHES (LL_SYSCFG_ANALOG_SWITCH_PA1 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC2 | \
 		     LL_SYSCFG_ANALOG_SWITCH_PC3)
@@ -167,6 +170,7 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	(void)pmc_do_read(s->do_out, ARRAY_SIZE(s->do_out));
 	pmc_rs485_activity(&s->rs485_tx_age, &s->rs485_rx_age);
 	pmc_net_info_read(&s->net);
+	pmc_net_thru_read(&s->thru);
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {

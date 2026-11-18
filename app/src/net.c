@@ -50,6 +50,7 @@
 
 #include <zephyr/net/dhcpv4.h>
 #include <zephyr/net/dns_resolve.h>
+#include <zephyr/net/net_stats.h>
 #include <zephyr/net/phy.h>
 
 #include "clock.h"
@@ -271,6 +272,7 @@ static K_WORK_DELAYABLE_DEFINE(link_poll_work, link_poll);
  * two bodies - one real and one empty - depending on whether &mac is enabled.
  * The poller calls it, and the poller comes first. */
 static void eth_sample(void);
+static void thru_sample(void);
 
 static struct pmc_link s_link = {
 	.age_ms = -1,
@@ -314,7 +316,61 @@ static void link_poll(struct k_work *work)
 
 again:
 	eth_sample();
+	thru_sample();
 	k_work_reschedule(&link_poll_work, K_MSEC(LINK_POLL_MS));
+}
+
+/*
+ * Throughput, differenced on the link poll. See struct pmc_thru for why the
+ * board measures itself rather than leaving it to whatever is fetching the
+ * panel.
+ */
+static struct pmc_thru s_thru;
+static int64_t  s_thru_stamp;
+static uint64_t s_thru_rx_prev;
+static uint64_t s_thru_tx_prev;
+
+static void thru_sample(void)
+{
+	struct net_if *iface = net_if_get_first_wifi();
+	struct net_stats_bytes b = { 0 };
+	struct net_stats_tcp t = { 0 };
+	const int64_t now = k_uptime_get();
+
+	if (iface == NULL) {
+		return;
+	}
+
+	if (net_mgmt(NET_REQUEST_STATS_GET_BYTES, iface, &b, sizeof(b)) == 0) {
+		if (s_thru_stamp != 0 && now > s_thru_stamp) {
+			const uint32_t win = (uint32_t)(now - s_thru_stamp);
+
+			/* bytes * 8 / ms is exactly kbit/s - no rounding trick. */
+			s_thru.rx_kbps = (uint32_t)
+				(((b.received - s_thru_rx_prev) * 8U) / win);
+			s_thru.tx_kbps = (uint32_t)
+				(((b.sent - s_thru_tx_prev) * 8U) / win);
+			s_thru.win_ms = win;
+		}
+
+		s_thru.rx_bytes = b.received;
+		s_thru.tx_bytes = b.sent;
+		s_thru_rx_prev = b.received;
+		s_thru_tx_prev = b.sent;
+		s_thru_stamp = now;
+	}
+
+	if (net_mgmt(NET_REQUEST_STATS_GET_TCP, iface, &t, sizeof(t)) == 0) {
+		s_thru.tcp_resent = (uint32_t)t.resent;
+		s_thru.tcp_sent = (uint32_t)t.bytes.sent;
+		s_thru.tcp_drop = (uint32_t)t.drop;
+		s_thru.tcp_rst = (uint32_t)t.connrst;
+	}
+}
+
+void pmc_net_thru_read(struct pmc_thru *out)
+{
+	*out = s_thru;
 }
 
 void pmc_net_link_read(struct pmc_link *out)

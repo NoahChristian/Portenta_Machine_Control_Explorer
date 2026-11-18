@@ -147,6 +147,29 @@ struct pmc_eth {
  * backstop - not the control. Strings, not binary addresses, so nothing
  * downstream has to format them and accidentally log one.
  */
+/*
+ * THROUGHPUT, MEASURED BY THE BOARD ITSELF.
+ *
+ * Sampled from the WiFi interface's own byte counters on the 2 s link poll and
+ * differenced, so reading the panel does not generate the traffic being
+ * measured - which is the whole point: an external measurement of this link
+ * cannot separate "the board is slow" from "the measuring host is slow".
+ *
+ * kbit/s, not Mbit/s, because the interesting range here turned out to be
+ * tens of kbit/s and a Mbit figure would read 0.0 for all of it.
+ */
+struct pmc_thru {
+	uint32_t rx_kbps;     /* over the last window */
+	uint32_t tx_kbps;
+	uint32_t win_ms;      /* the window those rates came from; 0 = no sample */
+	uint64_t rx_bytes;    /* cumulative, since boot */
+	uint64_t tx_bytes;
+	uint32_t tcp_resent;  /* bytes TCP had to send again */
+	uint32_t tcp_sent;    /* TCP application bytes sent */
+	uint32_t tcp_drop;
+	uint32_t tcp_rst;
+};
+
 struct pmc_ipinfo {
 	uint8_t have;      /* an address is bound on this interface */
 	char    ip[16];
@@ -193,6 +216,7 @@ struct pmc_snapshot {
 	int32_t                rs485_rx_age;
 
 	struct pmc_netinfo     net;    /* REAL ADDRESSES - see the struct */
+	struct pmc_thru        thru;   /* throughput, measured on the board */
 
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;

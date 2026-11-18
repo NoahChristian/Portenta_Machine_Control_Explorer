@@ -40,6 +40,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/net/http/server.h>
 #include <zephyr/net/http/service.h>
+#include <zephyr/sys/reboot.h>
 
 #include "health.h"
 #include "httpd.h"
@@ -302,6 +303,64 @@ static struct http_resource_detail_dynamic io_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(io_resource, pmc_service, "/io", &io_detail);
+
+/* ---------------------------------------------------------- the reset --- */
+
+/*
+ * POST /reset reboots the board.
+ *
+ * POST-ONLY, DELIBERATELY. A GET here would be fired by a browser prefetch, a
+ * link checker or a favicon probe, and a board that reboots when something
+ * crawls it is worse than no hook at all.
+ *
+ * The reboot is deferred so the response can actually leave: sys_reboot() from
+ * inside the handler kills the connection mid-reply and the caller cannot tell
+ * "rebooted" from "fell off the network", which is the exact ambiguity this
+ * hook exists to remove.
+ *
+ * NOT token-gated, because this is a bench instrument and the token is for
+ * writes that energize 24 V outputs. A reset is recoverable by definition.
+ */
+static void reboot_work_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+static K_WORK_DELAYABLE_DEFINE(reboot_work, reboot_work_fn);
+
+static int reset_handler(struct http_client_ctx *client,
+			 enum http_transaction_status status,
+			 const struct http_request_ctx *request_ctx,
+			 struct http_response_ctx *response_ctx, void *user_data)
+{
+	static const char body[] = "rebooting\n";
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(request_ctx);
+	ARG_UNUSED(user_data);
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	LOG_WRN("reset requested over HTTP - cold reboot in 300 ms");
+	k_work_reschedule(&reboot_work, K_MSEC(300));
+
+	response_ctx->body = (const uint8_t *)body;
+	response_ctx->body_len = sizeof(body) - 1U;
+	response_ctx->final_chunk = true;
+	return 0;
+}
+
+static struct http_resource_detail_dynamic reset_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods = BIT(HTTP_POST),
+	},
+	.cb = reset_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(reset_resource, pmc_service, "/reset", &reset_detail);
 
 /* --------------------------------------------------------------- start --- */
 
