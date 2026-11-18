@@ -1102,6 +1102,55 @@ The lesson is the probe's, not the fix's: the knob, the generated `.config` and
 the hardware all have to be read separately. Two of the three agreed and were
 wrong.
 
+### The OTA stall IS the radio link, and this time with a control (2026-11-17)
+
+Power save is genuinely off: `wifiPsMode` reads **0**, read back from WHD after
+`whd_wifi_disable_powersave()` rather than assumed. Not sleeping, not
+hibernating. The AIROC driver does not implement the get-PS-config op, so
+`wifi ps` on the shell answers "Failed to get PS config" - the panel's
+read-back is the only place this can be seen.
+
+The link itself had collapsed:
+
+| | earlier the same day | at the time of the failures |
+|---|---|---|
+| RSSI | -45 dBm | -44 dBm |
+| rate | 144.0 Mbit | 43.0 Mbit |
+| link mode | 4, 802.11n/HT | **1, 802.11b** |
+
+Loss against frame size, 20 pings each, from the bench PC:
+
+```
+   32 bytes   35% loss
+  500 bytes   55%
+ 1000 bytes   50%
+ 1400 bytes   70%
+```
+
+**THE CONTROL, which an earlier attempt at this lacked.** The same 20 x 1400
+byte test from the same PC in the same minute to the AP's own gateway: **0%
+loss**. So the loss is specific to this board's radio link, not to the network
+or the measuring host. Strong signal with heavy loss at every frame size and a
+fallback to 802.11b is a noisy channel, not range - channel 3 overlaps 1
+through 6 in a crowded 2.4 GHz band, and the CYW4343W has no 5 GHz to escape
+to.
+
+That is the whole OTA story: a 1 MB image over a lockstep SMP transport cannot
+cross a link losing half its large frames, it dies at a different point each
+time, and a retry sometimes gets through. It also explains every symptom
+chased in software today - buffers all FREE when wedged rather than exhausted,
+every thread pending, no socket or context leak, ping replying while HTTP did
+not. A frame lost on the air never reaches the driver, so no counter in the
+application can see it.
+
+**One inconsistency, left as observed:** the mode reads 802.11b while the rate
+reads 43 Mbit, which is well above 802.11b's 11 Mbit ceiling. The two fields
+come from different places in the driver, so one of them is lying; not worth
+resolving to act on this.
+
+**What to do about it is not firmware.** Move the AP off channel 3, and use USB
+DFU for flashing until the link is sound - DFU is a cable and is reliable.
+
 ### The PHY, interrogated over MDIO (2026-11-17)
 
 With `CONFIG_MDIO_SHELL=y` and the MAC still dead, read over USB at PHY
