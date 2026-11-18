@@ -56,7 +56,16 @@ LOG_MODULE_REGISTER(pmc_clock, LOG_LEVEL_INF);
  */
 #define PMC_RESET_IF_OFF_S  30
 
-#define PMC_CLOCK_STACK  2048
+/*
+ * 3072, NOT 2048. MEASURED: at 2048 this thread's high-water mark was
+ * 2032 bytes - 16 bytes of margin, 99% - read off `kernel thread stacks`
+ * 75 s after a cold boot on 2026-11-18. It is the deepest stack on the
+ * board, because SNTP resolution and the socket work happen on it.
+ *
+ * Nothing had crashed, which is the point: a 16-byte margin does not
+ * announce itself, it just waits for one more frame.
+ */
+#define PMC_CLOCK_STACK  3072
 
 #if DT_HAS_COMPAT_STATUS_OKAY(nxp_pcf8563)
 static const struct device *const pmc_rtc =

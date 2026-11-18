@@ -124,6 +124,69 @@ A network fragment costs 156 bytes, not 128: 128 of payload plus a 28-byte
 `NET_BUF_RX_COUNT + NET_BUF_TX_COUNT`. It is instrumentation, and it is the
 first thing to go when the current investigation closes.
 
+### Measured on the board: before and after
+
+Both readings were taken from a **cold boot at the same age** - roughly 75 s,
+which is after association, DHCP, the panel binding and the health gate - using
+`kernel heap`, `kernel thread stacks` and `net mem` over the USB console. The
+before image is 0.85.0, the after is 0.86.0 installed over the air.
+
+Link time, from the map:
+
+| | static RAM | of 512 KB |
+|---|---|---|
+| before | 521,768 B | 99.52% |
+| after | 450,608 B | 85.95% |
+
+**The network buffers, which is why this was done at all:**
+
+```
+before (0.85.0, uptime 74.7 s)        after (0.86.0, uptime 78.7 s)
+Total  Avail  MaxUsed  Name           Total  Avail  MaxUsed  Name
+  128    128       -   RX                64     64       -   RX
+  128    128       -   TX                64     64       -   TX
+ 1024   1024      24   RX DATA          256    256      14   RX DATA
+  512    512      28   TX DATA          320    320      28   TX DATA
+```
+
+The 1024/512 maximum peaked at **24 and 28 fragments** - 2.3% and 5.5% of what
+was reserved. After the resize the peaks are 14 and 28 against 256 and 320, so
+there is still an order of magnitude of headroom on receive. Nothing was
+starved at either size; the large setting was never serving a measured need.
+
+**The heap, which is the part worth understanding:**
+
+```
+                 before      after
+free            18,936     117,240
+allocated       13,792      13,792
+max. allocated  15,864      15,864
+```
+
+`allocated` and `max. allocated` are **identical to the byte**. The pool grew
+from ~32.7 KB to ~131 KB and consumption did not move, which is the evidence
+that the 98 KB is spare capacity handed to the user rather than overhead the
+firmware absorbed. An armed capture draws on exactly that difference.
+
+**Thread stacks, where the measurement found a real defect:**
+
+| thread | before | after |
+|---|---|---|
+| `pmc_clock` | **2032 / 2048 (99%)** | 1768 / 3072 (57%) |
+| `conn_mgr_monitor` | 472 / 512 (92%) | 472 / 1024 (46%) |
+| `tcp_work` | 888 / 1024 (86%) | 496 / 1536 (32%) |
+| `http_server_tid` | 1792 / 4096 (43%) | 1784 / 8192 (21%) |
+| `rx_q[0]` | 1224 / 1792 (68%) | 1440 / 1792 (80%) |
+
+`pmc_clock` was running on **16 bytes of margin**, and it is not a theoretical
+margin: on the boot immediately after the swap the same thread reported a
+high-water mark of **2112 bytes**, which is more than the 2048 it used to have.
+Nothing had crashed, and that is the lesson - a stack that is 99% full does not
+announce itself, it waits for one more call depth. It is 3072 now, and the two
+Zephyr threads beside it were raised for the same reason.
+
+`rx_q[0]` at 80% is now the tightest on the board and is the next one to watch.
+
 ### Processing is a budget too, and it is contended the same way
 
 **There is one HTTP server thread.** `http_server_core.c` defines a single
