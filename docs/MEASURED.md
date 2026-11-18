@@ -1391,3 +1391,139 @@ exercised, and it does not work.
   of ethernet@40028000 and therefore depends on it. A gate that catches a wrong
   init order at build time is worth knowing about on a board that cannot report
   one at runtime.
+
+## The OTA stall, caught on the console (2026-11-18, 0.88.0)
+
+This answers "The OTA stall is STILL unexplained" above.
+
+Method: the logging build on the board, the console streamed to a file, then
+`smpmgr image upload --slot 1` repeatedly with **no reset between attempts**,
+until one failed. Uploads only, so nothing swapped and nothing rebooted.
+
+```
+attempt 1: exit=0 elapsed=17s
+attempt 2: exit=0 elapsed=16s
+attempt 3: exit=1 elapsed=98s     <- caught
+```
+
+17 s for 1,129,310 bytes is about 70 kB/s. The client's account of the
+failure, verbatim:
+
+```
+[04:48:54] ERROR  Timeout (90.0s) waiting for request      __init__.py:233
+           ERROR  Connection to device lost:        image_management.py:241
+                  TimeoutError - Timeout (90.0s)
+```
+
+### The board's side: two threads stop, nothing else does
+
+Last board-clock timestamp per thread, from the capture:
+
+```
+thread            lines   first     last   silent
+smp_udp4          11802   86.00   125.91    96.48
+mcumgr smp         1725   86.05   125.92    96.48
+rx_q[0]           33926   77.35   222.39     0.00
+WHD               16261   77.66   222.39     0.00
+http_server_tid    2601   79.31   221.25     1.14
+net_socket_service 1137   80.42   221.38     1.02
+```
+
+Both SMP threads go quiet in the same millisecond and stay quiet for 96 s while
+the radio, the receive queue and the web server carry on. **Zero errors and
+zero warnings** anywhere in that window.
+
+### It is NOT a wedge, and the thread state says so only if read carefully
+
+`kernel thread list` on the stalled board reports both as
+`state: pending, timeout: 0`. That looks like a deadlock and is not: it is the
+normal idle state of a thread blocked in `recvfrom(K_FOREVER)`. Compare
+`http_server_tid`, also `pending` but with `timeout: 748`, which is a poll with
+a deadline.
+
+Proof rather than inference: an SMP `image state-read` **answered normally**
+minutes later with no reset. The threads were idle, not stuck. They had nothing
+to do because the client, having lost one reply, sends nothing further while it
+waits out its own 90 s timeout - so the silence is on both sides and is
+expected.
+
+### It is NOT resource starvation either, measured while stalled
+
+```
+TX DATA   320 total, Avail 320, MaxUsed 32
+RX DATA   256 total, Avail 256, MaxUsed 16
+heap      free 117240, allocated 13792, max. allocated 15864
+stacks    smp_udp4 712/1024 (69%), mcumgr smp 1336/2048 (65%)
+```
+
+Every TX buffer free, the peak a tenth of the pool, the heap byte-identical to
+idle, no stack over 69%.
+
+### So the failure is ONE LOST DATAGRAM, in a protocol with no retransmission
+
+SMP over UDP is lockstep with no window. One datagram lost in either direction
+ends the transfer; there is nothing in the protocol to resend it.
+
+**The rate, by arithmetic.** The image is roughly 1,100 datagrams and about
+half of attempts succeed, so `(1 - p) ** 1100 ~= 0.5` gives **p ~= 0.06%** -
+about one datagram in 1,600.
+
+That number explains two things that had been read the other way:
+
+- **Why a small ping test said "no loss."** 80 ICMP round trips at 64, 512,
+  1024 and 1400 bytes lost nothing, and that was briefly treated as
+  exonerating the link. At 0.06% per datagram, 80 samples have about a 5%
+  chance of seeing a single drop. The test was not sensitive enough to detect
+  the thing that breaks the transfer.
+- **Why `--mtu 256` made it worse rather than better.** Under per-datagram
+  loss, a smaller MTU multiplies the number of lockstep exchanges, so four
+  times the datagrams is four times the chance of losing one. The `-Mtu`
+  comment in `tools/ota.ps1` assumes size-dependent loss; an `--mtu 256`
+  attempt failed where the default had succeeded minutes earlier, which fits
+  per-datagram loss and not per-byte loss.
+
+**The contrast that names the missing property.** Same radio, same window:
+
+```
+TCP bytes recv 151219  sent 492567  resent 355    TCP seg drop 0
+UDP recv 2475  sent 1930                          (no resend exists)
+```
+
+TCP lost segments too and recovered by resending them. SMP cannot.
+
+### Ruled out by measurement, each of them previously asserted
+
+| claim | how it died |
+|---|---|
+| WiFi power save buffering frames at the AP | isolated pings 6 s apart answered in 3 ms, 8 of 10 |
+| gross size-dependent frame loss | 0 lost of 80, payloads 64 to 1400 bytes |
+| the radio not receiving during the stall | 16,261 WHD receive lines **after** the transfer died |
+| an mcumgr deadlock | SMP answered minutes later, no reset |
+| buffer, heap or stack exhaustion | the numbers above, all at idle levels |
+
+The AIROC driver turned out to contain no power-save handling at all - no
+`whd_wifi_enable_powersave`, no `listen_interval`, no `get_power_save` op,
+which is why `wifi ps` answers "Failed to get PS config". So power save was
+never configured either way, and the ping timing shows the radio awake.
+
+### Still open
+
+- Whether the lost datagram is the client's request or the board's reply.
+- Whether it is lost on the air or inside the stack. The board's UDP drop
+  counter (2,256) is dominated by ambient traffic with no listener - mDNS to
+  5353, a foreign DHCP conversation, and 0x88ca frames - because the broadcast
+  domain is a /22, so it does not separate the two cases.
+- `Processing err 692` on the WiFi interface is unexplained.
+
+### DTLS does not address this
+
+Zephyr's `smp_udp` does support it: `CONFIG_MCUMGR_TRANSPORT_UDP_DTLS` opens
+`NET_IPPROTO_DTLS_1_2` with a credential sec tag. But smpmgr 0.20.2 has no
+client-side option for it (`--ip --port --ble --timeout --mtu --baudrate
+--line-length --line-buffers` is the whole list), and more importantly DTLS
+adds no retransmission - it adds a handshake and about 29 bytes per record, so
+under per-datagram loss it makes a transfer longer and slightly more fragile.
+The property this failure needs is retransmission, which means TCP, and this
+Zephyr has no TCP transport for SMP (`smp_bt`, `smp_dummy`, `smp_lorawan`,
+`smp_raw_dummy`, `smp_raw_uart`, `smp_shell`, `smp_spi`, `smp_uart`,
+`smp_udp`).
