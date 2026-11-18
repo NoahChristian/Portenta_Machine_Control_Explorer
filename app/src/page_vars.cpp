@@ -296,17 +296,27 @@ static void fillEth(void)
 		} else if (gSnap.eth.speed_mbit == 0U) {
 			/*
 			 * Link up with nothing negotiated is a real state, not
-			 * a missing reading: measured here as BMSR 0x780d -
-			 * link bit set, auto-negotiation NOT complete - with
-			 * ANLPAR 0x0001, a partner advertising no ability. "0
-			 * half" would be a fabricated speed.
+			 * a missing reading. It used to be THIS board's state
+			 * on every poll, because the mode was derived from
+			 * ANLPAR while autoneg was off - see eth_mdio_link().
+			 * Now it means the reads themselves failed partway,
+			 * which is why it still has to render.
 			 */
-			PUT(vEth, "eth PHY link up, speed unnegotiated, MAC down");
+			PUT(vEth, "eth PHY link up, speed unreadable, MAC down");
 		} else {
+			/*
+			 * FORCED IS NOT AGREED, and the difference is the
+			 * whole diagnosis here: a forced 10 half link comes up
+			 * only where the partner tolerates a port that never
+			 * negotiates, so the same cable in two switches gives
+			 * two answers and neither is a fault in the cable.
+			 */
 			(void)snprintk(vEth, sizeof(vEth),
-				       "eth PHY link %u %s, MAC not initialized",
+				       "eth PHY link %u %s%s, MAC down",
 				       (unsigned)gSnap.eth.speed_mbit,
-				       gSnap.eth.full_duplex ? "full" : "half");
+				       gSnap.eth.full_duplex ? "full" : "half",
+				       gSnap.eth.forced ? " FORCED, no autoneg"
+							: "");
 		}
 		return;
 	}
@@ -720,8 +730,9 @@ static bool termSelect(uint16_t i)
 	const bool is_chan = (t.chan[0] != '\0');
 	const bool measured = (strcmp(t.conf, "measured") == 0);
 	char reading[72];
-	const int level = pmc_snapshot_reading(&gSnap, t.chan, reading,
-					       sizeof(reading));
+	/* Called for `reading`, the text. Its return - the level - stopped
+	   being used when the lamps moved off the read-back; see below. */
+	(void)pmc_snapshot_reading(&gSnap, t.chan, reading, sizeof(reading));
 
 	(void)snprintf(rTXform, sizeof(rTXform), "translate(%.1f %.1f)",
 		       (double)t.x, (double)t.y);
@@ -743,7 +754,7 @@ static bool termSelect(uint16_t i)
 	 * dashed screw block, and tools/terminals.csv says which are which.
 	 */
 	/*
-	 * THE LAMP IS NOT THE READING, for an output. `level` above answers
+	 * THE LAMP IS NOT THE READING, for an output. `reading` above answers
 	 * "what does it read"; `lamp` answers "what was it told to do", and
 	 * for DO and PDIO that is the one the lamp must show - see
 	 * pmc_snapshot_lamp(). They are deliberately both computed: the row

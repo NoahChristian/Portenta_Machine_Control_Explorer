@@ -24,6 +24,7 @@ target_sources(app PRIVATE
     src/main.c
     src/shell_mcuboot.c
     src/shell_analog.c
+    src/whoami.c
     src/health.c
     src/net.c
     src/clock.c

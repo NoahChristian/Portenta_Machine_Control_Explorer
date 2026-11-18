@@ -1707,3 +1707,118 @@ A slot reports a plausible *version* while only part way written, because the
 MCUboot header lands in the first kilobyte. Only the hash covers every byte,
 which is why the same comparison now runs on the success path too: smpmgr
 exiting 0 is not evidence about what is in flash either.
+
+## The Ethernet link the panel could not report (2026-11-18, 0.98.0)
+
+Reported from the bench: the RJ45 does not light with a cable in a live port.
+Two separate defects, and the PHY was not one of them.
+
+Read over the serial shell with `mdio read mdio 0 <reg>`, cable in a live
+port, nothing written:
+
+```
+reg 0   BMCR     basic control                     0x0
+reg 1   BMSR     basic status                      0x780d
+reg 1   BMSR     second read                       0x780d
+reg 2   PHY ID1  must be 0x0007                    0x7
+reg 3   PHY ID2  must be 0xc131                    0xc131
+reg 4   ANAR     what WE advertise                 0x1a1
+reg 5   ANLPAR   what the PARTNER advertises       0x1
+reg 17  MODECTRL mode control/status               0x0
+reg 18  SPMODES  MODE strap + PHYAD                0x9b9d
+reg 26  SYMERR   symbol error counter              0xffff
+reg 27  SCSI     special control/status            0xffff
+reg 29  ISRCFLAG interrupt source                  0xffff
+reg 30  IMASK    interrupt mask                    0xffff
+reg 31  PHYSCS   autoneg done, speed indication    0xffff
+```
+
+**BMSR 0x780d means the link is UP.** 0x7809 is this part's no-link default -
+four capability bits, autoneg able, extended capability - and the one bit
+added is `BIT(2)`, LINK. Autoneg complete, `BIT(5)`, is clear, which agrees
+with BMCR 0x0000: autoneg disabled, 10 Mbit, half duplex. Forced 10BASE-T
+half, exactly what the MODE 000 strap predicts, and it links.
+
+### Trust in those reads, established rather than assumed
+
+Five registers came back `0xffff`, which is what a failed MDIO read looks like
+as readily as it is a value. The control is the PHY ID pair: it **must** read
+`0x0007 / 0xc131` on a LAN8742A, and it does, twice, in the same sweep. So the
+low registers are being read correctly and BMSR is evidence.
+
+Registers 18 and 26 upward are not, and the pattern is by address rather than
+random - 0 through 17 read plausibly and repeatably, 18 and 26-31 do not. A
+marginal MDC would fail at random instead. **Unexplained, and not relied on
+here**: every conclusion above rests on registers 0-5.
+
+### Defect 1: the jack's lamps on the drawing were drawn once
+
+`ethLedG` and `ethLedA` are server-rendered template variables, so the two
+lamps on the drawn RJ45 were correct at the instant the page was rendered and
+frozen from then on. Plug a cable into a page loaded without one and they stay
+dark for as long as you watch.
+
+**This is the third instance of one omission.** The DO and PDIO lamps had it
+this morning; `boardLeds()` was written for exactly this and does not reach the
+RJ45, because an RJ45 is not a channel and carries no `?ch=` link to find it
+by. The lesson is not about either graphic: **anything the server draws from
+state needs a line in the poll, and the poll has to be enumerated against the
+drawing rather than extended whenever somebody notices.**
+
+### Defect 2: a negotiated mode read off a negotiation that never ran
+
+`eth_mdio_link()` derived speed and duplex from `anar & anlpar`. With autoneg
+disabled no link code words are exchanged, so ANLPAR holds nothing - `0x0001`,
+the selector field alone - and the AND names no mode at all. The panel showed
+`speedMbit: 0` beside `link: true` and said "speed unnegotiated", which read
+as a missing measurement and was a derivation asking a register nobody had
+filled in.
+
+Now BMSR's autoneg-complete bit picks the source: complete, and the common
+advertisement is the answer; not complete, and BMCR is, because a forced mode
+exists nowhere else. Published as `forced` so the two cannot be confused:
+
+```
+before   {"link":true,"fullDuplex":false,"speedMbit":0,...}
+after    {"link":true,"fullDuplex":false,"speedMbit":10,"forced":true,...}
+```
+
+**Forced is not agreed, and that is the diagnosis rather than a label.** A port
+that never negotiates links only where the partner tolerates one, so the same
+cable in two switches gives two answers and neither is a fault in the cable.
+Any future "Ethernet works here and not there" belongs against this line.
+
+### What this does NOT change
+
+The MAC is still dead - `rc -19`, `initRes -5`, `swr 1`, the DMA software reset
+never completing for want of the RMII reference clock - and the strap
+conclusion above stands untouched. Nothing here is progress on Ethernet
+carrying traffic. What it fixes is a panel that could not report the state of
+the wire, on a board where the wire is the only part of Ethernet that works.
+
+## `whoami`, and the serial port that was already listening (2026-11-18)
+
+Asked whether a `whoami` would need the serial port reconfigured to accept
+commands. It does not: `CONFIG_SHELL=y` with `CONFIG_SHELL_BACKEND_SERIAL=y`
+has been on since M0, and the port already carries `mdnsname`, `health`,
+`mcuboot`, `pmc parts` and `pmca` beside Zephyr's own `kernel`, `net`, `i2c`,
+`adc`, `gpio` and `mdio`. A command is one `SHELL_CMD_REGISTER`.
+
+Measured by dropping the file from the build and rebuilding, rather than
+estimated:
+
+| | with | without | cost |
+|---|---|---|---|
+| FLASH | 1,080,208 | 1,079,428 | **780 B** |
+| RAM | 436,592 | 436,592 | **0 B** |
+
+A shell command is a table entry in a linker section plus its help and output
+strings; none of it is RAM. The 83.27% RAM figure also settles an earlier
+loose end: it is unchanged by `whoami`, and the 83.00% recorded when the
+debug logging came off was simply before `pmc_pulse` and its 1 KB stack
+existed.
+
+It answers in one round trip what the wrong-board incident needed four
+commands to establish, and deliberately prints **no address**: this output is
+meant to be pasted verbatim into this file, and an address may not be
+committed here. `net iface` is where those live.

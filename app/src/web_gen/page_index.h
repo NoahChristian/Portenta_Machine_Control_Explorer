@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "8c96d087"
-#define PAGE_INDEX_BYTES 78671
+#define PAGE_INDEX_BUILD "6db3eb8c"
+#define PAGE_INDEX_BYTES 80170
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -411,8 +411,10 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   up <!--#v uptime--> s &middot;
   <!--#v link--> &middot;
   <!--#v eth--> &middot;
-  every reading on this page was taken when the page was rendered &mdash;
-  nothing here polls, so reload to take a fresh set
+  
+  every reading was taken in one pass when the page was rendered; the lamps,
+  the analog rows and the temperature block then refresh every 2 s. Everything
+  else is as it was rendered &mdash; reload for a fresh set
 </p>
 
 <div class="boardwrap">
@@ -1721,6 +1723,39 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
    */
   var ledMap = null;
 
+  /*
+   * THE RJ45'S OWN TWO LAMPS, AND THE SAME OMISSION AGAIN.
+   *
+   * These are drawn by the server from `ethLedG` / `ethLedA`, so they were
+   * right at the instant the page was rendered and frozen from then on. Plug
+   * a cable into a page that was loaded without one and the jack on the
+   * drawing stays dark however long you wait - which is not "there is no
+   * link", it is "nobody asked again". Exactly what the terminal lamps did
+   * before boardLeds() existed, in a graphic that boardLeds() does not reach
+   * because an RJ45 is not a channel and carries no `?ch=` link.
+   *
+   * Driven from j.eth.link, which is the PHY's own BMSR link bit read over
+   * MDIO - not the MAC's carrier. On this board the MAC does not initialize
+   * at all, so a lamp waiting for the MAC would never light no matter what is
+   * plugged in, and the wire's state is the thing a person at the bench is
+   * actually asking about.
+   */
+  var ethLed = null;
+
+  function ethLeds(j) {
+    if (!j || !j.eth) { return; }
+    if (ethLed === null) {
+      ethLed = { g: document.querySelector('.ledg'),
+                 a: document.querySelector('.leda') };
+    }
+    var up = !!(j.eth.present && j.eth.link);
+    if (ethLed.g) { ethLed.g.classList.toggle('off', !up); }
+    if (ethLed.a) {
+      ethLed.a.classList.toggle('off', !up);
+      ethLed.a.classList.toggle('act', up);
+    }
+  }
+
   function boardLeds(j) {
     if (!j || !j.io) { return; }
     if (ledMap === null) {
@@ -1772,6 +1807,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       .then(function (j) {
         tempShow(j);
         boardLeds(j);
+        ethLeds(j);
         if (!j.ai) { return; }
         /* Row order is the registry's order, which is the order the board
            reads them in - matching by position rather than by a key the

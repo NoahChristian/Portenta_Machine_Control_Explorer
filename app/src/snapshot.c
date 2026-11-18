@@ -645,13 +645,15 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	n += snprintk(out + n, cap - n,
 		      "\"eth\":{\"present\":%s,\"ageMs\":%d,\"rc\":%d,"
 		      "\"carrier\":%s,\"link\":%s,\"fullDuplex\":%s,"
-		      "\"speedMbit\":%u,\"hasAddr\":%s,\"initRes\":%d",
+		      "\"speedMbit\":%u,\"forced\":%s,"
+		      "\"hasAddr\":%s,\"initRes\":%d",
 		      s->eth.present ? "true" : "false",
 		      (int)s->eth.age_ms, (int)s->eth.rc,
 		      s->eth.carrier ? "true" : "false",
 		      s->eth.link_up ? "true" : "false",
 		      s->eth.full_duplex ? "true" : "false",
 		      (unsigned)s->eth.speed_mbit,
+		      s->eth.forced ? "true" : "false",
 		      s->eth.has_addr ? "true" : "false",
 		      (int)s->eth.init_res);
 

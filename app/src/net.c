@@ -448,11 +448,24 @@ static int eth_mdio_raw(uint8_t prtad, uint8_t regad, uint16_t *out)
  * BMSR.LINK IS LATCHING LOW: it reports 0 if the link dropped since the last
  * read, even when the link is back. So it is read TWICE and the second read is
  * the current state. A single read makes a recovered link look down.
+ *
+ * AND THE NEGOTIATED MODE IS ONLY NEGOTIATED IF AUTONEG RAN. With autoneg
+ * disabled no link code words are exchanged, so ANLPAR holds nothing - this
+ * PHY reports 0x0001, the selector field alone - and `anar & anlpar` then
+ * names no mode at all. That is how the panel came to report a link that was
+ * up at 0 Mbit (measured 2026-11-18, docs/MEASURED.md): not a bad read, a
+ * derivation asking a register that was never filled in. When BMSR says
+ * autoneg did not complete, the mode is whatever BMCR was forced to, which is
+ * the only place it exists.
  */
+#define MII_BMCR     0U
 #define MII_BMSR     1U
 #define MII_ANAR     4U
 #define MII_ANLPAR   5U
 #define BMSR_LINK    BIT(2)
+#define BMSR_ANEG_OK BIT(5)
+#define BMCR_SPEED100 BIT(13)
+#define BMCR_FULLDPLX BIT(8)
 
 static void eth_mdio_link(uint8_t addr)
 {
@@ -467,8 +480,24 @@ static void eth_mdio_link(uint8_t addr)
 	if (!s_eth.link_up) {
 		s_eth.speed_mbit = 0U;
 		s_eth.full_duplex = 0U;
+		s_eth.forced = 0U;
 		return;
 	}
+
+	if ((bmsr & BMSR_ANEG_OK) == 0U) {
+		uint16_t bmcr = 0;
+
+		if (eth_mdio_raw(addr, MII_BMCR, &bmcr) != 0) {
+			return;
+		}
+
+		s_eth.forced = 1U;
+		s_eth.speed_mbit = (bmcr & BMCR_SPEED100) ? 100U : 10U;
+		s_eth.full_duplex = (bmcr & BMCR_FULLDPLX) ? 1U : 0U;
+		return;
+	}
+
+	s_eth.forced = 0U;
 
 	if (eth_mdio_raw(addr, MII_ANAR, &anar) != 0 ||
 	    eth_mdio_raw(addr, MII_ANLPAR, &anlpar) != 0) {

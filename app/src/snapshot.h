@@ -116,6 +116,13 @@ struct pmc_eth {
 	uint8_t  link_up;      /* the PHY's view, over MDIO */
 	uint8_t  full_duplex;
 	uint16_t speed_mbit;   /* 10, 100, 1000; 0 = not reported */
+	uint8_t  forced;       /* the mode above came from BMCR because autoneg
+				* did not complete - a forced link, not an
+				* agreed one. The distinction matters: a forced
+				* mode links only if the partner happens to
+				* tolerate it, so "10 half, forced" explains an
+				* otherwise healthy port that will not come up.
+				*/
 	uint8_t  has_addr;     /* an IPv4 address is bound. NOT the address. */
 	int16_t  rc;           /* phy_get_link_state() return */
 	int16_t  init_res;     /* the MAC driver's OWN init errno, negated */
