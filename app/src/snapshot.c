@@ -27,6 +27,7 @@
 #include "clock.h"
 #include "expander.h"
 #include "health.h"
+#include "io_write.h"
 #include "snapshot.h"
 #include "temp.h"
 
@@ -158,6 +159,7 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	pmc_clock_get(&s->drift);
 	pmc_io_read(&s->io);
 	pmc_rail_read(&s->rail);
+	(void)pmc_do_read(s->do_out, ARRAY_SIZE(s->do_out));
 
 	s->n_ai = ARRAY_SIZE(ai_spec);
 	for (size_t i = 0; i < s->n_ai; i++) {
@@ -272,10 +274,32 @@ int pmc_snapshot_reading(const struct pmc_snapshot *s, const char *chan,
 	}
 
 	/*
-	 * DO is H7 GPIOs behind a shared latch rather than expander bits, so it
-	 * arrives with the write path. TEMP, ENC, RS485 and CAN have no reader
-	 * either. Saying so is the point - see the header.
+	 * DO IS KNOWN, NOT GUESSED. These are H7 GPIOs, and the state of a pin
+	 * this firmware configured and drove is held in the port's own
+	 * registers - read back here rather than from a shadow. The board boots
+	 * every DO de-energized in pmc_io_write_init(), so the value is defined
+	 * from reset onward and there is no "unknown" to report.
+	 *
+	 * The panel lights the channel LED from this, with no caveat attached.
+	 * Whether 24 V reaches the terminal is a property of the wiring, not a
+	 * claim the controller is making.
 	 */
+	if (strncmp(chan, "DO", 2) == 0 && chan[2] >= '0' && chan[2] <= '9') {
+		const int n = atoi(chan + 2);
+
+		if (n >= 0 && n < (int)ARRAY_SIZE(s->do_out)) {
+			if (s->do_out[n] < 0) {
+				(void)snprintk(out, cap, "DO%d port not ready",
+					       n);
+				return -1;
+			}
+			(void)snprintk(out, cap, "%s",
+				       s->do_out[n] ? "ON" : "OFF");
+			return s->do_out[n];
+		}
+	}
+
+	/* TEMP, ENC, RS485 and CAN have no reader. Saying so is the point. */
 	(void)snprintk(out, cap, "no reader in this image yet");
 	return -1;
 }

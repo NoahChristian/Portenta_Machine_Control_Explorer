@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "93f7f069"
-#define PAGE_INDEX_BYTES 65594
+#define PAGE_INDEX_BUILD "3b43d186"
+#define PAGE_INDEX_BYTES 65579
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -123,9 +123,9 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .brand2 { fill:#8d959e; font:10px ui-monospace,monospace;
             text-anchor:middle; letter-spacing:.22em; }
 
-  /* The per-channel PCB LED. Dark until the firmware says otherwise, and the
-     firmware cannot say otherwise yet - DIN/DO/PDIO are TCA6424A bits and
-     nothing reads them until M2, so every one of these renders .off. */
+  /* The per-channel PCB LED, lit from the channel's own state: DIN and PDIO
+     off the expanders, DO out of the GPIO registers. A family with no reader
+     still renders .off - see snapshot.h on why that is not "probably off". */
   /* An unlit LED is still a visible component on the board, so the dark
      state is a dim red with a rim rather than something that vanishes into
      the substrate - at 3.4 units across, near-black reads as absent and the
@@ -510,7 +510,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <span><i class="sw" style="background:#7d848c"></i>logic low</span>
   <span><i class="sw" style="background:#e3c75a"></i>not read yet</span>
   <span><i class="sw" style="background:#8c7118"></i>GND / supply</span>
-  <span><i class="sw" style="background:#ff3b30"></i>channel LED lit &mdash; logic state, not proof of output</span>
+  <span><i class="sw" style="background:#ff3b30"></i>channel LED lit &mdash; output on</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
 </p>

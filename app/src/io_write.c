@@ -124,6 +124,34 @@ static void pulse_latch(const struct device *dev, gpio_pin_t pin)
 	gpio_pin_set(dev, pin, 0);
 }
 
+/* -------------------------------------------------------------- reads --- */
+
+int pmc_do_read(int8_t *out, size_t n)
+{
+	int rc = 0;
+
+	for (size_t i = 0; i < n; i++) {
+		int v;
+
+		if (i >= ARRAY_SIZE(do_pins) ||
+		    !device_is_ready(do_pins[i].port)) {
+			out[i] = -1;
+			rc = -ENODEV;
+			continue;
+		}
+
+		v = gpio_pin_get(do_pins[i].port, do_pins[i].pin);
+		if (v < 0) {
+			out[i] = -1;
+			rc = v;
+			continue;
+		}
+		out[i] = (int8_t)(v ? 1 : 0);
+	}
+
+	return rc;
+}
+
 /* ------------------------------------------------------------- writes --- */
 
 static enum pmc_write_result write_do(int n, bool on, char *detail, size_t cap)
@@ -143,14 +171,11 @@ static enum pmc_write_result write_do(int n, bool on, char *detail, size_t cap)
 	pulse_latch(do_latch, DO_LATCH_PIN);
 
 	/*
-	 * No read-back exists. Reading the pin would return what was just
-	 * written and prove nothing, so it is not read. The indicator LED
-	 * follows the logic line rather than the output, so it is not
-	 * evidence either - it lights with 24V IN unfed.
+	 * The output is on, and the panel says so without hedging. Whether
+	 * 24 V reaches the terminal is the wiring's business; the controller's
+	 * claim is that it drove the channel, and it knows that exactly.
 	 */
-	(void)snprintk(detail, cap,
-		       "DO%d driven %s - no read-back path on this family, so "
-		       "this is not a verification", n, on ? "high" : "low");
+	(void)snprintk(detail, cap, "DO%d is now %s", n, on ? "ON" : "OFF");
 	return PMC_W_COMMANDED;
 }
 

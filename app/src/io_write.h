@@ -66,6 +66,17 @@ enum pmc_write_result pmc_io_write(const char *chan, bool on,
 enum pmc_write_result pmc_io_pulse(const char *chan, uint32_t ms,
 				   char *detail, size_t cap);
 
+/*
+ * The eight DO logic lines, read from the GPIO registers - not from a shadow
+ * variable, so a pad that cannot follow its own output register shows up.
+ *
+ * Defined from reset onward: pmc_io_write_init() drives all eight
+ * de-energized before anything else runs, so there is no "unknown" state to
+ * report. out[i] is 1, 0, or -1 if that port is not ready. Returns 0, or a
+ * negative errno if any channel could not be read.
+ */
+int pmc_do_read(int8_t *out, size_t n);
+
 
 #ifdef __cplusplus
 }

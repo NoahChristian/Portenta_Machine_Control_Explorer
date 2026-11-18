@@ -146,6 +146,9 @@ struct pmc_snapshot {
 	struct pmc_io_state    io;     /* DIN and PDIO off the expanders */
 	struct pmc_rail        rail;   /* 24 V, inferred - never measured */
 
+	/* The DO logic lines, off the GPIO registers; -1 = port not ready. */
+	int8_t                 do_out[8];
+
 	struct pmc_ai_read   ai[PMC_SNAP_AI];
 	size_t               n_ai;
 	struct pmc_slot_read slot[PMC_SNAP_SLOT];
