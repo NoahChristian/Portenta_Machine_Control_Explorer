@@ -986,6 +986,28 @@ eth: {"present":true,"rc":-19,"initRes":-5,"carrier":false,"link":false}
 **-EIO out of `eth_initialize()` itself**, read back from
 `dev->state->init_res`.
 
+### CORRECTION: this board HAS a console, and that error cost four OTA cycles
+
+Everything in this section premised on "no console" is **wrong**, and the
+premise shaped the work rather than just one step of it. The board enumerates
+**two** Zephyr USB CDC ports (`VID_2FE3&PID_0004`) and runs a full Zephyr
+shell at 115200 - `kernel`, `net`, `i2c`, `adc`, `gpio`, `mdio`. The claim was
+carried forward unchecked from the MCUboot half, where the console really is
+off, and then used to justify publishing driver internals through the web
+panel.
+
+One command would have replaced the entire register probe and a round of
+hypotheses:
+
+```
+net mem
+```
+
+So: **check for an enumerated port before concluding a board is mute.** The
+technique below is still sound and still worth having - `init_res` is the right
+answer when a driver fails before any console exists - but it was built for a
+constraint that was not real.
+
 ### Reading a driver's init errno on a board with no console
 
 Worth keeping as a technique. Zephyr stores every device's init return value
@@ -996,6 +1018,12 @@ and this turns that silence into one number. It ended a round of guessing that
 had already produced four plausible and unmeasured explanations.
 
 ### Traced as far as source allows
+
+**The claim below was right by luck, and the reasoning was wrong.** -EIO is
+returned from TWO places in `eth_initialize()`: `:102` when `clock_control_on`
+fails and `:123` when `HAL_ETH_Init` fails, the latter translating the HAL
+path's own -EINVAL. The errno alone cannot tell them apart. What settles it is
+`gates`, below.
 
 In `eth_stm32_hal_common.c` the -EIO is `HAL_ETH_Init()` failing, and in
 `stm32h7xx_hal_eth.c` that function has exactly one realistic failure before
@@ -1010,9 +1038,69 @@ the PHY - the MCU does not generate it.
 |---|---|
 | init order - drivers running before the PHY's reset is released | real, and fixed. `CONFIG_ETH_INIT_PRIORITY` was 60 against a reset regulator at 75. Corrected to 80/81/82 and **verified in the ELF**, not assumed: `check_init_priorities.py --initlevels` shows both fixed regulators ahead of `eth_initialize`. Did not fix it. |
 | the PHY needing time to lock after reset | `startup-delay-us = <50000>` on `ethernet_phy_en`, honored by `regulator_fixed.c` with a `k_usleep`. No change. |
-| the PA1 analog switch isolating the reference clock | made a Kconfig choice and **tested both ways**. `initRes` is -5 with the switch open and -5 with it closed. Not the cause, and AI2 keeps its switch. |
+| the PA1 analog switch isolating the reference clock | **RETRACTED - this test never ran.** See "The =n path was a no-op" below. The switch was open in both of the runs recorded here. |
 | MII selected instead of RMII | the driver passes `.MediaInterface` from `phy-connection-type`, and `HAL_ETH_Init` calls `HAL_SYSCFG_ETHInterfaceSelect(SYSCFG_ETH_RMII)` with a read-modify-write that preserves the analog switch bits. Already correct. |
 | the Ethernet clock gates | all three present in the devicetree - `stm-eth`, `mac-clk-tx`, `mac-clk-rx` on RCC 0xd8. |
+
+### The registers, read from the running board (2026-11-17, 0.70.0)
+
+A raw-register probe in `net.c`, run once when the MAC's init fails - safe
+only then, because no driver owns any of it:
+
+```
+eth: {"initRes":-5,"gates":7,"epis":4,"sw":15,"phyRst":1,
+      "swr":1,"phyAddr":0,"phyId":"0007:c131"}
+```
+
+| field | reads | and settles |
+|---|---|---|
+| `gates` | 7 | all three ETH clock gates on, so `clock_control_on` succeeded and the -EIO is the `HAL_ETH_Init` path. Proven, not inferred. |
+| `epis` | 4 | RMII selected in `SYSCFG_PMCR`. |
+| `phyRst` | 1 | PJ15 high: the PHY's reset is released. |
+| `swr` | 1 | **`ETH_DMAMR_SWR` never cleared.** The MAC is still in software reset, which is what the 500 ms `ETH_SWRESET_TIMEOUT` expired on. |
+| `phyAddr` | 0 | the PHY answers MDIO at address 0. |
+| `phyId` | `0007:c131` | OUI 0007C0 and model 0x13 rev 1: a **Microchip LAN8742A**. |
+
+Two things worth more than the table.
+
+**MDIO works while the MAC is held in reset.** `HAL_ETH_ReadPHYRegister` checks
+only the MACMDIOAR busy bit - it never looks at `gState` - so the PHY is
+readable after the init failed. One catch: the SWR spin at
+`stm32h7xx_hal_eth.c:361` bails *before* `HAL_ETH_SetMDIOClockRange()` at
+`:379`, so MACMDIOAR.CR is still at its reset value of HCLK/42, about 5.7 MHz
+at this HCLK, well past what the PHY accepts. The probe sets the divider itself
+or the read would fail for a reason that has nothing to do with the PHY.
+
+**The failure is between the PHY and the MAC, and nowhere else.** The PHY is
+powered, out of reset, internally clocked, identified over MDIO, and the jack's
+own LEDs show link solid with activity blinking - all of which need the PHY's
+25 MHz. The MAC's DMA reset cannot complete without the RMII receive clock. So
+the question is no longer whether the PHY works; it is whether its 50 MHz
+REF_CLK reaches PA1.
+
+### The =n path was a no-op, and it faked a completed experiment
+
+`LL_SYSCFG_OpenAnalogSwitch()` is a `SET_BIT`. `pmc_syscfg.c` only ever *set*
+switch bits, so `CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH=n` did not close PA1's
+switch - it merely declined to open it, leaving whatever the bit already held.
+The running board reports `sw` 15: all four switches open, including PA1's, in
+a build whose generated `.config` says `# CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH is
+not set`. The bit also survives the soft reset that OTA uses, so an earlier
+`=y` run leaves it open for every image after it.
+
+So the PA1 experiment recorded as "tested both ways" was never performed. Both
+runs had the switch open, and so did the first attempt to repeat it today.
+
+Fixed by making the shield drive **both** directions explicitly and verify
+both: the open set must read 1 and the closed set must read 0, with a failure
+in either direction returning -EIO. **Not opening a switch is not closing it**,
+and this is the second time on this board that a configuration knob which only
+ever adds has quietly produced a test that did not run - the first being
+`-DCONFIG_FOO=n` persisting in the CMake cache, below.
+
+The lesson is the probe's, not the fix's: the knob, the generated `.config` and
+the hardware all have to be read separately. Two of the three agreed and were
+wrong.
 
 ### What is left, and it is hardware
 
