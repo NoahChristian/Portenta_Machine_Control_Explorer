@@ -97,12 +97,25 @@ static int pmc_syscfg_open_analog_switches(void)
 	 */
 	uint32_t open = LL_SYSCFG_ANALOG_SWITCH_PC2 |
 			LL_SYSCFG_ANALOG_SWITCH_PC3;
+	uint32_t shut = 0;
 
+	/*
+	 * BOTH DIRECTIONS, EXPLICITLY. Not opening a switch is not the same as
+	 * closing it: LL_SYSCFG_OpenAnalogSwitch is a SET_BIT, so the =n path
+	 * used to leave PA1SO at whatever it already held - and it holds 1
+	 * across a soft reset. The =n build was a no-op, which made the PA1
+	 * experiment look performed when it had never run. docs/MEASURED.md.
+	 */
 	if (IS_ENABLED(CONFIG_PMC_OPEN_PA1_ANALOG_SWITCH)) {
 		open |= LL_SYSCFG_ANALOG_SWITCH_PA1;
+	} else {
+		shut |= LL_SYSCFG_ANALOG_SWITCH_PA1;
 	}
 
 	LL_SYSCFG_OpenAnalogSwitch(open);
+	if (shut != 0U) {
+		LL_SYSCFG_CloseAnalogSwitch(shut);
+	}
 
 	/*
 	 * Read back and complain, rather than trusting the write.
@@ -114,6 +127,13 @@ static int pmc_syscfg_open_analog_switches(void)
 	 */
 	const uint32_t want = open;
 	const uint32_t got = SYSCFG->PMCR & want;
+
+	/* A switch asked to close and still open is the same class of fault. */
+	if ((SYSCFG->PMCR & shut) != 0U) {
+		LOG_ERR("SYSCFG analog switch did not close: PMCR 0x%08x, wanted 0x%08x clear",
+			(unsigned int)SYSCFG->PMCR, (unsigned int)shut);
+		return -EIO;
+	}
 
 	if (got != want) {
 		LOG_ERR("SYSCFG analog switches did not open: PMCR masked 0x%08x, wanted 0x%08x",
