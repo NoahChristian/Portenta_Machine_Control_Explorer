@@ -1102,6 +1102,69 @@ The lesson is the probe's, not the fix's: the knob, the generated `.config` and
 the hardware all have to be read separately. Two of the three agreed and were
 wrong.
 
+### The PHY, interrogated over MDIO (2026-11-17)
+
+With `CONFIG_MDIO_SHELL=y` and the MAC still dead, read over USB at PHY
+address 0. The divider survives from the probe, so the shell's reads work.
+
+| reg | value | meaning |
+|---|---|---|
+| 1 BMSR | `0x780d` | **link up** (bit 2), autoneg **not complete** (bit 5 clear), 10/100 capable |
+| 4 ANAR | `0x01a1` | we advertise 100 full, 100 half, 10 half |
+| 5 ANLPAR | `0x0001` | the partner advertises **no ability at all** |
+| 31 | `0xffff` | not a register on this part |
+
+So the wire is linked with nothing negotiated. The panel says exactly that -
+"PHY link up, speed unnegotiated" - because `anar & anlpar` yields no speed bit
+and rendering the 0 as "0 half" would be a fabricated reading.
+
+**The green lamp on the drawn RJ45 is this link bit, and the amber is a CSS
+animation.** The board has no per-packet activity signal to offer, and the real
+amber blinks on wire traffic the PHY sees that never reaches this controller,
+so the blink is decoration for "live wire here" rather than a measurement. It
+is suppressed under `prefers-reduced-motion`.
+
+`BMSR` bit 2 is **latching low**: it reads 0 if the link dropped since the last
+read, even once the link is back. `net.c` reads it twice and uses the second
+value. A single read makes a recovered link look down.
+
+### DO state, and the LED that proves it
+
+The panel publishes DO state off the GPIO registers, and the per-channel LED
+mechanism that already drove DIN and PDIO now drives DO too. Verified by
+driving the line directly through the GPIO shell rather than the write path:
+
+```
+gpio set gpio@58021000 2 1   ->  "DO3 [PE_2] do on DIGITAL OUTPUTS - ON",  1 LED lit
+gpio set gpio@58021000 2 0   ->  "... - OFF",                              0 lit
+```
+
+Exactly one lamp, the right one. **No caveat is attached to a lit lamp.** A lit
+channel LED means this controller is driving that output; whether 24 V reaches
+the terminal is a property of the wiring, not a claim the firmware is making,
+and the old hedging text said otherwise.
+
+### The OTA stall is STILL unexplained, and the buffer pools were not it
+
+`net mem` during a failed upload showed RX DATA 0 available with MaxUsed pinned
+at its ceiling of 32, which looked conclusive. Fragments are 128 bytes against
+a 1544 MTU, so one packet costs 13 of them and 32 held two packets.
+
+Raised to 192/128. It is still the right sizing - measured TX demand alone
+peaks at **58**, so the old 32 was genuinely too small and its "30 of 32" was
+the ceiling rather than the demand. **But it did not fix the upload.** On the
+enlarged pools a 1 MB upload failed with RX DATA peaking at 17 of 192 and TX at
+58 of 128, nowhere near exhaustion, at RSSI -45 dBm and 144 Mbps.
+
+So the exhaustion was a **symptom** of the stall, not its cause: when the
+transfer wedges, buffers back up behind it. Uploads now succeed roughly every
+other attempt and a retry clears it, which fits frame loss rather than
+starvation.
+
+Recorded as unresolved for the second time. What is new is that the panel and
+`net mem` now instrument it, and that one wrong explanation has been eliminated
+by measurement rather than left standing because it was plausible.
+
 ### What is left, and it is hardware
 
 Three questions this bench cannot answer from software, and the next step is a
