@@ -63,6 +63,33 @@ static const struct device *const pdio_dev = DEVICE_DT_GET(PDIO_NODE);
 
 static bool s_ready;
 
+/*
+ * WHAT PDIO WAS COMMANDED TO - see io_write.h. -1 until this image has
+ * written the channel, because PDIO pins are left configured as inputs until
+ * first use and there is no commanded level before that. -1 is not "off".
+ */
+static int8_t pdio_cmd[PMC_PDIO_COUNT] = {
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+};
+
+/* The pulse mode: see pmc_io_pulse(). */
+#define PULSE_STACK 1024
+static K_THREAD_STACK_DEFINE(pulse_stack, PULSE_STACK);
+static struct k_thread pulse_tid;
+static struct k_sem    pulse_wake;
+static atomic_t        pulse_armed;
+static int8_t          pulse_saved[8];
+
+static void pulse_loop(void *a, void *b, void *c);
+
+int pmc_pdio_commanded(int8_t *out, size_t n)
+{
+	for (size_t i = 0; i < n; i++) {
+		out[i] = (i < ARRAY_SIZE(pdio_cmd)) ? pdio_cmd[i] : -1;
+	}
+	return 0;
+}
+
 const char *pmc_write_result_str(enum pmc_write_result r)
 {
 	switch (r) {
@@ -107,6 +134,13 @@ int pmc_io_write_init(void)
 	}
 
 	s_ready = true;
+
+	k_sem_init(&pulse_wake, 0, 1);
+	k_thread_create(&pulse_tid, pulse_stack,
+			K_THREAD_STACK_SIZEOF(pulse_stack), pulse_loop,
+			NULL, NULL, NULL, 7, 0, K_NO_WAIT);
+	k_thread_name_set(&pulse_tid, "pmc_pulse");
+
 	LOG_INF("outputs ready: 8 DO (unverifiable), %u PDIO (read-back)",
 		PMC_PDIO_COUNT);
 	return 0;
@@ -201,6 +235,11 @@ static enum pmc_write_result write_pdio(int n, bool on, char *detail, size_t cap
 	}
 	pulse_latch(pdio_latch, PDIO_LATCH_PIN);
 
+	/* Recorded HERE, between the write succeeding and the read-back being
+	   consulted, because this is what the channel was commanded to - and
+	   the lamp shows that whatever the terminal then reads. */
+	pdio_cmd[n] = on ? 1 : 0;
+
 	/* Let the high-side switch and the load settle before believing a
 	 * read. 2 ms is arbitrary and generous; nothing documents it. */
 	k_msleep(2);
@@ -253,29 +292,114 @@ enum pmc_write_result pmc_io_write(const char *chan, bool on,
 		return write_pdio(atoi(chan + 4), on, detail, cap);
 	}
 	if (strncmp(chan, "DO", 2) == 0) {
-		return write_do(atoi(chan + 2), on, detail, cap);
+		const int n = atoi(chan + 2);
+
+		/* AN EXPLICIT SET WINS OVER A PULSE, and it also becomes the
+		   level a later pulse would return to. Leaving the blinker
+		   armed here would have it overwrite this command within the
+		   second, which is the kind of fight a panel must not stage
+		   between two of its own controls. */
+		if (n >= 0 && n < (int)ARRAY_SIZE(do_pins)) {
+			atomic_and(&pulse_armed, ~BIT(n));
+			pulse_saved[n] = on ? 1 : 0;
+		}
+		return write_do(n, on, detail, cap);
 	}
 
 	(void)snprintk(detail, cap, "%s is not a writable channel", chan);
 	return PMC_W_REFUSED;
 }
 
-enum pmc_write_result pmc_io_pulse(const char *chan, uint32_t ms,
+uint32_t pmc_io_pulse_mask(void)
+{
+	return (uint32_t)atomic_get(&pulse_armed);
+}
+
+/*
+ * One thread for every pulsing channel, rather than one per channel or a
+ * work item on the system workqueue. The system queue is shared with the net
+ * stack, and a blinker that sleeps 800 ms at a time has no business there.
+ */
+static void pulse_drive(bool on)
+{
+	char junk[72];
+	const atomic_val_t m = atomic_get(&pulse_armed);
+
+	for (int n = 0; n < (int)ARRAY_SIZE(do_pins); n++) {
+		if ((m & BIT(n)) == 0) {
+			continue;
+		}
+		(void)write_do(n, on, junk, sizeof(junk));
+	}
+}
+
+static void pulse_loop(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+
+	for (;;) {
+		/* Nothing armed costs nothing: the thread blocks outright
+		   rather than waking to find an empty mask. */
+		if (atomic_get(&pulse_armed) == 0) {
+			k_sem_take(&pulse_wake, K_FOREVER);
+			continue;
+		}
+		pulse_drive(true);
+		k_msleep(PMC_PULSE_HIGH_MS);
+		pulse_drive(false);
+		k_msleep(PMC_PULSE_PERIOD_MS - PMC_PULSE_HIGH_MS);
+	}
+}
+
+enum pmc_write_result pmc_io_pulse(const char *chan, bool arm,
 				   char *detail, size_t cap)
 {
-	enum pmc_write_result r = pmc_io_write(chan, true, detail, cap);
+	int n;
 
-	if (r == PMC_W_REFUSED || r == PMC_W_ERROR) {
-		return r;
+	if (!s_ready) {
+		(void)snprintk(detail, cap, "outputs not initialized");
+		return PMC_W_ERROR;
+	}
+	if (chan == NULL || strncmp(chan, "DO", 2) != 0) {
+		(void)snprintk(detail, cap,
+			       "pulse drives a DO channel; %s is not one",
+			       chan ? chan : "(none)");
+		return PMC_W_REFUSED;
+	}
+	n = atoi(chan + 2);
+	if (n < 0 || n >= (int)ARRAY_SIZE(do_pins)) {
+		(void)snprintk(detail, cap, "DO%d is not a channel", n);
+		return PMC_W_REFUSED;
 	}
 
-	k_msleep(ms);
-	(void)pmc_io_write(chan, false, detail, cap);
+	if (arm) {
+		/* Capture the level to come back to ONCE, on the arming edge.
+		   Re-reading it on a later arm of an already-pulsing channel
+		   would save a blink phase as if it were the resting state. */
+		if ((atomic_get(&pulse_armed) & BIT(n)) == 0) {
+			int8_t now[ARRAY_SIZE(do_pins)];
 
-	/* The verdict that matters is the one from driving it high; the
-	 * trailing low is housekeeping. Restate it rather than let the second
-	 * call's text stand. */
-	(void)snprintk(detail, cap, "%s pulsed high for %u ms (%s)", chan,
-		       (unsigned)ms, pmc_write_result_str(r));
-	return r;
+			(void)pmc_do_read(now, ARRAY_SIZE(now));
+			pulse_saved[n] = (now[n] == 1) ? 1 : 0;
+			atomic_or(&pulse_armed, BIT(n));
+			k_sem_give(&pulse_wake);
+		}
+		(void)snprintk(detail, cap,
+			       "DO%d pulsing %u ms every %u ms; stopping it "
+			       "returns the channel to %s", n,
+			       (unsigned)PMC_PULSE_HIGH_MS,
+			       (unsigned)PMC_PULSE_PERIOD_MS,
+			       pulse_saved[n] == 1 ? "ON" : "OFF");
+		return PMC_W_COMMANDED;
+	}
+
+	/*
+	 * Clear the bit FIRST. pulse_drive() re-reads the mask on every phase,
+	 * so once the bit is gone the blinker cannot touch this channel again
+	 * and the restore below is the last write to it.
+	 */
+	atomic_and(&pulse_armed, ~BIT(n));
+	return write_do(n, pulse_saved[n] == 1, detail, cap);
 }

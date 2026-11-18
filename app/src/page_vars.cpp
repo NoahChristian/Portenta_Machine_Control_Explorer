@@ -165,7 +165,7 @@ static char rTBody[20];
 static bool rTBox;
 static char rTSilkCls[12];
 static bool rTLed;
-static char rTLedCls[20];
+static char rTLedCls[28];   /* "chled c-pdio on" plus room */
 
 static void put(char *dst, size_t cap, const char *src)
 {
@@ -742,16 +742,33 @@ static bool termSelect(uint16_t i)
 	 * energizes the wrong 24 V output. CSS draws the unverified ones with a
 	 * dashed screw block, and tools/terminals.csv says which are which.
 	 */
+	/*
+	 * THE LAMP IS NOT THE READING, for an output. `level` above answers
+	 * "what does it read"; `lamp` answers "what was it told to do", and
+	 * for DO and PDIO that is the one the lamp must show - see
+	 * pmc_snapshot_lamp(). They are deliberately both computed: the row
+	 * text keeps reporting the read-back, so the two can be seen to
+	 * disagree.
+	 */
+	const int lamp = pmc_snapshot_lamp(&gSnap, t.chan);
+
 	(void)snprintf(rTClass, sizeof(rTClass), "term k-%s%s%s%s%s", t.kind,
 		       is_chan ? "" : " nochan",
 		       (is_chan && !measured) ? " unverified" : "",
-		       level == 1 ? " live-hi" : (level == 0 ? " live-lo" : ""),
+		       lamp == 1 ? " live-hi" : (lamp == 0 ? " live-lo" : ""),
 		       (is_chan && strcmp(t.chan, gPick) == 0) ? " sel" : "");
 
-	/* A channel LED that nothing drives stays dark. There is no "probably
-	 * off": see snapshot.h on why an absent reader and a reading of 0 are
-	 * not the same thing. */
-	PUT(rTLedCls, level == 1 ? "chled on" : "chled");
+	/*
+	 * The family rides in the class so the lamp can carry that family's
+	 * color: green for the digital inputs, amber for the programmable
+	 * I/O, red for the digital outputs, as the board itself does.
+	 *
+	 * A lamp with no answer stays dark and there is no "probably off":
+	 * see snapshot.h on why an absent reader and a reading of 0 are not
+	 * the same thing.
+	 */
+	(void)snprintf(rTLedCls, sizeof(rTLedCls), "chled c-%s%s", t.kind,
+		       lamp == 1 ? " on" : "");
 
 	(void)snprintf(rTHref, sizeof(rTHref), "?ch=%s",
 		       is_chan ? t.chan : "");

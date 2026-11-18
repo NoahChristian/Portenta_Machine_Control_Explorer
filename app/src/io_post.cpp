@@ -167,22 +167,20 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 	}
 
 	if (strcmp(verb, "pulse") == 0) {
+		/*
+		 * `v`, not `ms`. The caller no longer names a duration: pulse
+		 * is a mode with a fixed period in io_write.h, so there is no
+		 * number here to bound and no way to ask for a 5-second
+		 * energized output by typing one.
+		 */
 		if (field(s_body, "chan", chan, sizeof(chan)) == nullptr ||
-		    field(s_body, "ms", val, sizeof(val)) == nullptr) {
-			n = refuse("refused: pulse needs chan and ms\n");
-			goto done;
-		}
-		const uint32_t ms = (uint32_t)atoi(val);
-
-		/* Bounded here rather than trusted. A pulse is a 24 V output
-		 * held on for as long as the number says. */
-		if (ms == 0U || ms > 5000U) {
-			n = refuse("refused: ms must be 1..5000, got '%s'\n",
-				   val);
+		    field(s_body, "v", val, sizeof(val)) == nullptr) {
+			n = refuse("refused: pulse needs chan and v (1 or 0)\n");
 			goto done;
 		}
 		const enum pmc_write_result r =
-			pmc_io_pulse(chan, ms, detail, sizeof(detail));
+			pmc_io_pulse(chan, val[0] == '1', detail,
+				     sizeof(detail));
 		n = refuse("%s: %s\n", pmc_write_result_str(r), detail);
 		goto done;
 	}

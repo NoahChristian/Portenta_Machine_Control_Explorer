@@ -75,9 +75,47 @@ int pmc_io_write_init(void);
 enum pmc_write_result pmc_io_write(const char *chan, bool on,
 				   char *detail, size_t cap);
 
-/* Pulse one channel: on for `ms`, then off. Same verdict rules. */
-enum pmc_write_result pmc_io_pulse(const char *chan, uint32_t ms,
+/*
+ * PULSE IS A MODE, NOT ONE SHOT, AND IT PUTS THE CHANNEL BACK.
+ *
+ * It used to drive high, k_msleep(ms) on the HTTP server thread, then drive
+ * LOW - which blocked the one thread every page shares, and left the channel
+ * off whatever it had been before. Turning a pulse off erased the state the
+ * channel had been commanded into, with nothing saying it had.
+ *
+ * Now `arm` starts it blinking on its own thread - PMC_PULSE_HIGH_MS high
+ * every PMC_PULSE_PERIOD_MS - and disarming RESTORES the level the channel
+ * held when it was armed. An explicit pmc_io_write() on a pulsing channel
+ * disarms it and wins, because a direct command should not be fighting a
+ * blinker.
+ *
+ * DO only. PDIO's write costs an I2C transaction and a settle, which is not
+ * something to repeat forever on a timer for a lamp effect.
+ */
+#define PMC_PULSE_HIGH_MS    200U
+#define PMC_PULSE_PERIOD_MS 1000U
+
+enum pmc_write_result pmc_io_pulse(const char *chan, bool arm,
 				   char *detail, size_t cap);
+
+/* Bit n set means DO n is currently pulsing. The panel animates from this
+   rather than sampling a 1 Hz blink with a 2 s poll, which would alias. */
+uint32_t pmc_io_pulse_mask(void);
+
+/*
+ * WHAT PDIO WAS COMMANDED TO, which is NOT what pmc_io_read() reports.
+ *
+ * The read map is a different set of bits in a different port range, and it
+ * reads the terminal - so with the connector's own 24V IN unfed, or with a
+ * mis-transcribed map, a channel commanded high reads low. Both facts are
+ * worth showing, and the lamp shows this one: a lamp that follows the
+ * read-back tells you about the wiring when you asked about the command.
+ *
+ * out[i] is 1, 0, or -1 for a channel this image has never written - PDIO
+ * pins are left as inputs until first use, so before that there is no
+ * commanded level, and -1 is not "off".
+ */
+int pmc_pdio_commanded(int8_t *out, size_t n);
 
 /*
  * The eight DO logic lines, read from the GPIO registers - not from a shadow

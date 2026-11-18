@@ -168,6 +168,8 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	pmc_io_read(&s->io);
 	pmc_rail_read(&s->rail);
 	(void)pmc_do_read(s->do_out, ARRAY_SIZE(s->do_out));
+	(void)pmc_pdio_commanded(s->pdio_cmd, ARRAY_SIZE(s->pdio_cmd));
+	s->pulse_mask = pmc_io_pulse_mask();
 	pmc_rs485_activity(&s->rs485_tx_age, &s->rs485_rx_age);
 	pmc_net_info_read(&s->net);
 	pmc_net_thru_read(&s->thru);
@@ -429,6 +431,55 @@ int pmc_snapshot_reading(const struct pmc_snapshot *s, const char *chan,
 	return -1;
 }
 
+/*
+ * THE LAMP LEVEL, WHICH IS NOT THE READING FOR AN OUTPUT.
+ *
+ * pmc_snapshot_reading() answers "what does this channel read", and for PDIO
+ * that is the terminal through the read map. A lamp over an OUTPUT must
+ * answer a different question - "what did you tell it to do" - or commanding
+ * a channel with its connector's 24V IN unfed, or with a mis-transcribed
+ * map, lights nothing and looks like a dead control.
+ *
+ * So: DIN is an input and its lamp is its reading; DO and PDIO are outputs
+ * and their lamps are their commanded level. -1 where there is no answer,
+ * which the panel renders as "leave it alone" rather than as off.
+ */
+int pmc_snapshot_lamp(const struct pmc_snapshot *s, const char *chan)
+{
+	if (chan == NULL || chan[0] == '\0') {
+		return -1;
+	}
+
+	if (strncmp(chan, "PDIO", 4) == 0) {
+		const int n = atoi(chan + 4);
+
+		if (n >= 0 && n < (int)ARRAY_SIZE(s->pdio_cmd)) {
+			return s->pdio_cmd[n];
+		}
+		return -1;
+	}
+
+	if (strncmp(chan, "DO", 2) == 0 && chan[2] >= '0' && chan[2] <= '9') {
+		const int n = atoi(chan + 2);
+
+		if (n >= 0 && n < (int)ARRAY_SIZE(s->do_out)) {
+			return s->do_out[n];
+		}
+		return -1;
+	}
+
+	if (strncmp(chan, "DIN", 3) == 0) {
+		const int n = atoi(chan + 3);
+
+		if (s->io.din_ok && n >= 0 && n < PMC_DIN_COUNT) {
+			return s->io.din[n];
+		}
+		return -1;
+	}
+
+	return -1;
+}
+
 size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 {
 	size_t n = 0;
@@ -498,7 +549,18 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "",
 			      (int)s->do_out[i]);
 	}
-	n += snprintk(out + n, cap - n, "]},");
+
+	/* The commanded PDIO level, beside the read-back and never instead of
+	   it. The lamp follows this one; the table and the tooltip keep
+	   reporting what the terminal actually reads, which is the only way
+	   to see the two disagree. */
+	n += snprintk(out + n, cap - n, "],\"pdioCmd\":[");
+	for (size_t i = 0; i < ARRAY_SIZE(s->pdio_cmd); i++) {
+		n += snprintk(out + n, cap - n, "%s%d", i ? "," : "",
+			      (int)s->pdio_cmd[i]);
+	}
+	n += snprintk(out + n, cap - n, "],\"doPulse\":%u},",
+		      (unsigned)s->pulse_mask);
 
 	/*
 	 * THE RADIO'S OWN DROP COUNTER, and the reason it is here.

@@ -304,3 +304,52 @@ silent reduction in capacity.
 
 The HTTP client array is deliberately left alone: it is 6.3 KB and it is
 upstream, which makes it the worst value of the four, not the wrong idea.
+
+## What a lamp answers, and what a reading answers
+
+The board graphic's channel lamps and the channel readings answer two
+different questions, and conflating them made a working control look dead.
+
+A **reading** is what the channel reads: `pmc_snapshot_reading()`. For PDIO
+that is the terminal, through the read map, which is a different set of
+expander bits in a different port range from the write map.
+
+A **lamp** is what the channel was told to do: `pmc_snapshot_lamp()`. For an
+input those are the same thing. For an output they are not, and the lamp must
+show the command - because a PDIO channel commanded high reads back low
+whenever its connector's own `24V IN` is unfed, or whenever the map is wrong,
+and a lamp that followed the read-back stayed dark and looked like a control
+that did nothing.
+
+Both are published. `io.pdio` is the read-back and `io.pdioCmd` the command,
+side by side in the same document, so the two can be seen to disagree - which
+is the thing actually worth seeing. The row text and the tooltip keep
+reporting the read-back; only the lamp changed.
+
+**The same rule names the verdicts.** A PDIO write that reads back low is
+`unexplained`, not `no supply`. Nothing on this board senses either output
+connector's `24V IN`: the encoder pull-ups behind `rail24Inferred` sense the
+BOARD 24 V at the PWR SUPPLY block, a different rail, so `present: true` says
+nothing about J8. The firmware cannot separate a missing wire from a
+mis-transcribed map, so it names both and asserts neither.
+
+## Pulse is a mode, and it puts the channel back
+
+It was one shot: drive high, `k_msleep(ms)` **on the HTTP server thread**,
+drive low. Two faults. It blocked the single thread every page and asset
+shares for the duration, and it ended with the channel LOW regardless of what
+it had been - so the DO button and the pulse button disagreed about the
+channel from then on, with nothing saying why.
+
+Now it is armed and disarmed, it runs on its own 1 KB thread, and disarming
+restores the level the channel held at the arming edge. An explicit write
+disarms it and wins; a blinker that fights a direct command is a panel
+staging an argument between two of its own controls.
+
+The period is fixed in `io_write.h` rather than passed in, which also removes
+the bounds check that used to guard against a caller asking for a five-second
+energized output by typing a number.
+
+The panel **animates** a pulsing lamp instead of sampling it: the board
+reports only *that* the channel is pulsing (`io.doPulse`), because a 1 Hz
+blink read by a 2 s poll aliases into something arbitrary.

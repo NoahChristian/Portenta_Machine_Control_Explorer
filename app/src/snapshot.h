@@ -211,6 +211,13 @@ struct pmc_snapshot {
 	/* The DO logic lines, off the GPIO registers; -1 = port not ready. */
 	int8_t                 do_out[8];
 
+	/* What PDIO was COMMANDED to, which is not what io.pdio reads back;
+	   -1 = never written by this image. See io_write.h. */
+	int8_t                 pdio_cmd[PMC_PDIO_COUNT];
+
+	/* Bit n: DO n is pulsing. The panel animates rather than sampling. */
+	uint32_t               pulse_mask;
+
 	/* ms since the last RS485 byte each way; -1 = never. Drives the lamps. */
 	int32_t                rs485_tx_age;
 	int32_t                rs485_rx_age;
@@ -242,6 +249,14 @@ void pmc_snapshot_take(struct pmc_snapshot *s);
  * reading 0 V must not render identically, because the second is a
  * measurement and the first is an absence.
  */
+/*
+ * The level the board graphic's lamp should show: an INPUT's reading, or an
+ * OUTPUT's commanded level. Not the same question as pmc_snapshot_reading(),
+ * and for PDIO not the same answer - see the comment on the definition.
+ * Returns 1, 0, or -1 for "no answer, leave the lamp alone".
+ */
+int pmc_snapshot_lamp(const struct pmc_snapshot *s, const char *chan);
+
 int pmc_snapshot_reading(const struct pmc_snapshot *s, const char *chan,
 			 char *out, size_t cap);
 

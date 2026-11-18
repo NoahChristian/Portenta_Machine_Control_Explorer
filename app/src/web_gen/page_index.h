@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "95ef63f0"
-#define PAGE_INDEX_BYTES 76077
+#define PAGE_INDEX_BUILD "8c96d087"
+#define PAGE_INDEX_BYTES 78671
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -173,16 +173,40 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   .brand2 { fill:#8d959e; font:10px ui-monospace,monospace;
             text-anchor:middle; letter-spacing:.22em; }
 
-  /* The per-channel PCB LED, lit from the channel's own state: DIN and PDIO
-     off the expanders, DO out of the GPIO registers. A family with no reader
-     still renders .off - see snapshot.h on why that is not "probably off". */
-  /* An unlit LED is still a visible component on the board, so the dark
-     state is a dim red with a rim rather than something that vanishes into
-     the substrate - at 3.4 units across, near-black reads as absent and the
-     channel looks like it has no indicator at all. */
+  /* THE PER-CHANNEL PCB LED, IN ITS FAMILY'S COLOR, as the board has them:
+     green over the digital inputs, amber over the programmable I/O, red over
+     the digital outputs. The family arrives in the class from page_vars.cpp.
+
+     WHAT LIGHTS IT IS THE COMMAND, NOT THE READ-BACK, for both output
+     families - see pmc_snapshot_lamp(). A PDIO lamp following the read map
+     stayed dark when the channel was commanded high with its connector's own
+     24V IN unfed, which looks exactly like a dead control.
+
+     An unlit LED is still a visible component on the board, so each dark
+     state is a dim version of its own color rather than something that
+     vanishes into the substrate - at 3.4 units across, near-black reads as
+     absent and the channel looks like it has no indicator at all. */
   .chled { fill:#7a2f28; stroke:#2a0f0c; stroke-width:.6; }
-  .chled.on  { fill:#ff3b30; stroke:#ff6b61; stroke-width:.6;
-               filter:drop-shadow(0 0 4px #ff3b30); }
+  .chled.c-din  { fill:#123a1c; }
+  .chled.c-pdio { fill:#3f3310; }
+  .chled.c-do   { fill:#3f1512; }
+  .chled.on.c-din  { fill:#38d16a; stroke:#7ff0a8;
+                     filter:drop-shadow(0 0 4px #38d16a); }
+  .chled.on.c-pdio { fill:#ffb020; stroke:#ffc860;
+                     filter:drop-shadow(0 0 4px #ffb020); }
+  .chled.on.c-do   { fill:#ff3b30; stroke:#ff6b61;
+                     filter:drop-shadow(0 0 4px #ff3b30); }
+
+  /* A PULSING CHANNEL IS ANIMATED HERE, not sampled. The board blinks it at
+     1 Hz and the panel polls every 2 s, so reading the level would alias
+     into something arbitrary. The board reports only THAT the channel is
+     pulsing; this draws the blink, in step with the real one but not
+     claiming to be synchronized with it. */
+  @keyframes chpulse {
+    0%, 20%  { opacity:1; }
+    21%,100% { opacity:.25; }
+  }
+  .chled.pulsing { animation:chpulse 1s steps(1,end) infinite; }
 
   .term .screw { fill:var(--live-unk); }
   .term.nochan .screw { fill:var(--nochan); }
@@ -569,7 +593,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <span><i class="sw" style="background:#7d848c"></i>logic low</span>
   <span><i class="sw" style="background:#e3c75a"></i>not read yet</span>
   <span><i class="sw" style="background:#8c7118"></i>GND / supply</span>
-  <span><i class="sw" style="background:#ff3b30"></i>channel LED lit &mdash; output on</span>
+  
+  <span><i class="sw" style="background:#38d16a"></i><i class="sw"
+    style="background:#ffb020"></i><i class="sw"
+    style="background:#ff3b30"></i>channel LED &mdash; input reads high,
+    output commanded on</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
   <span><!--#v canNote--></span>
@@ -598,7 +626,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   </div>
   <div class="row"><label>DO</label><span id="dobtns"></span></div>
   <div class="row"><label>pulse</label><span id="pulsebtns"></span>
-    <span class="dim" style="font-size:.75rem">200 ms</span></div>
+    <span class="dim" style="font-size:.75rem">200 ms every second while on;
+    stopping it returns the channel to the level it had</span></div>
   <div class="row"><label>PDIO</label><span id="pdiobtns"></span>
     <span class="dim" style="font-size:.75rem">reads back - says
     <em>verified</em>, not <em>commanded</em></span></div>
@@ -1025,11 +1054,20 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       dob.appendChild(btn);
       if (window.pmcLink) { window.pmcLink(btn, 'DO' + n); }
 
+      /* PULSE IS A TOGGLE NOW, not a one-shot. It used to fire a single
+         200 ms pulse and leave the channel LOW, discarding whatever it had
+         been set to - so the DO button above it and this one disagreed
+         about the channel from then on. The board restores the level on
+         disarm; this button only has to stop asking. */
       var p = document.createElement('button');
       p.type = 'button';
       p.textContent = '0' + n;
       p.addEventListener('click', function () {
-        post({ do: 'pulse', chan: 'DO' + n, ms: 200 }, 'DO' + n + ' pulse');
+        var arm = p.getAttribute('data-on') !== '1';
+        p.setAttribute('data-on', arm ? '1' : '0');
+        p.style.borderColor = arm ? '#ffb020' : '';
+        post({ do: 'pulse', chan: 'DO' + n, v: arm ? 1 : 0 },
+             'DO' + n + (arm ? ' pulse on' : ' pulse off'));
       });
       pub.appendChild(p);
       if (window.pmcLink) { window.pmcLink(p, 'DO' + n); }
@@ -1696,14 +1734,29 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                       term: links[i].querySelector('.term') });
       }
     }
+    var pulseMask = j.io.doPulse || 0;
     for (var k = 0; k < ledMap.length; k++) {
       var e = ledMap[k];
       var m = /^(DIN|PDIO|DO)(\d+)$/.exec(e.ch);
       if (!m) { continue; }
+      var n = +m[2];
+
+      /* THE SOURCE PER FAMILY, and PDIO's is deliberately not `pdio`.
+         An input's lamp is its reading; an output's lamp is what it was
+         commanded to. j.io.pdio is still polled and still shown in the
+         table - this is the one place the two part company. */
       var arr = m[1] === 'DIN' ? j.io.din
-              : m[1] === 'PDIO' ? j.io.pdio : j.io.doOut;
+              : m[1] === 'PDIO' ? j.io.pdioCmd : j.io.doOut;
       if (!arr) { continue; }
-      var v = arr[+m[2]];
+
+      /* A pulsing channel is lit and animated, never sampled: its level is
+         changing four times faster than this poll. */
+      var pulsing = m[1] === 'DO' && (pulseMask & (1 << n)) !== 0;
+      e.led.classList.toggle('pulsing', pulsing);
+      if (pulsing) { e.led.classList.add('on'); continue; }
+
+      var v = arr[n];
+      /* -1 is not off. No answer leaves the lamp as the server drew it. */
       if (v !== 0 && v !== 1) { continue; }
       e.led.classList.toggle('on', v === 1);
       if (e.term) {
