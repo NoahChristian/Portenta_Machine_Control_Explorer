@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "f5e2d1d9"
-#define PAGE_INDEX_BYTES 88009
+#define PAGE_INDEX_BUILD "582d0ce6"
+#define PAGE_INDEX_BYTES 92067
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -162,16 +162,20 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     0%,40% { fill:#38d16a; filter:drop-shadow(0 0 3px #38d16a); }
     46%,100% { fill:#123a1c; filter:none; }
   }
-  /* The PDIO read-back row, below the connector. Amber like the PDIO channel
-     lamps, because it is the same family of channel - the ROW it is in is
-     what says which fact it reports, not its color. Unlit is amber darkened,
-     the same rule as every other lamp here. `unknown` is for a port that did
-     not answer: hollow, so "no reading" cannot be mistaken for "low". */
-  .rbled { fill:#3f3310; }
-  .rbled.on { fill:#ffb020; filter:drop-shadow(0 0 3px #ffb020); }
-  .rbled.unknown { fill:none; stroke:#6b5a2a; stroke-width:1.2; }
-  .rblbl { fill:#8d959e; font:8px ui-monospace,monospace;
-           letter-spacing:.08em; }
+  /* The PDIO line read-back, one box per channel under the PDIO controls.
+     Amber because PDIO is the amber family throughout this panel; the ROW it
+     sits in is what says which fact it reports, not its color. Empty is the
+     same amber darkened rather than gray, so an unlit box still reads as the
+     right indicator. `unknown` is a port that did not answer: outlined and
+     hollow, so "no reading" can never be mistaken for "reads low". */
+  #pdiorb { display:inline-flex; gap:3px; flex-wrap:wrap; }
+  #pdiorb i { width:1.45rem; height:1.05rem; border-radius:2px;
+              background:#3f3310; border:1px solid #6b5a2a;
+              font:10px/1.05rem ui-monospace,monospace; font-style:normal;
+              text-align:center; color:#6b5a2a; }
+  #pdiorb i.on { background:#ffb020; border-color:#ffc860; color:#3a2a00; }
+  #pdiorb i.unknown { background:transparent; border-style:dashed;
+                      color:#8d959e; }
   @keyframes buslampr {
     0%,40% { fill:#ff3b30; filter:drop-shadow(0 0 3px #ff3b30); }
     46%,100% { fill:#3f1512; filter:none; }
@@ -266,12 +270,21 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
          font:19px/1.15 ui-monospace,SFMono-Regular,Menlo,monospace; }
   .ccw-row { display:flex; gap:2px; justify-content:flex-end;
              align-items:center; }
+  /* BLACK CARD, WHITE DIGIT, IN BOTH THEMES. These were `background:Canvas;
+     color:CanvasText`, which follows the system theme - so in light mode the
+     cards went white with black text and stopped reading as a flip clock at
+     all. A flip card is a black card; that is the whole visual idea, and it
+     is not a thing that should inherit. Fixed values, not variables, so no
+     future theme can take it back. */
   .ccw-d { display:inline-block; min-width:1.05em; padding:3px 5px;
-           border-radius:3px; background:Canvas; color:CanvasText;
-           border:1px solid #8886; position:relative; line-height:1.15;
+           border-radius:3px; background:#14171a; color:#f4f6f8;
+           border:1px solid #000; position:relative; line-height:1.15;
            font-size:19px; }
+  /* The seam, which is what makes a box read as a card rather than as a
+     bordered letter. Light over the black card in both themes now, where it
+     used to be a translucent gray that vanished on a white one. */
   .ccw-d:after { content:""; position:absolute; left:0; right:0; top:50%;
-                 height:1px; background:#8886; }
+                 height:1px; background:#ffffff26; }
   .ccw-c { color:var(--dim); font-size:16px; padding:0 1px; }
   /* Bigger than the digits' caption would normally be, because this line
      is the one that says whether the time above it means anything. A wrap
@@ -319,6 +332,9 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   #ctlsay { font-size:.8rem; color:var(--dim); margin-top:.6rem;
             min-height:1.2em; white-space:pre-wrap; }
   #ctlsay .sayln { padding:.06rem 0; }
+  /* The stamp stays dim whatever the line's verdict, so a column of times
+     reads as a column rather than as six colored prefixes. */
+  #ctlsay .sayln .ts { color:var(--dim); margin-right:.5rem; }
   #ctlsay .sayln.bad { color:var(--bad); }
   #ctlsay .sayln.ok  { color:var(--ok); }
   /* Older lines dim rather than disappear: the newest is the one just asked
@@ -430,7 +446,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     <span data-tpl-attr="class cCls" class="ccw-d"><!--#v cCh--></span>
     <!--#/each-->
   </div>
-  <div class="ccw-l"><!--#v clkLabel--></div>
+  <div class="ccw-l" id="ccwL"><!--#v clkLabel--></div>
 </div>
 
 <h1>Portenta Machine Control Explorer</h1>
@@ -517,28 +533,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 </g>
 <!--#/each-->
 
- and four more registry variables for geometry the
-     page can already see.
 
-     NO SERVER-RENDERED CLASS. Every one starts dark and the poll fills them
-     in, so this row cannot be frozen at page load - which is the defect it
-     was added to answer.-->
-<g id="pdiorb">
-<circle class="rbled" cx="678.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="705.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="732.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="759.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="786.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="813.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="840.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="867.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="894.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="921.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="948.5" cy="613" r="3.4"/>
-<circle class="rbled" cx="975.5" cy="613" r="3.4"/>
-<text class="rblbl" x="827" y="630" text-anchor="middle">LINE READ BACK
-&#183; LIT = HIGH, COMMANDED OR NOT</text>
-</g>
 
 
 <g class="feat">
@@ -656,12 +651,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     style="background:#ffb020"></i><i class="sw"
     style="background:#ff3b30"></i>channel LED &mdash; input reads high,
     output commanded on</span>
-  
-  <span><i class="sw" style="background:#ffb020"></i>PDIO row below the
-    connector &mdash; the line read back, lit = high whether commanded or
-    driven from outside</span>
   <span>RS485 / CAN lamps: <b>red TX</b>, <b>green RX</b>, blinking while
     bytes moved in the last 3 s</span>
+  
+  <span>the PDIO line read-back is under the controls below, not on the
+    board &mdash; the board has no such row</span>
   <span>dashed&nbsp;=&nbsp;mapping not yet confirmed at the connector</span>
   <span><!--#v railNote--></span>
   <span><!--#v canNote--></span>
@@ -695,6 +689,10 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <div class="row"><label>PDIO</label><span id="pdiobtns"></span>
     <span class="dim" style="font-size:.75rem">reads back - says
     <em>verified</em>, not <em>commanded</em></span></div>
+  
+  <div class="row"><label>line read</label><span id="pdiorb"></span>
+    <span class="dim" style="font-size:.75rem">filled = this line is high,
+    commanded or not</span></div>
   <div class="row">
     <label for="aoch">AO</label>
     <select id="aoch"><option>AO0</option><option>AO1</option><option>AO3</option></select>
@@ -1086,6 +1084,28 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
    */
   var SAY_KEEP = 6;
 
+  /*
+   * WHEN, IN THE SAME ZONE AS THE CLOCK.
+   *
+   * Local time, from the browser, for the same reason the clock marker is
+   * converted there: the board keeps UTC and has no idea where the bench is.
+   * Two readouts on one page showing different zones is the error this avoids
+   * - a line stamped 22:41 beside a clock reading 14:41 reads as a stalled
+   * log rather than as two zones.
+   *
+   * It is the BROWSER's clock, not the board's, and that is honest for what
+   * these stamp: the moment a reply arrived here, or a frame was read out of
+   * the ring. Neither is the instant the board acted. Sub-second ordering is
+   * what the position in the log carries; this is for telling a reply from
+   * two minutes ago apart from one from just now.
+   */
+  function stamp() {
+    var d = new Date();
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    return two(d.getHours()) + ':' + two(d.getMinutes()) + ':' +
+           two(d.getSeconds());
+  }
+
   function sayDim() {
     var k = say.childNodes;
     for (var i = 0; i < k.length; i++) {
@@ -1096,6 +1116,13 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   function sayLine() {
     var ln = document.createElement('div');
     ln.className = 'sayln';
+    /* Stamped when the command is SENT and not when its reply lands, so the
+       time names the action rather than the round trip. */
+    var t = document.createElement('span');
+    t.className = 'ts';
+    t.textContent = stamp();
+    ln.appendChild(t);
+    ln.appendChild(document.createTextNode(''));
     say.insertBefore(ln, say.firstChild);
     while (say.childNodes.length > SAY_KEEP) {
       say.removeChild(say.lastChild);
@@ -1105,7 +1132,9 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   }
 
   function setLine(ln, text, cls) {
-    ln.textContent = text;
+    /* Only the text node after the stamp is replaced - the stamp itself is
+       the first child and survives the reply overwriting the line. */
+    ln.lastChild.nodeValue = text;
     ln.className = 'sayln' + (cls ? ' ' + cls : '');
     sayDim();
   }
@@ -1471,8 +1500,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     var wrap = document.createElement('div');
     var h = document.createElement('span');
 
+    /* Stamped, because a capture window without times cannot answer "was
+       that the reply to what I just sent, or the one before it". Local zone,
+       same as the clock marker and the drive log - see stamp(). */
     h.className = 'meta';
-    h.textContent = header + '\n';
+    h.textContent = stamp() + '  ' + header + '\n';
     wrap.appendChild(h);
 
     for (var i = 0; i < bytes.length; i++) {
@@ -1604,7 +1636,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
             var r = document.getElementById('repms');
             if (r) { r.value = j.repMs; }
           }
-          termEl.innerHTML = '<span class="meta">listening at ' + j.baud +
+          termEl.innerHTML = '<span class="meta">' + stamp() +
+            '  listening at ' + j.baud +
             ' ' + j.bits + j.parity + j.stop + ', ' + j.mode +
             (j.echo ? ', echo on' : '') + '</span>\n';
           return;
@@ -1612,8 +1645,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
         if (j.lost) {
           var w = document.createElement('span');
           w.className = 'meta';
-          w.textContent = '--- bytes were dropped: they arrived faster than ' +
-                          'this window was read ---\n';
+          w.textContent = stamp() + '  --- bytes were dropped: they arrived ' +
+                          'faster than this window was read ---\n';
           termEl.appendChild(w);
         }
         /* Quiet line -> ask less often. Any byte snaps straight back to
@@ -1895,33 +1928,47 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   }
 
   /*
-   * THE PDIO READ-BACK ROW, AND WHY IT IS A SECOND ROW.
+   * THE PDIO LINE READ-BACK, UNDER THE PDIO CONTROLS.
    *
    * The lamps on the connector follow the COMMAND, which is what an output
    * indicator has to do. That left a programmable channel driven high from
    * outside - 24 V on the terminal, nothing commanded - looking identical to
-   * one sitting idle, because nothing on the drawing showed the read-back at
-   * all. Observed on PDIO4: wired to 24 V, reading high, and invisible.
+   * one sitting idle, because nothing showed the read-back at all.
    *
-   * So the two facts get a row each. Above the connector: what the board was
-   * told. Below it: what the line actually reads. Where they differ is the
-   * interesting case, and now it is the one that LOOKS different.
+   * So the two facts get a row each: the buttons say what the board was told,
+   * these boxes say what the line reads. Where they differ is the interesting
+   * case, and now it is the one that LOOKS different.
    *
-   * A LIT LAMP HERE MEANS "THIS LINE IS HIGH", NOT "AN INPUT IS HIGH", and
-   * the distinction is not pedantic: a channel commanded high reads high
-   * through its own output driver. PDIO4 is currently both at once, which is
-   * exactly why the row cannot be labeled "input".
+   * IT IS NOT ON THE DRAWING, and that is the second version of this. The
+   * first put twelve lamps under the connector, where they looked like part
+   * of the hardware - and the board has no such row. A drawing that invents
+   * an indicator invites somebody to look for it on the bench.
    *
-   * Driven only from the poll, never server-rendered. That is deliberate -
-   * a lamp with no rendered state cannot be frozen at page load, which is the
-   * defect this row exists to answer.
+   * FILLED MEANS "THIS LINE IS HIGH", NOT "AN INPUT IS HIGH". A channel
+   * commanded high reads high through its own output driver, so the row
+   * cannot be labeled "input" without being wrong half the time.
+   *
+   * Built here and filled only from the poll, never server-rendered - an
+   * indicator with no rendered state cannot be frozen at page load, which is
+   * the defect this row exists to answer.
    */
   var rbLed = null;
 
   function pdioReadback(j) {
     if (!j || !j.io || !j.io.pdio) { return; }
     if (rbLed === null) {
-      rbLed = document.querySelectorAll('#pdiorb circle');
+      var host = document.getElementById('pdiorb');
+      if (!host) { return; }
+      for (var b = 0; b < j.io.pdio.length; b++) {
+        var box = document.createElement('i');
+        box.className = 'unknown';
+        /* The number screened on the terminal, which is how a person at the
+           bench names it - two digits, same as the connector. */
+        box.textContent = (b < 10 ? '0' : '') + b;
+        box.title = 'PDIO' + b + ' line read back';
+        host.appendChild(box);
+      }
+      rbLed = host.getElementsByTagName('i');
     }
     /* A PORT THAT DID NOT ANSWER IS NOT A PORT READING LOW. Without this the
        whole row goes dark when the expander drops off I2C, which is the one
@@ -2038,10 +2085,42 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 
   function two(n) { return (n < 10 ? '0' : '') + n; }
 
+  /*
+   * LOCAL TIME, AND THE LABEL MOVES WITH IT.
+   *
+   * The board keeps UTC - it has no notion of a zone, and storing one on an
+   * instrument that logs would be a mistake. The browser is the only part of
+   * this that knows where the bench is, so the conversion happens here and
+   * nowhere else: the epoch in the page is still UTC seconds.
+   *
+   * THE LABEL IS REWRITTEN IN THE SAME FUNCTION as the digits, from the same
+   * Date. It is server-rendered as "UTC - set from NTP" and so on, and a
+   * clock showing PST under a caption reading UTC is worse than either on its
+   * own - it is an hour-offset error with a straight face. Only the leading
+   * "UTC" is replaced, so the drift figure after it survives untouched.
+   *
+   * With JavaScript off the page shows UTC and says UTC. Also consistent, and
+   * the reason the server keeps rendering it that way.
+   */
+  var zone = '';
+  try {
+    /* The zone abbreviation the browser itself would print - PST, PDT, CET.
+       Taken from a formatted string rather than assumed from the offset,
+       because an offset cannot tell standard time from summer time. */
+    var m = new Date().toLocaleTimeString('en-US', { timeZoneName: 'short' })
+              .match(/[A-Z]{2,5}(?:[+-]\d+)?$/);
+    if (m) { zone = m[0]; }
+  } catch (e) { zone = ''; }
+
+  var label = document.getElementById('ccwL');
+  if (label && zone) {
+    label.textContent = label.textContent.trim().replace(/^UTC\b/, zone);
+  }
+
   function tick() {
     var d = new Date(base * 1000 + (Date.now() - t0));
-    var s = two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()) + ':' +
-            two(d.getUTCSeconds());
+    var s = two(d.getHours()) + ':' + two(d.getMinutes()) + ':' +
+            two(d.getSeconds());
     for (var i = 0; i < cells.length && i < s.length; i++) {
       if (cells[i].textContent !== s.charAt(i)) {
         cells[i].textContent = s.charAt(i);

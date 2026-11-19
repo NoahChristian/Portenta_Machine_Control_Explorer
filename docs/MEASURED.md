@@ -1971,3 +1971,94 @@ output. It had not: `status_out.c` drives **DO1** as the health heartbeat, and
 the sample caught the blink high. Six samples at 700 ms afterwards read all
 zero. Worth keeping because "an output I did not command is on" is the right
 thing to be alarmed by, and the answer is that one channel has an owner.
+
+## What actually guards a write (2026-11-18, 0.101.0)
+
+Asked whether this description is true: *anyone on the network can be served
+the state of the board; setting anything needs a magic number entered in the
+browser, compared against a key on the device; decompiling the board will not
+recover the key.*
+
+The first two are right. **The third is wrong**, and it is the one that
+matters. Measured rather than reasoned, against the running board and the
+signed image.
+
+### Reads are open. Confirmed.
+
+No token, no credentials, nothing:
+
+```
+GET /state.json    200, 1835 bytes of board state
+GET /rs485.json    200, 284 bytes
+```
+
+Every GET route is `BIT(HTTP_GET)` with no gate. That is the design - the panel
+is a diagnostic - but it means the readings, the slot versions, the health
+verdicts and the RS485 capture window are public to anything that can reach the
+port.
+
+### Writes need the token. Confirmed.
+
+```
+POST /io  do=set&chan=DO0&v=1   (no token)
+  -> refused: bad or missing token (1 refusals since boot)
+```
+
+Refused before anything is touched, and counted where the panel can show it.
+
+### The token is NOT safe from the image
+
+`auth.c` holds it as `static const char tok[] = SECRET_API_TOKEN` and compares
+it byte for byte. It is not hashed. A byte search of the signed image finds it:
+
+```
+token length      : 32 ASCII bytes
+image             : 1093930 bytes (signed)
+plaintext matches : 1
+byte offsets      : 0xF150A
+```
+
+**One `strings` run recovers it.** Anyone holding a firmware image - which is
+every image ever flashed, and every signed binary that has crossed this
+network during an OTA - has the write token.
+
+Signing does not help: MCUboot signatures prove an image's ORIGIN, they do not
+conceal its CONTENTS. The image is not encrypted, and `zephyr.signed.bin` is
+the plain binary plus a header and a signature.
+
+Hashing it would close this half and not the other: **the token crosses the LAN
+in cleartext in every POST body**, because this is plain HTTP. Anyone who can
+read the traffic has it regardless of how it is stored. `auth.h` has always
+said that part.
+
+### CSRF is documented and not implemented
+
+`auth.h` claimed "the token here authorizes, HtmlTplForm's token proves the
+request came from a page this board rendered - a write needs both". The engine
+does carry a CSRF token and the page does render one. **Nothing in the write
+path checks it.** A grep for `csrf` across `app/src` finds two comments and no
+code.
+
+Proved without touching an output, by sending a bogus verb so the only thing
+being tested is which gate answers first:
+
+```
+POST /io  token=<correct>&do=notaverb      no CSRF field, no Referer
+  -> refused: unknown verb 'notaverb'
+```
+
+It reached the verb dispatcher. The token alone is the whole gate.
+
+**A doc comment claiming a control that does not exist is worse than no
+comment**, because it is what gets quoted when somebody asks what guards the
+board - which is exactly how this question arose. The comment now says what the
+code does.
+
+### The accurate sentence
+
+Anyone on the network can read everything. Writing needs a 32-character token
+entered in the browser, compared in constant time against one compiled into the
+firmware - which stops a stray request, a scanner and an unauthorized script,
+and stops nobody who has an image of this firmware or who can watch the
+traffic. There is no second factor. **The control is the network, and the token
+is a latch on the gate, not a lock.**

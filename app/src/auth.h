@@ -16,9 +16,28 @@
  * should be understood rather than papered over - the honest fix is a network
  * you trust, not a longer token.
  *
- * CSRF is a separate thing and the template engine owns it: the token here
- * authorizes, HtmlTplForm's token proves the request came from a page this
- * board rendered. A write needs both.
+ * CSRF: NOT ENFORCED, and this comment used to say it was. It read "the token
+ * here authorizes, HtmlTplForm's token proves the request came from a page
+ * this board rendered - a write needs both". The engine does carry a CSRF
+ * token and the page does render one, but NOTHING IN THE WRITE PATH CHECKS
+ * IT: io_post.cpp gates on this token alone. Proved on the running board -
+ * a POST with the correct token, no CSRF field and no Referer reached the
+ * verb dispatcher (2026-11-18, docs/MEASURED.md).
+ *
+ * A doc comment claiming a control that does not exist is worse than no
+ * comment, because it is the thing somebody quotes when asked what guards
+ * the board. Either wire the check in, or say this.
+ *
+ * SO: THE TOKEN IS THE ONLY GATE on a write, and anything that knows it can
+ * write from anywhere that can reach the port.
+ *
+ * AND IT IS RECOVERABLE FROM THE IMAGE. It is compiled in as a plain string
+ * and compared as one, so it sits in the binary in cleartext - found at one
+ * offset in zephyr.signed.bin by a byte search. `strings` is the whole
+ * attack. Hashing it would fix that half and not the other: the token still
+ * crosses the LAN in cleartext in every POST body, because this is plain
+ * HTTP. Both limits are properties of the design, not bugs in it, and the
+ * honest fix is a network you trust.
  */
 #ifndef PMC_AUTH_H
 #define PMC_AUTH_H
