@@ -2637,3 +2637,75 @@ measurement disagreed with the theory on the first try.
   index-to-index equalling 4x the line count, is the test that retires this.
 - **CAN has never reached a wire.** Loopback proves everything up to the MCU
   pin and nothing beyond it.
+
+## CAN loopback is EXTERNAL, and that changes what it proves (2026-11-18, 0.116.0)
+
+Recorded earlier in this file as "loopback proves everything up to the MCU pin
+and nothing beyond it". That was wrong in an interesting direction - it proves
+slightly more, and a different thing.
+
+`can_mcan_set_mode()` handles `CAN_MODE_LOOPBACK` by setting `CCCR.TEST` and
+`TEST.LBCK`, and it sets `CCCR.MON` only for `CAN_MODE_LISTENONLY` - which
+this build does not pass. `LBCK` with `MON` clear is M_CAN's **External Loop
+Back Mode**, not the internal one.
+
+In that mode the controller treats its own transmitted frames as received, and
+**the TX pin is genuinely driven** - so the frames physically leave the chip,
+through the transceiver, onto CANH/CANL. A dongle or a scope on the bus would
+see them. What it does NOT do is use the RX pin: the input is disregarded and
+reception is looped inside the controller.
+
+So the loopback test covers the controller, the message RAM, the filter, the
+DLC conversion, the receive ring and the TX pin. It does not cover the RX
+path, and it cannot tell whether the transceiver is working - only that it is
+being fed.
+
+**A single node still cannot test a CAN bus**, because nothing acknowledges a
+frame. External loopback sidesteps the acknowledgment rather than satisfying
+it. The way to use this on the bench is to put a listener on the wire and run
+loopback: anything that arrives came out of this board's transceiver.
+
+## The encoders and CAN on the panel (2026-11-18, 0.116.0)
+
+Both blocks are filled entirely by the 2 s poll and not at all by the
+template. That is now the rule for anything live on this page, arrived at the
+hard way: the terminal lamps, the RJ45 lamps and the RS485 bus lamps were each
+server-rendered once and frozen, and each had to be found separately.
+
+Verified against real frames rather than a mock - the shell sent two in
+loopback, and the panel showed them:
+
+```
+state   ERROR_ACTIVE - normal - 500000 bit/s - started - STB low
+        tx 2 ok, 0 unacknowledged, 0 failed - rx 2
+window  132.922s  0x7ff  2  01 02
+        130.368s  0x123  4  de ad be ef
+enc0    ENC0 | 0 | 0 | 1 | 1 | 1 | 0 | - | 0 | zero
+```
+
+The encoder table reports `per rev` - the count between the last two index
+pulses - beside the raw count, because that is the only number that catches a
+software decoder falling behind. `illegal` is the one cell allowed to turn
+red: it is a fault rather than a reading.
+
+The CAN block's three sentences of legend are load-bearing. A person testing
+CAN alone will see `unacknowledged` climb and read it as a broken controller,
+which it is not, and will read `loopback` as a mode that touches no hardware,
+which is also wrong.
+
+### The page budget was raised, deliberately, for the reason it records
+
+`tools/gen_page.py` refused the build at 103,851 bytes against a 98,304
+budget. That budget's own comment, from the last time it was raised, says the
+failure mode that matters is not the size but "the response to hitting the
+limit became shaving words off comments, which trades documentation for a
+number nobody chose deliberately".
+
+Raised to 131,072. The page is about 8% of slot0 with the image at 71% of it,
+so nothing near a real constraint; the budget exists to make an ACCIDENTAL
+doubling visible, not to ration the page.
+
+Checked while there: `tools/build.ps1` computes "% of slot0" against
+`0x180000`, which is exactly what `pmc-partitions.dtsi` gives slot0. The
+number it prints is the right one - worth confirming rather than assuming,
+since a size check against the wrong size reports comfort it has not earned.

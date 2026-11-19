@@ -372,6 +372,21 @@
      confirmation can sit together and still read as what they are. */
   #ctlsay { font-size:.8rem; color:var(--dim); margin-top:.6rem;
             min-height:1.2em; white-space:pre-wrap; }
+  /* Section headings for the blocks below the board. */
+  .sect { font-size:.9rem; letter-spacing:.06em; color:var(--dim);
+          text-transform:uppercase; margin:2rem 0 .8rem; }
+  /* A compact table for live rows - encoders now, more later. Numbers are
+     right-aligned and tabular so a changing digit does not shift the column. */
+  .dtab { border-collapse:collapse; font-size:.8rem; }
+  .dtab th { text-align:right; font-weight:400; color:var(--dim);
+             padding:.15rem .7rem .15rem 0; white-space:nowrap; }
+  .dtab th:first-child, .dtab td:first-child { text-align:left; }
+  .dtab td { text-align:right; padding:.15rem .7rem .15rem 0;
+             font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .dtab td.bad { color:var(--bad); }
+  .dtab td.lvl1 { color:var(--live-hi); }
+  .dtab td.lvl0 { color:var(--live-lo); }
+  #cansay, #enctab + .legend { font-size:.8rem; }
   #ctlsay .sayln { padding:.06rem 0; }
   /* The stamp stays dim whatever the line's verdict, so a column of times
      reads as a column rather than as six colored prefixes. */
@@ -879,6 +894,60 @@
 </table>
 </div>
 
+<!--#! ENCODERS AND CAN. Everything in both blocks is filled by the poll and
+     nothing by the template: these are live values, and an indicator with no
+     server-rendered state cannot be frozen at page load - the defect that bit
+     the terminal lamps, the RJ45 and the bus lamps in turn.-->
+<h2 class="sect">Encoders</h2>
+<div class="ctl">
+  <table class="dtab" id="enctab">
+    <thead><tr><th>ch</th><th>count</th><th>counts/s</th><th>A</th><th>B</th>
+      <th>I</th><th>index</th><th>per rev</th><th>illegal</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="legend" style="margin:.6rem 0 0">
+    <span>4x, decoded in software &mdash; no timer on this package can do
+      it</span>
+    <span><b>per rev</b> is the count between the last two index pulses: it
+      should equal 4&times; the encoder's line count, and a short one means
+      counts were lost</span>
+    <span><b>illegal</b> counts transitions where both lines moved at once;
+      a clean count there is <em>not</em> proof nothing was missed</span>
+  </p>
+</div>
+
+<h2 class="sect">CAN</h2>
+<div class="ctl">
+  <div class="row"><label>state</label><span id="canstate" class="dim">reading...</span></div>
+  <div class="row">
+    <label>send</label>
+    <input id="canid" type="text" placeholder="0x123" style="width:6rem">
+    <input id="canhex" type="text" placeholder="de ad be ef" style="width:11rem">
+    <button id="cansend" type="button">send</button>
+    <span class="dim" style="font-size:.75rem">id and payload in hex</span>
+  </div>
+  <div class="row">
+    <label>mode</label>
+    <button id="canloop" type="button">loopback on</button>
+    <button id="canstb" type="button">STB high</button>
+    <button id="canrec" type="button">recover</button>
+  </div>
+  <div class="term" id="canwin" style="height:9rem"><span class="meta">no frames yet</span></div>
+  <div id="cansay"></div>
+  <p class="legend" style="margin:.6rem 0 0">
+    <!--#! The one thing a person testing CAN alone must be told, or they
+         will read a correct bus as a broken controller. -->
+    <span>alone on a bus <b>nothing acknowledges a frame</b>, so a send in
+      normal mode counts as <em>unacknowledged</em> &mdash; that is the bus
+      answering, not a fault</span>
+    <span><b>loopback</b> here is the controller's EXTERNAL loop back: the TX
+      pin is really driven, so frames do leave the chip, but the RX pin is
+      disregarded &mdash; it tests transmit, not receive</span>
+    <span>STB is on PA13, which is also SWDIO; its polarity is not confirmed
+      on this carrier</span>
+  </p>
+</div>
+
 <h2 style="font-size:.9rem;letter-spacing:.06em;color:var(--dim);
            text-transform:uppercase;margin:2rem 0 .8rem">Serial &middot; RS485 / RS232</h2>
 
@@ -1358,6 +1427,40 @@
       })
       .catch(function (e) { setLine(ln, 'request failed: ' + e, 'bad'); });
   }
+
+  /*
+   * The CAN controls. Every one posts through post(), so each takes its own
+   * timestamped line in the drive log and its reply lands on that line -
+   * including the refusals, which for CAN carry the useful part ("nothing
+   * acknowledged this") rather than a bare failure.
+   */
+  (function () {
+    var loop = document.getElementById('canloop');
+    var stb = document.getElementById('canstb');
+    var rec = document.getElementById('canrec');
+    var snd = document.getElementById('cansend');
+    if (!loop) { return; }
+
+    loop.addEventListener('click', function () {
+      /* The label says what the press will do, so it is also the request. */
+      var want = /on$/.test(loop.textContent) ? 1 : 0;
+      post({ do: 'canloop', v: want }, 'CAN loopback ' + (want ? 'on' : 'off'));
+    });
+    stb.addEventListener('click', function () {
+      var want = /high$/.test(stb.textContent) ? 1 : 0;
+      post({ do: 'canstb', v: want }, 'CAN STB ' + (want ? 'high' : 'low'));
+    });
+    rec.addEventListener('click', function () {
+      post({ do: 'canrecover' }, 'CAN recover');
+    });
+    snd.addEventListener('click', function () {
+      var id = document.getElementById('canid').value.trim();
+      /* Spaces are how a person writes bytes and not how a form sends them. */
+      var hx = document.getElementById('canhex').value.replace(/[^0-9a-fA-F]/g, '');
+      if (!id) { note('refused: no CAN identifier given', 'bad'); return; }
+      post({ do: 'cansend', id: id, hex: hx }, 'CAN ' + id);
+    });
+  })();
 
   var dob = document.getElementById('dobtns');
   var pub = document.getElementById('pulsebtns');
@@ -2174,6 +2277,123 @@
     }
   }
 
+  /*
+   * THE ENCODER TABLE. Rows are built once and then only their cell text
+   * changes, so a 2 s poll does not rebuild the DOM under a pointer. There
+   * is no server-rendered version of this table at all - see the note on the
+   * markup for why that is deliberate rather than lazy.
+   */
+  var encRows = null;
+
+  function encShow(j) {
+    if (!j || !j.enc) { return; }
+    var body = document.querySelector('#enctab tbody');
+    if (!body) { return; }
+
+    if (encRows === null) {
+      encRows = [];
+      for (var i = 0; i < j.enc.length; i++) {
+        var tr = document.createElement('tr');
+        var cells = [];
+        for (var c = 0; c < 10; c++) {
+          var td = document.createElement('td');
+          tr.appendChild(td);
+          cells.push(td);
+        }
+        cells[0].textContent = 'ENC' + i;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'zero';
+        (function (n) {
+          btn.addEventListener('click', function () {
+            post({ do: 'enczero', ch: n }, 'ENC' + n + ' zero');
+          });
+        })(i);
+        cells[9].appendChild(btn);
+        body.appendChild(tr);
+        encRows.push(cells);
+      }
+    }
+
+    for (var k = 0; k < encRows.length && k < j.enc.length; k++) {
+      var e = j.enc[k], r = encRows[k];
+      if (!e.ok) {
+        r[1].textContent = 'not armed';
+        continue;
+      }
+      r[1].textContent = e.count;
+      r[2].textContent = e.rate;
+      /* The three lines, colored like every other live level on this page. */
+      var lv = [e.a, e.b, e.i];
+      for (var p = 0; p < 3; p++) {
+        r[3 + p].textContent = lv[p];
+        r[3 + p].className = lv[p] ? 'lvl1' : 'lvl0';
+      }
+      r[6].textContent = e.idx;
+      r[7].textContent = e.per || '-';
+      r[8].textContent = e.err;
+      /* Illegal transitions are the one number that is a fault rather than a
+         reading, so it is the only one that gets to turn red. */
+      r[8].className = e.err ? 'bad' : '';
+    }
+  }
+
+  /*
+   * CAN. The state line, the receive window and the three mode buttons.
+   *
+   * The buttons say what they will DO, not what is true now - "loopback on"
+   * means pressing it turns loopback on - because that is the way round a
+   * person reads a button they are about to press.
+   */
+  var canSeen = -1;
+
+  function canShow(j) {
+    if (!j || !j.can) { return; }
+    var c = j.can, el = document.getElementById('canstate');
+    if (!el) { return; }
+
+    var names = ['ERROR_ACTIVE', 'ERROR_WARNING', 'ERROR_PASSIVE',
+                 'BUS_OFF', 'STOPPED'];
+    var sn = names[c.state] || ('state ' + c.state);
+
+    el.innerHTML =
+      '<b class="' + (c.state === 0 ? 'ok' : 'bad') + '">' + sn + '</b>' +
+      ' &middot; ' + (c.loopback ? '<b>loopback</b>' : 'normal') +
+      ' &middot; ' + c.bitrate + ' bit/s' +
+      ' &middot; ' + (c.started ? 'started' : 'stopped') +
+      ' &middot; STB ' + (c.stb ? 'high' : 'low') +
+      '<br>tx ' + c.txOk + ' ok, <b>' + c.txNoAck + ' unacknowledged</b>, ' +
+      c.txFail + ' failed &middot; rx ' + c.rx +
+      ' &middot; controller errors tx ' + c.txErr + ' rx ' + c.rxErr;
+
+    document.getElementById('canloop').textContent =
+      c.loopback ? 'loopback off' : 'loopback on';
+    document.getElementById('canstb').textContent =
+      c.stb ? 'STB low' : 'STB high';
+
+    /* Repaint the window only when a frame actually arrived - otherwise a
+       2 s poll would rebuild it forever and lose any text selection. */
+    if (c.rx === canSeen) { return; }
+    canSeen = c.rx;
+
+    var win = document.getElementById('canwin');
+    if (!c.log || !c.log.length) {
+      win.innerHTML = '<span class="meta">no frames yet</span>';
+      return;
+    }
+    var out = '';
+    for (var i = 0; i < c.log.length; i++) {
+      var f = c.log[i];
+      var hx = (f.d || '').replace(/(..)/g, '$1 ');
+      out += '<span class="meta">' + (f.t / 1000).toFixed(3) + 's</span>  ' +
+             '<span class="r">' + (f.ext ? 'x' : '') + '0x' +
+             f.id.toString(16) + '</span>  ' + f.dlc + '  ' +
+             '<span class="r">' + hx + '</span>' +
+             (f.rtr ? ' <span class="meta">RTR</span>' : '') + '\n';
+    }
+    win.innerHTML = out;
+  }
+
   function boardLeds(j) {
     if (!j || !j.io) { return; }
     if (ledMap === null) {
@@ -2228,6 +2448,8 @@
         ethLeds(j);
         busLeds(j);
         pdioReadback(j);
+        encShow(j);
+        canShow(j);
         if (!j.ai) { return; }
         /* Row order is the registry's order, which is the order the board
            reads them in - matching by position rather than by a key the

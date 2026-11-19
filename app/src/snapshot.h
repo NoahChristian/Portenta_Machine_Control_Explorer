@@ -28,6 +28,13 @@
 
 #include "clock.h"
 #include "expander.h"
+#include "enc.h"
+#include "canbus.h"
+
+/* How many received CAN frames travel in the snapshot. Fewer than the ring
+   holds, because state.json has a fixed buffer and a truncated document is a
+   silent failure in a browser. The shell's `can` shows the whole ring. */
+#define PMC_SNAP_CANLOG 4
 
 #define PMC_SNAP_AI   3
 #define PMC_SNAP_SLOT 2
@@ -236,6 +243,15 @@ struct pmc_snapshot {
 	size_t               n_ai;
 	struct pmc_slot_read slot[PMC_SNAP_SLOT];
 	size_t               n_slot;
+
+	/* The encoders, read whole rather than polled per row: the counts and
+	   the A/B levels have to come from the same instant or the panel would
+	   show a position that never existed. */
+	struct pmc_enc_chan  enc[PMC_ENC_COUNT];
+
+	struct pmc_can_state  can;
+	struct pmc_can_frame  can_log[PMC_SNAP_CANLOG];
+	size_t                n_can_log;
 };
 
 /* From shell_mcuboot.c - the swap state, which the panel is now the only

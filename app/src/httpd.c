@@ -131,7 +131,10 @@ HTTP_RESOURCE_DEFINE(index_resource, pmc_service, "/", &index_detail);
  * failure would be invisible. 3072 leaves room for the channels still to
  * come.
  */
-static char json_buf[3072];
+/* 4096 since the encoders and a CAN receive window joined it; measured at
+   about 2.7 KB with both present, and a truncated JSON fails silently in a
+   browser, which is the failure this headroom exists to avoid. */
+static char json_buf[4096];
 
 static int state_handler(struct http_client_ctx *client,
 			 enum http_transaction_status status,

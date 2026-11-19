@@ -171,6 +171,12 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	(void)pmc_pdio_commanded(s->pdio_cmd, ARRAY_SIZE(s->pdio_cmd));
 	s->pulse_mask = pmc_io_pulse_mask();
 	pmc_rs485_activity(&s->rs485_tx_age, &s->rs485_rx_age);
+
+	for (uint8_t n = 0; n < PMC_ENC_COUNT; n++) {
+		pmc_enc_read(n, &s->enc[n]);
+	}
+	pmc_can_state_read(&s->can);
+	s->n_can_log = pmc_can_log_read(s->can_log, ARRAY_SIZE(s->can_log));
 	pmc_net_info_read(&s->net);
 	pmc_net_thru_read(&s->thru);
 
@@ -576,6 +582,60 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 	n += snprintk(out + n, cap - n,
 		      "\"rs485\":{\"txAge\":%d,\"rxAge\":%d},",
 		      (int)s->rs485_tx_age, (int)s->rs485_rx_age);
+
+	/*
+	 * The encoders. `per` is the count between the last two index pulses
+	 * and is the only honest check that nothing was missed - see enc.h.
+	 */
+	n += snprintk(out + n, cap - n, "\"enc\":[");
+	for (size_t i = 0; i < PMC_ENC_COUNT; i++) {
+		const struct pmc_enc_chan *e = &s->enc[i];
+
+		n += snprintk(out + n, cap - n,
+			      "%s{\"ok\":%s,\"count\":%d,\"rate\":%d,"
+			      "\"a\":%u,\"b\":%u,\"i\":%u,\"idx\":%u,"
+			      "\"per\":%d,\"err\":%u}",
+			      i ? "," : "", e->ready ? "true" : "false",
+			      e->count, e->rate, e->a, e->b, e->i,
+			      e->index_hits, e->per_index, e->errors);
+	}
+	n += snprintk(out + n, cap - n, "],");
+
+	/*
+	 * CAN. `txNoAck` is separate from `txFail` on purpose: alone on a bus
+	 * nothing acknowledges a frame, and that is the bus answering rather
+	 * than a broken controller.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"can\":{\"present\":%s,\"started\":%s,\"loopback\":%s,"
+		      "\"stb\":%u,\"bitrate\":%u,\"state\":%d,"
+		      "\"txErr\":%u,\"rxErr\":%u,\"txOk\":%u,\"txNoAck\":%u,"
+		      "\"txFail\":%u,\"rx\":%u,\"log\":[",
+		      s->can.present ? "true" : "false",
+		      s->can.started ? "true" : "false",
+		      s->can.loopback ? "true" : "false",
+		      (unsigned)s->can.stb_level, (unsigned)s->can.bitrate,
+		      s->can.bus_state,
+		      (unsigned)s->can.tx_err_cnt, (unsigned)s->can.rx_err_cnt,
+		      (unsigned)s->can.tx_ok, (unsigned)s->can.tx_no_ack,
+		      (unsigned)s->can.tx_fail, (unsigned)s->can.rx_frames);
+
+	for (size_t i = 0; i < s->n_can_log; i++) {
+		const struct pmc_can_frame *f = &s->can_log[i];
+		char hex[2 * 8 + 1] = { 0 };
+		size_t p = 0;
+
+		for (uint8_t b = 0; b < f->dlc && b < 8U; b++) {
+			p += (size_t)snprintk(hex + p, sizeof(hex) - p, "%02x",
+					      f->data[b]);
+		}
+		n += snprintk(out + n, cap - n,
+			      "%s{\"id\":%u,\"ext\":%u,\"rtr\":%u,\"dlc\":%u,"
+			      "\"d\":\"%s\",\"t\":%lld}",
+			      i ? "," : "", (unsigned)f->id, f->ext, f->rtr,
+			      f->dlc, hex, f->stamp);
+	}
+	n += snprintk(out + n, cap - n, "]},");
 
 	/*
 	 * THE RADIO'S OWN DROP COUNTER, and the reason it is here.

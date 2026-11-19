@@ -28,6 +28,8 @@ extern "C" {
 #include "io_write.h"
 #include "temp.h"
 #include "rs485.h"
+#include "enc.h"
+#include "canbus.h"
 
 #include <zephyr/dfu/mcuboot.h>
 
@@ -359,6 +361,91 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 	if (strcmp(verb, "485clear") == 0) {
 		pmc_rs485_clear();
 		n = refuse("cleared\n");
+		goto done;
+	}
+
+	/* ------------------------------------------------ encoders and CAN */
+
+	if (strcmp(verb, "enczero") == 0) {
+		char v[8];
+		char detail[72];
+		const char *ch = field(s_body, "ch", v, sizeof(v));
+
+		(void)pmc_enc_zero(ch ? (uint8_t)atoi(ch) : 0xffU, detail,
+				   sizeof(detail));
+		n = refuse("%s\n", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "canloop") == 0) {
+		char v[8];
+		char detail[128];
+		const char *on = field(s_body, "v", v, sizeof(v));
+
+		(void)pmc_can_set_loopback(on && atoi(on) != 0, detail,
+					   sizeof(detail));
+		n = refuse("%s\n", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "canstb") == 0) {
+		char v[8];
+		char detail[128];
+		const char *hi = field(s_body, "v", v, sizeof(v));
+
+		(void)pmc_can_stb(hi && atoi(hi) != 0, detail, sizeof(detail));
+		n = refuse("%s\n", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "canrecover") == 0) {
+		char detail[96];
+
+		(void)pmc_can_recover(detail, sizeof(detail));
+		n = refuse("%s\n", detail);
+		goto done;
+	}
+
+	if (strcmp(verb, "canbitrate") == 0) {
+		char v[12];
+		char detail[96];
+		const char *b = field(s_body, "bps", v, sizeof(v));
+
+		(void)pmc_can_set_bitrate(b ? (uint32_t)atol(b) : 0, detail,
+					  sizeof(detail));
+		n = refuse("%s\n", detail);
+		goto done;
+	}
+
+	/*
+	 * `cansend` takes the identifier and the payload as HEX TEXT, decoded
+	 * here, for the same reason the RS485 sender does: the browser never
+	 * gets to hand this board a raw byte count it did not derive from
+	 * what the person actually typed.
+	 */
+	if (strcmp(verb, "cansend") == 0) {
+		char vid[12];
+		char vhex[24];
+		char detail[128];
+		uint8_t data[8];
+		uint8_t len = 0;
+		const char *ids = field(s_body, "id", vid, sizeof(vid));
+		const char *hx = field(s_body, "hex", vhex, sizeof(vhex));
+		const uint32_t id = ids ? (uint32_t)strtoul(ids, nullptr, 0) : 0;
+
+		for (size_t i = 0; hx != nullptr && hx[i] != '\0' &&
+				   len < sizeof(data); i += 2) {
+			char byte[3] = { hx[i], hx[i + 1], '\0' };
+
+			if (byte[1] == '\0') {
+				break;   /* an odd digit is not a byte */
+			}
+			data[len++] = (uint8_t)strtoul(byte, nullptr, 16);
+		}
+
+		(void)pmc_can_send(id, id > 0x7ffU, data, len, detail,
+				   sizeof(detail));
+		n = refuse("%s\n", detail);
 		goto done;
 	}
 

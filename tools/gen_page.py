@@ -58,7 +58,18 @@ DEFAULT_LIB = REPO.parent / "Arduino_HTTP_HTML"
 #
 # 98304 is 50% more, still small enough that a careless addition is noticed,
 # and roughly 6% of slot0 on a board at 65%.
-BUDGET = 98304
+#
+# RAISED AGAIN TO 131072 ON 2026-11-18, for the reason the paragraph above
+# names rather than in spite of it. The page gained an encoder table and a CAN
+# block - state, a send control, mode buttons and a receive window - and came
+# out at 103,851 bytes. The choice at that point is to raise a number nobody
+# chose deliberately or to start deleting the comments that explain the panel,
+# and this file already recorded which of those is the real failure.
+#
+# 128 KB is about 8% of slot0 with the image at 71% of it, so the constraint
+# that matters is still nowhere near. The budget's job is to make an
+# ACCIDENTAL doubling visible, not to ration the page.
+BUDGET = 131072
 
 
 def main() -> int:
