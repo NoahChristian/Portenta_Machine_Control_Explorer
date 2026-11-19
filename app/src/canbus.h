@@ -76,11 +76,46 @@ struct pmc_can_state {
 	uint32_t tx_fail;
 	uint32_t rx_frames;
 
-	/* A single-node CAN bus cannot complete a transmission: with nobody
-	   to acknowledge, the controller retries forever and then counts an
-	   error. That is the normal result of testing alone, and it is why
-	   this is named rather than folded into tx_fail. */
+	/*
+	 * A SINGLE-NODE CAN BUS CANNOT COMPLETE A TRANSMISSION, and measuring
+	 * that changed this struct.
+	 *
+	 * The ACK bit must be driven by a DIFFERENT node: the transmitter
+	 * sends recessive in the ACK slot and cannot answer itself. Alone on a
+	 * bus, the frame is never acknowledged and is retried - and measured
+	 * on this board, the controller goes ERROR_PASSIVE with a transmit
+	 * error count of 128 and STAYS there. It does not reach bus-off,
+	 * because an error-passive transmitter does not increment its counter
+	 * on an acknowledgment error. So it retransmits indefinitely.
+	 *
+	 * Which means the frame NEVER COMPLETES, so neither completion path
+	 * runs and tx_no_ack never moves. Reporting "0 unacknowledged" while
+	 * the controller sits in ERROR_PASSIVE is worse than reporting
+	 * nothing. `tx_queued` minus the three outcomes is what is still in
+	 * flight, and that is the number that tells the story.
+	 */
+	uint32_t tx_queued;
 	uint32_t tx_no_ack;
+
+	/*
+	 * Is the TX pin actually moving? Sampled with the CPU, the same way
+	 * PA1 was checked for the Ethernet reference clock. It cannot measure
+	 * a bit rate and does not try: it separates "the controller is
+	 * driving the transceiver" from "nothing is happening at all", which
+	 * is the question a lone node on a silent bus actually has.
+	 *
+	 * IT ALSO SETTLED WHICH LOOPBACK THIS IS, against a wrong reading of
+	 * the driver. can_mcan_set_mode() sets TEST.LBCK and leaves CCCR.MON
+	 * clear, which by the M_CAN specification is EXTERNAL loop back - the
+	 * TX pin driven, the RX pin ignored. The pin says otherwise:
+	 * `can txprobe` sampled PH13 144,000 times across 48 loopback frames
+	 * and never once saw it low, while the same sampler shows it toggling
+	 * in normal mode. So this is INTERNAL loop back and nothing reaches
+	 * the transceiver. Why the register bits do not produce what the
+	 * specification describes is unexplained; the measurement is not.
+	 */
+	uint8_t  tx_pin_toggling;
+	uint8_t  tx_pin_sampled;
 };
 
 int  pmc_can_init(void);

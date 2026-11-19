@@ -15,6 +15,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/atomic.h>
+/* For GPIOH->IDR: the TX pin is sampled directly, see pmc_can_state_read(). */
+#include <stm32_ll_system.h>
 
 #include "canbus.h"
 
@@ -42,7 +44,7 @@ static bool  loopback;
 static uint8_t stb_level;
 static uint32_t bitrate = DT_PROP_OR(DT_NODELABEL(fdcan1), bitrate, 500000);
 
-static atomic_t tx_ok, tx_fail, tx_no_ack, rx_frames;
+static atomic_t tx_ok, tx_fail, tx_no_ack, tx_queued, rx_frames;
 
 /* The receive window. Written from the RX callback, read by the panel. */
 static struct pmc_can_frame ring[PMC_CAN_LOG];
@@ -210,7 +212,27 @@ void pmc_can_state_read(struct pmc_can_state *out)
 	out->tx_ok = (uint32_t)atomic_get(&tx_ok);
 	out->tx_fail = (uint32_t)atomic_get(&tx_fail);
 	out->tx_no_ack = (uint32_t)atomic_get(&tx_no_ack);
+	out->tx_queued = (uint32_t)atomic_get(&tx_queued);
 	out->rx_frames = (uint32_t)atomic_get(&rx_frames);
+
+	/*
+	 * SAMPLE THE TX PIN. GPIOH->IDR reflects the pad even in alternate
+	 * function mode, so a read loop sees the CAN transmitter driving it.
+	 * A frame at 500 kbit/s is about 200 us; a lone node retransmitting
+	 * is therefore toggling this pin almost continuously, and an idle one
+	 * holds it recessive (high). Both levels appearing is the answer.
+	 */
+	{
+		unsigned ones = 0;
+
+		for (unsigned i = 0; i < 400U; i++) {
+			if (GPIOH->IDR & BIT(13)) {
+				ones++;
+			}
+		}
+		out->tx_pin_sampled = 1U;
+		out->tx_pin_toggling = (ones != 0U && ones != 400U) ? 1U : 0U;
+	}
 }
 
 size_t pmc_can_log_read(struct pmc_can_frame *out, size_t cap)
@@ -284,6 +306,9 @@ bool pmc_can_send(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
 	 * made once.
 	 */
 	rc = can_send(dev, &f, K_NO_WAIT, tx_done, NULL);
+	if (rc == 0) {
+		atomic_inc(&tx_queued);
+	}
 	k_mutex_unlock(&lock);
 
 	if (rc != 0) {
@@ -316,8 +341,8 @@ bool pmc_can_set_loopback(bool on, char *detail, size_t cap)
 		return false;
 	}
 	(void)snprintk(detail, cap, "%s",
-		       on ? "loopback: frames come back internally, no wire "
-			    "and no second node needed"
+		       on ? "loopback: INTERNAL - measured, the TX pin stays "
+			    "recessive, so nothing reaches the transceiver"
 			  : "normal: frames go out on the bus and need a "
 			    "second node to acknowledge them");
 	return true;
@@ -424,6 +449,70 @@ static int cmd_can(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "%s", detail);
 		return 0;
 	}
+	/*
+	 * `can txprobe` - is the TX pin driven IN THIS MODE?
+	 *
+	 * The question this exists for: Zephyr's CAN_MODE_LOOPBACK sets
+	 * TEST.LBCK and leaves CCCR.MON clear, which by the M_CAN
+	 * specification is EXTERNAL loop back - the TX pin driven, the RX pin
+	 * disregarded. Reading that out of the driver is not the same as
+	 * seeing it, and sampling the pin from the shell AFTER a send proves
+	 * nothing: a frame at 500 kbit/s is about 200 us and the reply takes
+	 * milliseconds, so the pin is always idle again by then. The first
+	 * attempt did exactly that and read "static", which was a statement
+	 * about the timing and not about the mode.
+	 *
+	 * So the send and the sampling happen in the same loop here, with
+	 * nothing in between. If any sample catches the pin low, the
+	 * transmitter is driving it in whatever mode is current.
+	 */
+	if (argc == 2 && strcmp(argv[1], "txprobe") == 0) {
+		unsigned lows = 0;
+		unsigned total = 0;
+
+		if (!started) {
+			shell_error(sh, "the controller is stopped");
+			return -EIO;
+		}
+
+		for (unsigned f = 0; f < 48U; f++) {
+			struct can_frame probe = {
+				.id = 0x7a0U + (f & 0xfU),
+				.dlc = can_bytes_to_dlc(8),
+				.flags = 0,
+			};
+
+			memset(probe.data, 0x55, 8);   /* 0x55 = alternating */
+			(void)can_send(dev, &probe, K_NO_WAIT, NULL, NULL);
+
+			for (unsigned k = 0; k < 3000U; k++) {
+				if ((GPIOH->IDR & BIT(13)) == 0U) {
+					lows++;
+				}
+				total++;
+			}
+		}
+
+		shell_print(sh, "mode     %s",
+			    loopback ? "LOOPBACK" : "normal");
+		shell_print(sh, "sampled  %u times across 48 frames", total);
+		shell_print(sh, "PH13 low %u", lows);
+		shell_print(sh, "");
+		if (lows > 0U) {
+			shell_print(sh, "THE TX PIN IS DRIVEN in this mode, so "
+					"frames physically leave");
+			shell_print(sh, "the chip and reach the transceiver. "
+					"This is EXTERNAL loop back.");
+		} else {
+			shell_print(sh, "The TX pin never left recessive, so "
+					"nothing reached the");
+			shell_print(sh, "transceiver. This is INTERNAL loop "
+					"back and it tests the");
+			shell_print(sh, "controller only.");
+		}
+		return 0;
+	}
+
 	if (argc == 2 && strcmp(argv[1], "recover") == 0) {
 		(void)pmc_can_recover(detail, sizeof(detail));
 		shell_print(sh, "%s", detail);
@@ -459,8 +548,31 @@ static int cmd_can(const struct shell *sh, size_t argc, char **argv)
 		    s.stb_level ? "HIGH" : "LOW");
 	shell_print(sh, "errors   tx %u  rx %u  (controller's own counters)",
 		    s.tx_err_cnt, s.rx_err_cnt);
-	shell_print(sh, "frames   tx %u ok, %u unacknowledged, %u failed; "
-			"rx %u", s.tx_ok, s.tx_no_ack, s.tx_fail, s.rx_frames);
+
+	const uint32_t inflight = s.tx_queued -
+				  (s.tx_ok + s.tx_no_ack + s.tx_fail);
+
+	shell_print(sh, "frames   tx %u queued, %u ok, %u failed, "
+			"**%u STILL IN FLIGHT**; rx %u",
+		    s.tx_queued, s.tx_ok, s.tx_fail, inflight, s.rx_frames);
+	shell_print(sh, "TX pin   PH13 %s",
+		    s.tx_pin_toggling ? "TOGGLING - the transceiver is being "
+					"driven"
+				      : "static - nothing is transmitting");
+
+	if (inflight > 0U && s.bus_state == CAN_STATE_ERROR_PASSIVE) {
+		shell_print(sh, "");
+		shell_print(sh, "That is a frame NOBODY ACKNOWLEDGED. The ACK "
+				"bit has to be driven by");
+		shell_print(sh, "a different node; a transmitter sends "
+				"recessive there and cannot");
+		shell_print(sh, "answer itself, so no amount of wiring CANH to "
+				"CANL fixes it. The");
+		shell_print(sh, "controller parks at ERROR_PASSIVE, tx error "
+				"128, and retransmits");
+		shell_print(sh, "forever - which is why the TX pin above is "
+				"still moving.");
+	}
 
 	n = pmc_can_log_read(log, ARRAY_SIZE(log));
 	if (n > 0) {

@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "26cfa647"
-#define PAGE_INDEX_BYTES 103851
+#define PAGE_INDEX_BUILD "77d58dd9"
+#define PAGE_INDEX_BYTES 105071
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -819,9 +819,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     <span>alone on a bus <b>nothing acknowledges a frame</b>, so a send in
       normal mode counts as <em>unacknowledged</em> &mdash; that is the bus
       answering, not a fault</span>
-    <span><b>loopback</b> here is the controller's EXTERNAL loop back: the TX
-      pin is really driven, so frames do leave the chip, but the RX pin is
-      disregarded &mdash; it tests transmit, not receive</span>
+    
+    <span><b>loopback</b> is the controller's INTERNAL loop back &mdash;
+      measured: the TX pin stays recessive through 144,000 samples, so
+      <em>nothing reaches the transceiver</em>. It tests the controller,
+      the filter and this panel, and no hardware past the MCU</span>
     <span>STB is on PA13, which is also SWDIO; its polarity is not confirmed
       on this carrier</span>
   </p>
@@ -2216,15 +2218,36 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                  'BUS_OFF', 'STOPPED'];
     var sn = names[c.state] || ('state ' + c.state);
 
+    /*
+     * IN FLIGHT IS THE NUMBER THAT TELLS THE STORY. A frame nobody
+     * acknowledges never completes, so it is counted in neither the ok nor
+     * the failed column - and reporting "0 failed" while the controller sits
+     * in ERROR_PASSIVE is worse than reporting nothing at all.
+     */
+    var inflight = (c.txQueued || 0) - (c.txOk + (c.txNoAck || 0) + c.txFail);
+    var flight = inflight > 0
+      ? ', <b class="bad">' + inflight + ' still in flight</b>' : '';
+    var note = (inflight > 0 && c.state === 2)
+      ? '<br><span class="warn">Nobody acknowledged that frame. The ACK bit ' +
+        'must be driven by a different node &mdash; a transmitter sends ' +
+        'recessive there and cannot answer itself, so no wiring of CANH to ' +
+        'CANL will fix it. The controller parks at ERROR_PASSIVE and ' +
+        'retransmits forever, which is why the TX pin is still moving.</span>'
+      : '';
+
     el.innerHTML =
       '<b class="' + (c.state === 0 ? 'ok' : 'bad') + '">' + sn + '</b>' +
       ' &middot; ' + (c.loopback ? '<b>loopback</b>' : 'normal') +
       ' &middot; ' + c.bitrate + ' bit/s' +
       ' &middot; ' + (c.started ? 'started' : 'stopped') +
       ' &middot; STB ' + (c.stb ? 'high' : 'low') +
-      '<br>tx ' + c.txOk + ' ok, <b>' + c.txNoAck + ' unacknowledged</b>, ' +
-      c.txFail + ' failed &middot; rx ' + c.rx +
-      ' &middot; controller errors tx ' + c.txErr + ' rx ' + c.rxErr;
+      '<br>tx ' + (c.txQueued || 0) + ' queued, ' + c.txOk + ' ok, ' +
+      c.txFail + ' failed' + flight + ' &middot; rx ' + c.rx +
+      ' &middot; controller errors tx ' + c.txErr + ' rx ' + c.rxErr +
+      '<br>TX pin PH13 ' + (c.txPin ? '<b class="ok">toggling</b> &mdash; ' +
+        'the transceiver is being driven'
+        : '<span class="dim">static &mdash; nothing is transmitting</span>') +
+      note;
 
     document.getElementById('canloop').textContent =
       c.loopback ? 'loopback off' : 'loopback on';

@@ -2638,7 +2638,11 @@ measurement disagreed with the theory on the first try.
 - **CAN has never reached a wire.** Loopback proves everything up to the MCU
   pin and nothing beyond it.
 
-## CAN loopback is EXTERNAL, and that changes what it proves (2026-11-18, 0.116.0)
+## RETRACTED - CAN loopback is EXTERNAL (2026-11-18, 0.116.0)
+
+**This whole section is wrong.** It is a reading of the driver presented as a
+conclusion; measuring the TX pin says INTERNAL. Kept because the way it was
+wrong matters - see "CAN, proved out" at the end of this file.
 
 Recorded earlier in this file as "loopback proves everything up to the MCU pin
 and nothing beyond it". That was wrong in an interesting direction - it proves
@@ -2709,3 +2713,93 @@ Checked while there: `tools/build.ps1` computes "% of slot0" against
 `0x180000`, which is exactly what `pmc-partitions.dtsi` gives slot0. The
 number it prints is the right one - worth confirming rather than assuming,
 since a size check against the wrong size reports comfort it has not earned.
+
+## CAN, proved out: what loopback does and why a hardware loop cannot help (2026-11-18, 0.118.0)
+
+Three questions, measured on the board rather than reasoned about. One of the
+answers overturns what this file said two sections ago.
+
+### 1. Loopback works, and it self-acknowledges
+
+```
+mode     LOOPBACK, 500000 bit/s, started
+errors   tx 0  rx 0
+frames   tx 7 queued, 7 ok, 0 failed, 0 STILL IN FLIGHT; rx 7
+    120350 ms   0x26    4  aa bb cc dd
+    ...
+    112624 ms   0x1a5   8  11 22 33 44 55 66 77 88
+```
+
+Seven frames out, seven back, identifiers, lengths and payloads intact, zero
+errors. No second node, no transceiver, no termination.
+
+### 2. It is INTERNAL loopback. RETRACTED: this file said EXTERNAL
+
+The earlier section "CAN loopback is EXTERNAL, and that changes what it
+proves" is **wrong**, and the way it was wrong is the point.
+
+`can_mcan_set_mode()` sets `TEST.LBCK` and leaves `CCCR.MON` clear, and by the
+Bosch M_CAN specification `LBCK` without `MON` is External Loop Back Mode -
+TX pin driven, RX pin disregarded. That is a reading of the driver, and it was
+presented as a conclusion.
+
+`can txprobe` sends 48 frames and samples PH13 three thousand times after each
+one, in the same loop as the send, with nothing in between:
+
+```
+A. LOOPBACK   sampled 144000 times across 48 frames   PH13 low 0
+B. NORMAL     txPin 1 - toggling
+```
+
+**Zero lows in loopback; plainly toggling in normal mode.** The sampler is not
+blind - the control proves that - so the TX pin genuinely never leaves
+recessive in loopback. Nothing reaches the transceiver. It is the internal
+mode, and why the register bits do not produce what the specification
+describes is unexplained.
+
+**The first attempt at this measurement was worthless and looked fine.** It
+sampled the pin from the shell *after* sending six frames. Six frames at
+500 kbit/s is about 1.2 ms and the shell round trip is milliseconds, so the
+pin was always idle again by the time it was read - "static" was a statement
+about the timing, not the mode. A probe has to run in the same loop as the
+thing it is probing.
+
+**And the second attempt nearly shipped without its control.** The loopback
+result alone - "PH13 never went low" - is equally consistent with a sampler
+that cannot see PH13 at all. The normal-mode reading is what makes it
+evidence.
+
+### 3. A hardware loopback cannot make one CAN node work
+
+The ACK bit must be driven by a DIFFERENT node. A transmitter sends recessive
+in the ACK slot and cannot answer itself, so wiring CANH to CANL, or TX to RX,
+changes nothing about acknowledgment. Measured:
+
+```
+before       ERROR_ACTIVE     tx err 0
+send one frame, nothing else on the bus
+after ~1 s   ERROR_PASSIVE    tx err 128   1 STILL IN FLIGHT
+after ~6 s   ERROR_PASSIVE    tx err 128   1 STILL IN FLIGHT
+```
+
+It parks at 128 and **never reaches bus-off**, because an error-passive
+transmitter does not increment its counter on an acknowledgment error. So it
+retransmits indefinitely - which is why the TX pin reads as toggling in the
+table above.
+
+That also exposed a defect in the counters. A frame nobody acknowledges never
+COMPLETES, so neither completion path runs and the old "0 unacknowledged"
+stayed at zero while the controller sat in ERROR_PASSIVE. `tx_queued` minus
+the three outcomes is what is still in flight, and that is now what the shell
+and the panel report.
+
+### What this leaves for the bench
+
+- **Loopback tests the controller, the filter, the ring and the panel.** It
+  touches no hardware past the MCU.
+- **Normal mode with one node tests the transmitter and the transceiver**, by
+  accident of the protocol: the unacknowledged frame retransmits forever, so
+  CANH/CANL carry continuous traffic. A meter or a scope on the pair, or any
+  listener, settles whether the transceiver and the STB polarity are right -
+  with no second node and no dongle.
+- **Nothing tests receive** without a real second node.

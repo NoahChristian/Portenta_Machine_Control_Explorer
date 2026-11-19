@@ -610,7 +610,7 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      "\"can\":{\"present\":%s,\"started\":%s,\"loopback\":%s,"
 		      "\"stb\":%u,\"bitrate\":%u,\"state\":%d,"
 		      "\"txErr\":%u,\"rxErr\":%u,\"txOk\":%u,\"txNoAck\":%u,"
-		      "\"txFail\":%u,\"rx\":%u,\"log\":[",
+		      "\"txFail\":%u,\"txQueued\":%u,\"txPin\":%u,\"rx\":%u,\"log\":[",
 		      s->can.present ? "true" : "false",
 		      s->can.started ? "true" : "false",
 		      s->can.loopback ? "true" : "false",
@@ -618,7 +618,9 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      s->can.bus_state,
 		      (unsigned)s->can.tx_err_cnt, (unsigned)s->can.rx_err_cnt,
 		      (unsigned)s->can.tx_ok, (unsigned)s->can.tx_no_ack,
-		      (unsigned)s->can.tx_fail, (unsigned)s->can.rx_frames);
+		      (unsigned)s->can.tx_fail, (unsigned)s->can.tx_queued,
+		      (unsigned)s->can.tx_pin_toggling,
+		      (unsigned)s->can.rx_frames);
 
 	for (size_t i = 0; i < s->n_can_log; i++) {
 		const struct pmc_can_frame *f = &s->can_log[i];
