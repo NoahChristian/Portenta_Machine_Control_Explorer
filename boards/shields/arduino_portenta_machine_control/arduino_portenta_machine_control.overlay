@@ -85,8 +85,30 @@
 	};
 };
 
-/* The encoder inputs as gpio-keys, so they are readable before any encoder
- * driver exists. */
+/*
+ * The encoder inputs. Declared as gpio-keys purely to give each line a
+ * nodelabel and a GPIO spec; no input driver is enabled, so nothing else
+ * claims them and enc.c takes them directly with GPIO_DT_SPEC_GET.
+ *
+ * NEITHER ENCODER CAN USE THE STM32's HARDWARE QUADRATURE DECODER, and that
+ * is a fact about this package rather than a choice. Encoder mode needs
+ * channels 1 and 2 of ONE timer on A and B. Checked against
+ * stm32h747xihx-pinctrl.dtsi, which is the authority on what this silicon can
+ * do:
+ *
+ *   ENC0  A PJ8  = tim8_ch1       B PH12 = tim5_ch3    different timers,
+ *                                                      and CH3, not CH2
+ *   ENC1  A PC13 = analog ONLY    B PI7  = tim8_ch3    PC13 has no timer
+ *                                                      function at all
+ *
+ * PC13 is the striking one: it carries no alternate function whatsoever on
+ * this package. It is a backup-domain pin and it can only ever be a GPIO
+ * here. So both channels are decoded in software from GPIO interrupts - see
+ * app/src/enc.c for what that costs and where it stops working.
+ *
+ * This is the same shape as AO2 below, and was found the same way: grep the
+ * pinctrl file before writing a line of driver code.
+ */
 / {
 	pmc_encoder_in: pmc-encoder-in {
 		compatible = "gpio-keys";
@@ -217,9 +239,33 @@
 };
 
 /* Ethernet on J13, as a second path so the update path does not depend on the
- * radio. The MAC does not currently initialize - see docs/MEASURED.md. */
+ * radio. Working at 100 Mbit full duplex - see docs/MEASURED.md. */
 &mac {
 	status = "okay";
+};
+
+/*
+ * CAN on the HMI connector, through FDCAN1.
+ *
+ * TX AND RX ARE THE OTHER WAY ROUND FROM THE mbed LIBRARY. pins_mc.h records
+ * "CAN TX PB_8 RX PH_13"; this package's pinctrl offers only fdcan1_RX on PB8
+ * and only fdcan1_TX on PH13, with no second FDCAN function on either. The
+ * silicon's table wins over another program's header, and the pad column in
+ * tools/terminals.csv has been corrected to match. Marked [MBED] wherever it
+ * is repeated, because it is still unconfirmed at the connector: nothing has
+ * yet put a frame on a wire and watched it arrive.
+ *
+ * Classic CAN, not CAN FD. The carrier's transceiver, the 120 ohm termination
+ * and every dongle likely to be on this bench are classic; FD would also need
+ * a data-phase bitrate nobody has specified. The controller is FD-capable and
+ * turning it on later is a Kconfig and a second timing block.
+ */
+&fdcan1 {
+	status = "okay";
+	pinctrl-0 = <&fdcan1_rx_pb8 &fdcan1_tx_ph13>;
+	pinctrl-names = "default";
+	bitrate = <500000>;
+	sample-point = <875>;
 };
 
 /* The PHY sources the RMII reference clock, and its PLL has to lock before

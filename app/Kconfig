@@ -29,6 +29,33 @@ config PMC_OPEN_PA1_ANALOG_SWITCH
 	  PA1_C ball: one pad pair cannot serve an analog input and a 50 MHz
 	  clock at the same time. See docs/MEASURED.md.
 
+config PMC_ENCODER_CHANNELS
+	int "How many encoder inputs to arm (0, 1 or 2)"
+	default 2
+	range 0 2
+	help
+	  A COUNT RATHER THAN A SWITCH, because it is the bisection tool.
+
+	  Arming both channels stopped the WiFi radio answering any SDIO
+	  IOCTL - measured, not suspected: with this at 0 the radio moved
+	  1967 packets, with it at 2 every ioctl failed to get a buffer.
+	  CAN was ruled out in the same cycle.
+
+	  0 arms none. 1 arms ENC0 only (PJ8, PH12, PH11). 2 adds ENC1
+	  (PC13, PI7, PJ10), and PC13 is the pin under suspicion: it sits on
+	  the same port as SDMMC1's PC8..PC12, which is the bus the radio is
+	  on, and it is the one encoder line with no alternate function at
+	  all on this package.
+
+config PMC_CANBUS
+	bool "Bring up CAN on FDCAN1"
+	default y
+	help
+	  FDCAN1 on PB8/PH13, and the transceiver's standby pin on PA13.
+
+	  The other half of the same bisection as PMC_ENCODERS. PA13 is also
+	  SWDIO, so this is the switch that gives a debugger back as well.
+
 config PMC_ETH_PHY_RELATCH
 	bool "Pulse the Ethernet PHY's reset again before the MAC initializes"
 	default y

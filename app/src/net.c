@@ -56,6 +56,9 @@
 #include "clock.h"
 #include "snapshot.h"
 #include "httpd.h"
+/* The encoder counters are differenced on this file's link poll rather than
+   on a timer of their own: it already runs at the rate the panel reads. */
+#include "enc.h"
 #include <zephyr/net/hostname.h>
 #include <zephyr/shell/shell.h>
 
@@ -319,6 +322,7 @@ again:
 	eth_sample();
 	thru_sample();
 	pmc_net_pick_default();
+	pmc_enc_sample();
 	k_work_reschedule(&link_poll_work, K_MSEC(LINK_POLL_MS));
 }
 

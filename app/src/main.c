@@ -40,6 +40,8 @@
 #include "rs485.h"
 #include "io_write.h"
 #include "persist.h"
+#include "enc.h"
+#include "canbus.h"
 #include "page_vars.h"
 
 
@@ -203,6 +205,22 @@ int main(void)
 	 * reported by the health check rather than stopping boot. */
 	(void)pmc_temp_init();
 	(void)pmc_rs485_init();
+	/*
+	 * Encoders arm six GPIO interrupts; CAN brings up FDCAN1 and drives
+	 * the transceiver's standby pin. Both report their own failures and
+	 * neither is allowed to stop the panel coming up.
+	 *
+	 * Each has a Kconfig that turns it off, and they are there to be used:
+	 * these two arrived together and the radio stopped answering in the
+	 * same build, which is a question one flash cycle settles and an
+	 * argument does not.
+	 */
+	/* pmc_enc_init() honors CONFIG_PMC_ENCODER_CHANNELS itself, including
+	   0, so there is no guard here - one place decides how many. */
+	(void)pmc_enc_init();
+	if (IS_ENABLED(CONFIG_PMC_CANBUS)) {
+		(void)pmc_can_init();
+	}
 
 	/*
 	 * LAST, AND THAT ORDER IS THE WHOLE POINT. pmc_persist_init() applies

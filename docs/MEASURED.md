@@ -2494,3 +2494,146 @@ character.
 A `show` / `hide` button now sits beside it, toggling only the input's `type`.
 `forget` returns it to hidden, because an empty field left on "show" is a field
 that will reveal the next token typed into it.
+
+## CAN and the encoders (2026-11-18, 0.115.0)
+
+### Neither encoder can use the hardware quadrature decoder
+
+Checked against `stm32h747xihx-pinctrl.dtsi` before a line of driver code, the
+same way AO2 was settled. STM32 encoder mode needs channels 1 and 2 of ONE
+timer on A and B:
+
+| channel | A | B | I |
+|---|---|---|---|
+| ENC0 | PJ8 = `tim8_ch1` | PH12 = `tim5_ch3` | PH11 |
+| ENC1 | PC13 = **analog only** | PI7 = `tim8_ch3` | PJ10 |
+
+ENC0's A and B are on different timers and B is CH3 rather than CH2. ENC1's A
+carries **no alternate function at all** on this package - PC13 is a
+backup-domain pin and can only ever be a GPIO here.
+
+So both are decoded in software from GPIO interrupts at 4x. That has a ceiling
+software decoding has and a timer does not: roughly 200 k edges per second
+across both channels, which a 1000-line encoder reaches at about 3000 rpm.
+**Past it counts are lost silently** - the state machine still sees legal
+transitions, just fewer of them. The error counter catches an ILLEGAL
+transition, which is a different failure, so a clean error count is not
+evidence of a correct count. The honest check is the distance between index
+pulses against the encoder's line count, which is why that is measured and
+reported rather than used to silently rewrite the position.
+
+### CAN: TX and RX are the other way round from the mbed library
+
+`pins_mc.h` records `CAN TX PB_8 RX PH_13`. This package offers only
+`fdcan1_rx` on PB8 and only `fdcan1_tx` on PH13, and no second FDCAN function
+on either pin. The silicon's own table wins over another program's header;
+`tools/terminals.csv` has been corrected and the overlay wires it that way.
+
+Still [MBED]-grade and unconfirmed at the connector: nothing has yet put a
+frame on a wire and watched it arrive.
+
+STB is on **PA13, which is also SWDIO**, so bringing CAN up ends any chance of
+attaching a debugger until the next reset. This carrier brings out no debug
+header, so nothing is lost here - and DO7 already sits on PA14, SWCLK, so the
+pair was half gone already. Its polarity is a guess and is labeled as one: the
+control reports the LEVEL it drives rather than claiming what that level means.
+
+### Proved with loopback, because one node cannot test a bus
+
+A CAN controller alone on a bus cannot complete a transmission - with nobody
+to acknowledge, it retries and then counts an error. That is the bus answering
+honestly, and it is counted separately from a real failure so the panel can
+say "nothing acknowledged this" rather than "the controller is broken".
+
+Internal loopback needs no wire and no second node:
+
+```
+frames   tx 2 ok, 0 unacknowledged, 0 failed; rx 2
+last 2 received, newest first:
+    129139 ms   0x7ff       2  01 02
+    126595 ms   0x123       4  de ad be ef
+```
+
+Identifiers, lengths and payloads all returned intact, so the driver, the
+accept-everything filter, the DLC conversion and the receive ring are all
+proved. **What is NOT proved is anything past the MCU pins**: the transceiver,
+the STB polarity, the termination and the connector are all untested, and need
+a second node on the wire.
+
+## A gpio_callback is a list node, and sharing one broke the WiFi radio
+
+The worst bug of the session, and the symptom pointed nowhere near the cause.
+
+Adding the encoders made the radio fail **every** SDIO IOCTL:
+
+```
+Error - failed to allocate a packet buffer for IOCTL
+Buffer alloc failed in function whd_wifi_get_ap_info at line 3334
+Connection request failed (-11)
+```
+
+It looked like resource exhaustion and was not. Measured first, which ruled
+the obvious answer out: `kernel heap` showed **117,240 bytes free**, and
+`net mem` showed every system pool fully available, RX 64/64 and TX DATA
+320/320. Nothing was exhausted.
+
+The radio has its **own private pool** - `NET_BUF_POOL_FIXED_DEFINE(airoc_pool,
+20, 2400, ...)` in `airoc_wifi.c`, which is why it appears in neither of those
+reports. Twenty buffers, all held from boot by IOCTLs that never completed.
+
+### The cause
+
+`struct gpio_callback` **begins with a `sys_snode_t`**: it IS the list node,
+not a thing that holds one. The first version of enc.c registered ONE callback
+struct on TWO ports, because every channel here straddles two - ENC0 is gpioj
+and gpioh, ENC1 is gpioc and gpioi:
+
+```c
+gpio_init_callback(&s->cb_ab, ab_isr, BIT(h->a.pin) | BIT(h->b.pin));
+rc = gpio_add_callback(h->a.port, &s->cb_ab);
+if (rc == 0 && h->b.port != h->a.port) {
+        rc = gpio_add_callback(h->b.port, &s->cb_ab);   /* same node, twice */
+}
+```
+
+That links one node into two lists and corrupts both. ENC0's A line is **PJ8**,
+so the shared node went into **port J's** callback list - where the AIROC WiFi
+driver keeps its host-wake callback on **PJ5**. The radio's interrupt path was
+destroyed, its transactions stopped completing, its buffers were never
+released, and every later call failed to allocate one.
+
+**The encoders kept counting correctly throughout**, which is why they looked
+innocent.
+
+Fixed with one callback struct per pin, each registered on its own port with a
+single-pin mask. The mask matters on its own: `BIT(8) | BIT(12)` registered on
+port J would also fire the handler for PJ12.
+
+### How it was found, which is the part worth keeping
+
+Not by reading. By a Kconfig that turns each half off:
+
+```
+CONFIG_PMC_ENCODER_CHANNELS=0, CAN on   ->  radio moved 1967 packets
+CONFIG_PMC_ENCODER_CHANNELS=1, CAN on   ->  radio dead
+CONFIG_PMC_ENCODER_CHANNELS=2, fixed    ->  radio moved 2841 packets
+```
+
+Two flash cycles took it from "two new subsystems and a dead radio" to "ENC0
+alone does it", which pointed at PJ8 and made the code defect obvious on
+re-reading. **The bisection switch was worth more than any amount of staring
+at the diff**, and it is kept in the tree for the next time.
+
+It also says something about where the suspicion went first: PC13 was the
+prime suspect throughout - a backup-domain pin with no alternate function,
+sitting on the same port as SDMMC1's PC8..PC12 - and it was innocent. The
+measurement disagreed with the theory on the first try.
+
+### Still untested
+
+- **The encoders have never been turned.** Both channels are armed and read
+  their lines; no shaft has moved, so no count, no direction and no index
+  pulse has ever been observed. ENC0 counting plus or minus by hand, and
+  index-to-index equalling 4x the line count, is the test that retires this.
+- **CAN has never reached a wire.** Loopback proves everything up to the MCU
+  pin and nothing beyond it.
