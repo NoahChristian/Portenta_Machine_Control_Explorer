@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "d15f7b85"
-#define PAGE_INDEX_BYTES 92600
+#define PAGE_INDEX_BUILD "38855c63"
+#define PAGE_INDEX_BYTES 94997
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -133,12 +133,33 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                  stroke-linejoin:round; stroke-linecap:round; }
   #aitrend .tr0 { stroke:#5ac8f5; } #aitrend .tr1 { stroke:#f5c35c; }
   #aitrend .tr2 { stroke:#c88cf5; }
-  .ledg { fill:#1f8a3c; } .leda { fill:#b4700f; }
-  .ledg.off { fill:#10301a; } .leda.off { fill:#3a2608; }
-  @keyframes ethact { 0%,38% { opacity:1 } 44%,92% { opacity:.16 } 100% { opacity:1 } }
+  /* THE RJ45's TWO LAMPS, LIT LIKE EVERY OTHER LAMP ON THIS PANEL. They were
+     #1f8a3c and #b4700f with no glow - muted enough beside the channel LEDs
+     and the bus lamps that a lit one did not read as lit at all. Same colors
+     and the same drop-shadow as .led.green.on and .led.amber.on now, so "on"
+     means one thing everywhere on the drawing. */
+  .ledg { fill:#38d16a; filter:drop-shadow(0 0 3px #38d16a); }
+  .leda { fill:#f5c35c; filter:drop-shadow(0 0 3px #f5c35c); }
+  .ledg.off { fill:#10301a; filter:none; }
+  .leda.off { fill:#3a2608; filter:none; }
+  /* Activity blinks between LIT and DARK, not between opaque and faint. The
+     old keyframe animated opacity over an already-dim fill, which read as a
+     lamp shimmering rather than one blinking. */
+  @keyframes ethact {
+    0%,38%   { fill:#f5c35c; filter:drop-shadow(0 0 3px #f5c35c); }
+    44%,92%  { fill:#3a2608; filter:none; }
+    100%     { fill:#f5c35c; filter:drop-shadow(0 0 3px #f5c35c); }
+  }
   .leda.act { animation:ethact 1.3s steps(1,end) infinite; }
-  /* An indicator that animates forever is exactly what this should suppress. */
-  @media (prefers-reduced-motion: reduce) { .leda.act { animation:none; } }
+  /* REDUCED MOTION MUST NOT STOP IT DEAD, and this rule used to. `animation:
+     none` left the lamp parked on whatever fill it had, so "there is traffic
+     on this link" became a lamp that never moves - indistinguishable from an
+     idle one, which is the single thing this indicator exists to show.
+     Slowed to a 2 s fade instead of frozen: no fast flashing, still plainly
+     alive. Same decision as the RS485 bus lamps above. */
+  @media (prefers-reduced-motion: reduce) {
+    .leda.act { animation:ethact 2s ease-in-out infinite; }
+  }
   .btnbody { fill:#aeb6bd; } .btn { fill:#3d454e; }
   .hdr { fill:#e9ecee; } .sma { fill:#c9a227; } .smai { fill:#55606c; }
   /* The indicator LEDs in their real colors: 3V3 red, 12V yellow, 24V
@@ -686,6 +707,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   <div class="row">
     <label for="tok">token</label>
     <input id="tok" type="password" placeholder="write token" autocomplete="off">
+    
+    <button id="tokshow" type="button" aria-pressed="false">show</button>
     <button id="tokclear" type="button">forget</button>
     <span class="dim" style="font-size:.75rem">kept in this tab only</span>
   </div>
@@ -1068,8 +1091,34 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
   tok.addEventListener('change', function () {
     try { sessionStorage.setItem('pmctok', tok.value); } catch (e) {}
   });
+  /*
+   * SHOW / HIDE THE TOKEN. Chrome draws no reveal control inside a password
+   * field and Edge does, so this field was readable on one browser and a row
+   * of dots on the other - with no way to check a paste, and a single wrong
+   * character reporting only "refused: bad or missing token".
+   *
+   * It does not re-render or re-store anything: the value in the input is
+   * already the value, and only the input's TYPE changes. The label says what
+   * the next press will do, which is the way round people read a button.
+   */
+  var tokShow = document.getElementById('tokshow');
+
+  tokShow.addEventListener('click', function () {
+    var hidden = tok.type === 'password';
+
+    tok.type = hidden ? 'text' : 'password';
+    tokShow.textContent = hidden ? 'hide' : 'show';
+    tokShow.setAttribute('aria-pressed', hidden ? 'true' : 'false');
+    tok.focus();
+  });
+
   document.getElementById('tokclear').addEventListener('click', function () {
     tok.value = '';
+    /* Back to hidden with it: an empty field on show is a field that will be
+       showing the next token typed into it, which nobody asked for. */
+    tok.type = 'password';
+    tokShow.textContent = 'show';
+    tokShow.setAttribute('aria-pressed', 'false');
     try { sessionStorage.removeItem('pmctok'); } catch (e) {}
     note('token forgotten', '');
   });

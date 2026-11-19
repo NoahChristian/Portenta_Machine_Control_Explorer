@@ -29,6 +29,27 @@ config PMC_OPEN_PA1_ANALOG_SWITCH
 	  PA1_C ball: one pad pair cannot serve an analog input and a 50 MHz
 	  clock at the same time. See docs/MEASURED.md.
 
+config PMC_ETH_PHY_RELATCH
+	bool "Pulse the Ethernet PHY's reset again before the MAC initializes"
+	default y
+	help
+	  The LAN8742A latches its configuration straps wrong at boot - mode
+	  000 instead of 111, and nINTSEL selecting nINT rather than REFCLKO,
+	  so the PHY sources no RMII reference clock and the MAC's DMA reset
+	  never completes. The part re-samples those straps on every rising
+	  edge of nRST, so pulsing it once more fixes it. See net.c and
+	  docs/MEASURED.md.
+
+	  Set this to n ONLY to reproduce the original fault, which is what it
+	  exists for: the fix works, and the reason the first latch is wrong
+	  is not yet known. An experiment that raises the PHY reset
+	  regulator's startup-delay-us needs this off, or the pulse hides
+	  whatever the delay did.
+
+	  With this off and no other change, Ethernet does not come up. The
+	  board is still reachable over WiFi and the health gate still
+	  passes, so a build with it off is safe to flash.
+
 endmenu
 
 source "Kconfig.zephyr"

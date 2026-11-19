@@ -2386,3 +2386,111 @@ That also means the fix is unlikely to belong upstream as a reordering, which
 is what the previous section guessed at. The remaining experiment is to vary
 the delay: if lengthening the regulator's startup delay alone makes the first
 latch correct, it is settling time and the number is measurable.
+
+## The PHY keeps its straps across a soft reset, and that faked a hardware fault (2026-11-18, 0.109.0)
+
+**CORRECTION to the section above.** "Ethernet works from boot, fix verified"
+was wrong about the second half. The fix had never been observed to do
+anything.
+
+`RST0ETH` carries **R5, the MCU's PJ15, and the PHY's nRST (pin 15)**, and R5's
+other end is on the 3V3 net - it is a **pull-up**. So when the MCU resets, PJ15
+goes high-impedance and R5 holds the PHY's reset released. **An MCU soft reset
+never resets the PHY.** It keeps whatever it latched at power-on.
+
+Every reset available from here - OTA, `POST /reset`, `sys_reboot` - is a soft
+reset. So:
+
+- one bad latch at some power-on explains Ethernet failing *consistently*
+  across dozens of reboots, which is what made it look like broken hardware;
+- `ethreset phy` fixed the latch by hand, and every soft reset since preserved
+  the GOOD latch;
+- which means `pmc_eth_phy_relatch()` has only ever run against an
+  already-correct PHY. It was never the thing that fixed anything.
+
+### The control, run properly, on a real power cycle
+
+`CONFIG_PMC_ETH_PHY_RELATCH=n` - a Kconfig that exists only to reproduce the
+original fault - then power removed and restored:
+
+```
+fw 0.109.0  up 199s
+eth: {"rc":0,"carrier":true,"link":true,"fullDuplex":true,
+      "speedMbit":100,"forced":false,"hasAddr":true,"initRes":0}
+
+mdio read mdio 0 0   ->  0x3100
+```
+
+**Ethernet came up with the fix compiled out.** `BMCR 0x3100` is the
+LAN8742A's textbook reset default - auto-negotiation enabled, 100 Mbit, full
+duplex, MODE strap 111. **The power-on latch is correct.**
+
+The latch value also CHANGED across the power cycle, 0x3000 to 0x3100, which
+is what proves the PHY genuinely cold-started - worth checking, because the
+jack's lamps stay lit with the board unpowered, so the link partner is feeding
+something back through the magnetics.
+
+### So what was actually broken, and what the fix is for
+
+The best-supported account: an early build had `CONFIG_ETH_INIT_PRIORITY=60`
+against a PHY reset regulator at 75 - the ordering bug already recorded in
+docs/CONFIG.md. That could latch the straps wrong, and once latched the
+pull-up carried the bad state through every subsequent soft reset **including
+every reset after the ordering was fixed**. The ordering fix looked like it
+had not worked, because nothing had re-latched the PHY since.
+
+Not proven - proving it means deliberately re-creating a bad latch, and there
+is no known way to do that from software. Stated as the account that fits
+every observation.
+
+`pmc_eth_phy_relatch()` is KEPT, as insurance rather than as a fix: it costs
+125 ms of boot and it makes a board that somehow lands in a bad latch heal
+itself on the next reset, which is exactly the failure that cost this project
+days. `CONFIG_PMC_ETH_PHY_RELATCH=n` reproduces the original conditions.
+
+**The lesson is about the test, not the PHY.** A reset that does not reset the
+thing under test is not a test. Every "it still fails after a reboot" in this
+investigation was evidence about one latch, re-read many times.
+
+## Reduced motion must not remove the information (2026-11-18, 0.111.0)
+
+Reported from the bench: the RJ45 on the panel was not showing solid green and
+blinking amber. This machine has `prefers-reduced-motion: reduce` set, and the
+rule was:
+
+```css
+@media (prefers-reduced-motion: reduce) { .leda.act { animation:none; } }
+```
+
+`animation:none` parks the lamp on whatever fill it had. "There is traffic on
+this link" became a lamp that never moves - **indistinguishable from an idle
+one**, which is the single thing the indicator exists to show. The accessibility
+preference did not reduce the motion, it deleted the message.
+
+Now a 2 s ease fade instead of a 1.3 s step blink: no fast flashing, still
+plainly alive. Verified by sampling the computed fill 24 times over two
+seconds - `rgb(245,195,92)` lit and `rgb(58,38,8)` dark, both present.
+
+**Second time this exact rule bit.** The RS485 bus lamps had it earlier the
+same day, where `animation:none` left them SOLID LIT - which read as
+"continuous traffic" rather than as "no animation". The general form:
+suppressing an animation must preserve what the animation was saying. If the
+only difference between two states is motion, removing motion removes the
+state.
+
+The lamps were also lit too dimly to read - `#1f8a3c` and `#b4700f` with no
+glow, against `#38d16a` and `#f5c35c` with a drop-shadow everywhere else on
+the same drawing. They now use the panel's own lit colors, so "on" means one
+thing across the whole graphic.
+
+## The token field could not be read back on Chrome (2026-11-18, 0.111.0)
+
+`<input type="password">` gets a reveal button from Edge and **none from
+Chrome**. So the write token could be proof-read on one browser and was a row
+of dots on the other - no way to check a paste, and one wrong character
+reports only `refused: bad or missing token`, which says nothing about which
+character.
+
+A `show` / `hide` button now sits beside it, toggling only the input's `type`.
+`forget` returns it to hidden, because an empty field left on "show" is a field
+that will reveal the next token typed into it.

@@ -928,6 +928,10 @@ SHELL_CMD_ARG_REGISTER(ethreset, NULL,
  */
 static int pmc_eth_phy_relatch(void)
 {
+	if (!IS_ENABLED(CONFIG_PMC_ETH_PHY_RELATCH)) {
+		LOG_WRN("PHY re-latch disabled: Ethernet will not come up");
+		return 0;
+	}
 	if ((RCC->AHB4ENR & RCC_AHB4ENR_GPIOJEN) == 0U) {
 		return 0;    /* no GPIOJ clock: the regulator never ran */
 	}
