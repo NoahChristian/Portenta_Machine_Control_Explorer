@@ -477,9 +477,29 @@
   .cfgbox .row { display:flex; gap:.4rem; align-items:center; margin:.4rem 0;
                  font-size:.78rem; flex-wrap:wrap; }
   .cfgbox label { color:var(--dim); min-width:4.2rem; }
-  .cfgbox select, .cfgbox input { font:inherit; font-size:.78rem;
+  .cfgbox input { font:inherit; font-size:.78rem;
       padding:.2rem .35rem; border-radius:4px; border:1px solid #8886;
       background:transparent; color:inherit; }
+  .cfgbox select { font:inherit; font-size:.78rem;
+      padding:.2rem .35rem; border-radius:4px; border:1px solid #8886; }
+  /* THE POPUP IS NOT THE CONTROL, and it does not inherit from the page.
+     These selects used to carry the input rule above - `background:transparent;
+     color:inherit` - which is right for the closed box, since it blends into a
+     panel that has no background of its own. But Chrome on Windows paints the
+     OPEN dropdown from the select's own computed background, and transparent
+     resolves to WHITE there while `color:inherit` is the dark theme's
+     near-white text. The list was white on white, legible only on whichever
+     row the highlight happened to be sitting on - which is exactly why the
+     symptom looked like "only the selected one shows".
+
+     So every select names its own pair, and the options name theirs. Canvas
+     and CanvasText are the system pair and follow `color-scheme: light dark`
+     at the top of this file, so one rule is correct in both themes - and on
+     this page Canvas is what the canvas behind the panel is already painted
+     with, so the closed box looks exactly as it did. An input needs none of
+     this: it has no popup, which is why it keeps the transparent rule. */
+  select { background:Canvas; color:CanvasText; }
+  select option, select optgroup { background:Canvas; color:CanvasText; }
   .cfgbox input[type=text] { width:100%; font-family:ui-monospace,monospace; }
   .cfgbox button { font:inherit; font-size:.78rem; padding:.22rem .6rem;
       border-radius:4px; border:1px solid #8886; cursor:pointer;
