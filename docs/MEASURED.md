@@ -2864,3 +2864,56 @@ flag says so rather than letting a gap look like quiet.
 leave the controller in normal mode, and the same two consoles show frames
 arriving off the wire - that is the only configuration in which the RX path is
 exercised at all.
+
+## TBD - measurements this board is wired for and has not taken
+
+Everything below is **built, served and waiting on hardware**. None of it
+needs code; each line names the thing to connect and the number that settles
+it. Written down because an untaken measurement that lives only in somebody's
+head is the same as one nobody thought of.
+
+The convention of this file is that a claim moves UP from inferred to
+measured by being deleted here and written as a dated capture. Nothing in this
+section may be cited as evidence.
+
+### CAN
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **A frame received off a real wire.** One node cannot test its own receiver; loopback is internal and measured to leave the TX pin recessive, so the RX path has never carried anything. | a second CAN node at 500 kbit/s on CANH/CANL, 120 ohm terminated | `tools/canmon.ps1` prints a frame this board did not send, and `rx` rises with `txOk` unchanged |
+| **The transceiver works at all.** Nothing past the MCU pin has been exercised. | nothing - one node is enough | normal mode, `can send`; the unacknowledged frame retransmits forever, so a meter or scope on CANH/CANL shows continuous activity. Silence there means the transceiver or STB is wrong |
+| **STB polarity.** PA13 is driven LOW at init on the common convention; the part is not identified and the carrier schematic is not to hand. | a meter on CANH/CANL, as above | `can stb high` / `can stb low` with traffic running: the level at which the bus goes quiet is standby |
+| **TX and RX are not swapped at the connector.** The pin mapping was corrected against the silicon's own table, against the mbed library, and is still `[MBED]`-grade. | a second node | it communicates, or it does not |
+| **Why LBCK with MON clear gives INTERNAL loopback**, where the M_CAN specification describes external. Measured 144,000 samples with the TX pin never low; the register semantics are unexplained. | nothing - read CCCR back at runtime | the actual MON bit after `can loopback` |
+
+### Encoders
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **Any count at all.** Both channels are armed and read their lines; no shaft has ever turned. Every number reported so far is zero. | an incremental encoder on ENC0 (A PJ8, B PH12, I PH11) | `tools/encmon.ps1` while turning by hand: count follows both directions and returns to the same value after a there-and-back turn |
+| **Counts per revolution.** The 4x claim is arithmetic, not observation. | the same encoder, one full turn | `per rev` equals 4x the encoder's line count, every revolution. A SHORT one means counts were lost - and a clean `illegal` count is not evidence against that |
+| **Where software decoding stops keeping up.** `PMC_ENC_MAX_EDGES_HINT` is 200000 and is an order-of-magnitude guess, not a measurement. | an encoder that can be driven fast | the rpm at which `per rev` first comes up short |
+| **The channel map at the connector.** Which terminal is A and which is B is `[MBED]`, read out of another program's header. | one encoder, moved between terminals | turning the shaft one way counts up, not down, and moving a lead changes the channel it affects |
+
+### Digital outputs
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **The DO channel map.** `[LIB]`, never checked against this hardware. | 24 V on J6 pin 1 and a lamp | `dowalk` lights each in turn; the LED that moves is the one it names |
+| **The PDIO read map**, and whether 24 V on terminal 04 really appears at index 2. Observed once and unexplained - see the reported/read-back discrepancy above. | 24 V moved one terminal at a time | the index that lights for each terminal, all twelve |
+
+### Served, and waiting
+
+Both monitors and both endpoints exist now so that connecting the hardware is
+the whole of the remaining work:
+
+```
+GET /can.json?from=<n>   cursor, frames plus a `lost` flag
+GET /enc.json            counts, rate, lines, index and errors
+tools/canmon.ps1         live CAN console
+tools/encmon.ps1         live encoder console
+```
+
+`/enc.json` carries no cursor and `/can.json` does, which is the distinction
+between a LEVEL and an EVENT: a count read late is still the right count, and
+a frame read late is gone.

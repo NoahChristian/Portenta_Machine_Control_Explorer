@@ -52,6 +52,7 @@
 #include "httpd.h"
 #include "rs485.h"
 #include "canbus.h"
+#include "enc.h"
 #include "io_post.h"
 #include "page_vars.h"
 
@@ -429,6 +430,81 @@ static struct http_resource_detail_dynamic can_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(can_resource, pmc_service, "/can.json", &can_detail);
+
+/* ------------------------------------------------------------ /enc.json -- */
+
+/*
+ * The encoders, on their own endpoint, so a monitor console can follow them
+ * without fetching the whole snapshot.
+ *
+ * NO CURSOR HERE, DELIBERATELY, and the difference from /can.json is worth
+ * stating. A CAN frame is an EVENT: miss it and it is gone, so that endpoint
+ * hands out a cursor and reports what was lost. An encoder count is a LEVEL:
+ * the current value contains everything an earlier sample would have said
+ * about position, so polling it can never "miss" a position.
+ *
+ * What polling CAN miss is an index pulse, which is an event wearing a
+ * counter's clothes. That is why `idx` and `per` travel beside the count:
+ * the hit count rises whether or not anybody was watching, and `per` is the
+ * distance between the last two pulses - the number that says whether the
+ * decoder kept up. Neither needs a cursor to stay true.
+ */
+static int enc_handler(struct http_client_ctx *client,
+		       enum http_transaction_status status,
+		       const struct http_request_ctx *request_ctx,
+		       struct http_response_ctx *response_ctx, void *user_data)
+{
+	static const struct http_header hdrs[] = {
+		{ .name = "Content-Type", .value = "application/json" },
+		{ .name = "Cache-Control", .value = "no-store" },
+	};
+	static char body[512];
+	size_t used = 0;
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(request_ctx);
+	ARG_UNUSED(user_data);
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	used += (size_t)snprintk(body + used, sizeof(body) - used,
+				 "{\"ms\":%lld,\"enc\":[", k_uptime_get());
+
+	for (uint8_t n = 0; n < PMC_ENC_COUNT; n++) {
+		struct pmc_enc_chan e;
+
+		pmc_enc_read(n, &e);
+		used += (size_t)snprintk(body + used, sizeof(body) - used,
+					 "%s{\"ok\":%s,\"count\":%d,"
+					 "\"rate\":%d,\"a\":%u,\"b\":%u,"
+					 "\"i\":%u,\"idx\":%u,\"per\":%d,"
+					 "\"err\":%u}",
+					 n ? "," : "",
+					 e.ready ? "true" : "false",
+					 e.count, e.rate, e.a, e.b, e.i,
+					 e.index_hits, e.per_index, e.errors);
+	}
+	used += (size_t)snprintk(body + used, sizeof(body) - used, "]}");
+
+	response_ctx->body = (const uint8_t *)body;
+	response_ctx->body_len = used;
+	response_ctx->headers = hdrs;
+	response_ctx->header_count = ARRAY_SIZE(hdrs);
+	response_ctx->final_chunk = true;
+	return 0;
+}
+
+static struct http_resource_detail_dynamic enc_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+	},
+	.cb = enc_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(enc_resource, pmc_service, "/enc.json", &enc_detail);
 
 /* ------------------------------------------------------------- /io ------ */
 
