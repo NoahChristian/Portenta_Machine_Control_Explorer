@@ -725,7 +725,8 @@ static int ota_handler(struct http_client_ctx *client,
 			pmc_auth_note_refusal();
 			s_ota_bad = true;
 			snprintk(s_ota_why, sizeof(s_ota_why),
-				 "no SECRET_API_TOKEN compiled in");
+				 "no token provisioned on this board - see "
+				 "docs/PROVISIONING.md");
 			goto reply;
 		}
 		if (!pmc_auth_ok(tok)) {

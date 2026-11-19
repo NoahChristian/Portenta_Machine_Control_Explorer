@@ -9,13 +9,16 @@
     should not be. They live in the `kvs` NVS partition, which sits outside both
     image slots and therefore survives every firmware update.
 
-    app/app_secrets.h is gitignored. The WiFi credentials in it are read only
-    by THIS script and pushed to NVS - but the file IS a build input, so do
-    not treat an edit here as provisioning-only: app/src/auth.c pulls it in
-    through __has_include("../app_secrets.h") and compiles SECRET_API_TOKEN
-    into the image. Changing the token therefore needs a rebuild and a flash,
-    and nothing rotates it per version. app_secrets.h.example is the committed
-    template, made by blanking every value rather than by copying this file.
+    app/app_secrets.h is gitignored and, since 2026-11-19, is NOT a build
+    input at all: nothing in it reaches the image. This paragraph used to warn
+    the opposite, because app/src/auth.c pulled the file in through
+    __has_include("../app_secrets.h") and compiled SECRET_API_TOKEN into the
+    binary - so changing the token meant a rebuild and a flash, and the token
+    was recoverable from any copy of the image. The token is provisioned now,
+    by tools/token_provision.ps1, exactly as the credentials here are.
+
+    app_secrets.h.example is the committed template, made by blanking every
+    value rather than by copying this file.
 
     Run once per board. After that the board rejoins by itself on every boot
     (app/src/net.c), which is what makes OTA repeatable rather than one-shot.
@@ -74,51 +77,13 @@ function Hide-Secret([string]$s) {
     return $s.Replace($pass, '<passphrase redacted>')
 }
 
-function Invoke-ZShell {
-    param([string]$Cmd, [int]$QuietMs = 2500)
-    $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
-    $sp.ReadTimeout = 500
-    try {
-        $sp.Open(); $sp.DtrEnable = $true; Start-Sleep -Milliseconds 450
-        $sp.DiscardInBuffer()
-        $sp.Write("$Cmd`r`n")
-        $sb = New-Object System.Text.StringBuilder
-        $last = [Diagnostics.Stopwatch]::StartNew()
-        while ($last.ElapsedMilliseconds -lt $QuietMs) {
-            try { $c = $sp.ReadExisting(); if ($c) { [void]$sb.Append($c); $last.Restart() } } catch {}
-            Start-Sleep -Milliseconds 60
-        }
-        return $sb.ToString()
-    } finally { if ($sp.IsOpen) { $sp.Close() } }
-}
-
-
-# --- FIND THE RIGHT BOARD, BY ASKING IT --------------------------------------
-#
-# Not by port number, and not by VID:PID. More than one Zephyr board lives on
-# this bench, they expose identical CDC-ACM shells, and at least one enumerates
-# with the same VID:PID as this one in some states. Picking by position has
-# already sent a command to the wrong board in this project.
-#
-# `mdnsname` answers with the hostname compiled into the image, so a board that
-# replies "portentaexplorer" is this project's firmware and nothing else is.
-# A board running something that does not implement the command simply does not
-# answer, which is the correct outcome.
-function Find-PmcPort {
-    param([string]$Preferred)
-
-    $candidates = if ($Preferred) { @($Preferred) } else {
-        [System.IO.Ports.SerialPort]::GetPortNames()
-    }
-
-    foreach ($c in $candidates) {
-        try {
-            $r = Invoke-ZShell -Port $c -Cmd 'mdnsname' -QuietMs 1800
-            if ($r -match 'portentaexplorer') { return $c }
-        } catch { continue }
-    }
-    return $null
-}
+# Invoke-ZShell and Find-PmcPort used to be defined here, and are now in
+# tools/pmcshell.ps1 so token_provision.ps1 shares them rather than carrying a
+# second copy that stops matching this one. Find-PmcPort in particular holds a
+# rule that was paid for - it identifies the board by ASKING it, never by port
+# number or VID:PID, because picking by position has already sent a command to
+# the wrong board in this project.
+. (Join-Path $PSScriptRoot 'pmcshell.ps1')
 
 $Port = Find-PmcPort -Preferred $Port
 if (-not $Port) {
@@ -143,18 +108,20 @@ Write-Host ""
 # never be found no matter how correct the passphrase is - worth remembering
 # before debugging the credential.
 Write-Host "==> storing in NVS" -ForegroundColor Cyan
-$r = Invoke-ZShell -Cmd ('wifi cred add -s "{0}" -k 1 -p "{1}"' -f $ssid, $pass)
+$r = Invoke-ZShell -Port $Port -Cmd ('wifi cred add -s "{0}" -k 1 -p "{1}"' -f $ssid, $pass)
 Hide-Secret $r | Write-Host
 
 Write-Host "==> stored networks" -ForegroundColor Cyan
-Hide-Secret (Invoke-ZShell -Cmd 'wifi cred list') | Write-Host
+Hide-Secret (Invoke-ZShell -Port $Port -Cmd 'wifi cred list') | Write-Host
 
 Write-Host "==> connecting" -ForegroundColor Cyan
-Hide-Secret (Invoke-ZShell -Cmd 'wifi cred auto_connect' -QuietMs 15000) | Write-Host
+# MaxMs above QuietMs, or the ceiling would cut the wait short: association
+# genuinely takes tens of seconds and the quiet timer is what should end it.
+Hide-Secret (Invoke-ZShell -Port $Port -Cmd 'wifi cred auto_connect' -QuietMs 15000 -MaxMs 45000) | Write-Host
 
 Start-Sleep -Seconds 5
 Write-Host "==> interface" -ForegroundColor Cyan
-Hide-Secret (Invoke-ZShell -Cmd 'net iface' -QuietMs 3000) | Write-Host
+Hide-Secret (Invoke-ZShell -Port $Port -Cmd 'net iface' -QuietMs 3000) | Write-Host
 
 Write-Host ""
 Write-Host "If an IPv4 address appeared above, the board is now updatable over the" -ForegroundColor DarkGray

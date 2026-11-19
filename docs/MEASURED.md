@@ -2034,6 +2034,12 @@ Refused before anything is touched, and counted where the panel can show it.
 
 ### The token is NOT safe from the image
 
+> **FIXED IN 0.8.0 (2026-11-19).** The capture below was true of every image
+> up to and including 0.7.x and is kept because it is what made the change
+> happen. The token is provisioned into NVS now and the same byte search over
+> the current image finds nothing - re-measured, below, under "The image
+> carries no secret". Do not quote this section as the current state.
+
 `auth.c` holds it as `static const char tok[] = SECRET_API_TOKEN` and compares
 it byte for byte. It is not hashed. A byte search of the signed image finds it:
 
@@ -2874,6 +2880,106 @@ flag says so rather than letting a gap look like quiet.
 leave the controller in normal mode, and the same two consoles show frames
 arriving off the wire - that is the only configuration in which the RX path is
 exercised at all.
+
+
+## The image carries no secret (2026-11-19, 0.8.0+126)
+
+The fix for "The token is NOT safe from the image" above. The token moved out
+of the firmware and into the `kvs` NVS partition, where the WiFi credentials
+have lived all along. Same byte search, same script, against the image running
+on the board:
+
+```
+scanning 1135736 bytes of zephyr.signed.bin
+
+SECRET_SSID        absent
+SECRET_PASS        absent
+SECRET_API_TOKEN   absent
+```
+
+Against 0.8.0+125, the last image built before the change, for a control:
+
+```
+scanning 1133839 bytes of zephyr.signed.bin
+
+SECRET_SSID        absent
+SECRET_PASS        absent
+SECRET_API_TOKEN   PRESENT in plaintext at offset 0xF7797  (32 bytes)
+```
+
+Both runs search for the values as they stand in `app/app_secrets.h`, so the
+"absent" result is a statement about THOSE bytes, not about a pattern that
+might have missed a different encoding. The control is the point: a scan that
+reports absent proves nothing unless the same scan reports present on an image
+that is known to carry it.
+
+### Fail closed, measured in that order
+
+The board was flashed and then interrogated BEFORE provisioning, because that
+state cannot be reached again afterwards without clearing the token:
+
+```
+POST /io  do=noop&token=<the token that used to be compiled in>
+  -> refused: no token provisioned on this board, so every write is
+     refused (1 since boot). docs/PROVISIONING.md
+```
+
+Then provisioned over the USB shell, and the board confirms the length without
+reporting the value:
+
+```
+==> storing in NVS
+token set "<token redacted>"
+stored 32 characters in NVS; it survives every OTA
+<inf> pmc_auth: write token provisioned (32 characters)
+
+==> state
+token status
+provisioned, 32 characters
+refusals   1 since boot
+```
+
+### The gate, from both sides
+
+```
+1. correct token, real verb:
+refused: unknown verb 'dout'
+
+2. wrong token:
+refused: bad or missing token (2 refusals since boot)
+
+3. no token at all:
+refused: bad or missing token (3 refusals since boot)
+```
+
+Case 1 is the one that matters and it looks like a failure. It is not: an
+unknown verb is refused by the DISPATCHER, which only runs after the token has
+been accepted. A request that gets as far as being told its verb is unknown
+has passed the gate. Cases 2 and 3 never reach it.
+
+### What this does not change
+
+The token still crosses the LAN in cleartext in every POST, because this is
+plain HTTP. NVS holds it in the clear too. Neither is a bug in this change:
+the copy that travels off the board was the one that mattered, and it is gone.
+
+### The provisioning script live-locked, and the board said why
+
+The first run hung past five minutes with an empty output file.
+`Invoke-ZShell` read "until quiet" with no ceiling, and the board was printing
+
+```
+<err> MAX31865: Fault Register: 0x04, Over/under voltage fault
+```
+
+about ten times a second with no RTD connected - faster than the 2.5 s quiet
+window, so the timer restarted forever and the call never returned. Fixed with
+an absolute `MaxMs` deadline alongside the quiet timer: the quiet timer decides
+when the REPLY is finished, the ceiling decides when to stop waiting for one.
+
+The MAX31865 fault spam is a separate, pre-existing condition - an open RTD
+input - and is **not** fixed here. It is recorded because it is the thing that
+will hang the next tool written against this console.
 
 ## TBD - measurements this board is wired for and has not taken
 

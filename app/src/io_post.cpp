@@ -138,8 +138,9 @@ extern "C" int pmc_io_post_step(enum http_transaction_status status,
 	 * lookup, let alone a pin. */
 	if (!pmc_auth_configured()) {
 		pmc_auth_note_refusal();
-		n = refuse("refused: no SECRET_API_TOKEN compiled in, so every "
-			   "write is refused (%u since boot)\n",
+		n = refuse("refused: no token provisioned on this board, so "
+			   "every write is refused (%u since boot). "
+			   "docs/PROVISIONING.md\n",
 			   pmc_auth_refusals());
 		goto done;
 	}
