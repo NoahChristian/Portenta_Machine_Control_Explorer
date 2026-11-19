@@ -2319,3 +2319,70 @@ well enough, the whole time.
 
 WiFi is still the default interface. Ethernet being up and faster is an
 argument for revisiting that, not a reason to have already done it.
+
+## Ethernet preferred, radio as fallback, decided every 2 s (2026-11-18, 0.108.0)
+
+`CONFIG_NET_DEFAULT_IF_ETHERNET=y` only sets the default at boot, before any
+link exists, and a compile-time setting cannot know whether a cable is plugged
+in. A default interface that is DOWN is worse than the slower one that is up -
+an outbound connection binds through the default, so DNS and NTP would fail
+with a perfectly good radio sitting beside them.
+
+So `pmc_net_pick_default()` re-makes the choice on every link poll:
+
+    Ethernet, if it is up AND has an IPv4 address
+    otherwise WiFi, if it is up AND has an IPv4 address
+    otherwise leave whatever is set alone
+
+**It keeps no memory of what it chose last time**, so there is no state to get
+stuck in and the same three lines handle every transition in both directions.
+
+Measured, taking interfaces down from the shell - not the same as pulling the
+cable, but it fails the same `net_if_is_up()` test the selector uses:
+
+```
+start                 default = 1   (eth0)
+after eth0 down       default = 2   (wlan0)
+after eth0 up         default = 1   (eth0)
+after wlan0 down      default = 1   (eth0)
+after wlan0 up        default = 1   (eth0)
+```
+
+Down and back, both ways. The fourth line is the one worth reading: the radio
+dropping while the wire is up changes nothing, because there is nothing better
+to fall back to.
+
+**UP, NOT CARRIER, AND AN ADDRESS AS WELL.** `net_if_is_up()` is admin state
+and carrier together. And an interface can hold carrier with no address for
+the whole of a DHCP exchange - several seconds on a cable newly plugged in -
+and making it the default in that window sends traffic out of an interface
+with no source address to put on it.
+
+**This is a fallback, not a failover.** Changing the default does not move
+existing connections. The HTTP server binds INADDR_ANY and keeps serving on
+both interfaces regardless; what the default steers is new outbound traffic
+and source-address selection. Unplugging the cable drops the sessions that
+were on it.
+
+### Narrowing why the boot-time strap latch is wrong
+
+One of the three candidates recorded in the previous section is now
+**eliminated**, without a flash cycle, by reading what the driver does.
+
+`pinctrl_apply_state()` is called inside `eth_initialize()` - that is
+`eth_stm32_hal_common.c:107`, and `eth_initialize` runs at
+`CONFIG_ETH_INIT_PRIORITY=80`. `pmc_eth_phy_relatch()` runs at **78**. So the
+successful second pulse happens with the MCU's Ethernet pads in exactly the
+state they were in at priority 75, when the regulator's release latched the
+straps wrong: not yet in alternate-function mode, either time.
+
+**Pad state cannot be the difference, because it is the same on both edges.**
+What differs is elapsed time and the explicit 25 ms assert plus 100 ms settle.
+So the cause is settling - a rail, the PHY's 25 MHz crystal, or the
+regulator's `startup-delay-us = <50000>` not being honored the way it reads -
+and not init ordering.
+
+That also means the fix is unlikely to belong upstream as a reordering, which
+is what the previous section guessed at. The remaining experiment is to vary
+the delay: if lengthening the regulator's startup delay alone makes the first
+latch correct, it is settling time and the number is measurable.
