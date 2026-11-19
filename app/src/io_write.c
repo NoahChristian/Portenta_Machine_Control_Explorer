@@ -19,6 +19,7 @@
 
 #include "expander.h"
 #include "io_write.h"
+#include "persist.h"
 
 LOG_MODULE_REGISTER(pmc_wr, LOG_LEVEL_INF);
 
@@ -288,8 +289,21 @@ enum pmc_write_result pmc_io_write(const char *chan, bool on,
 		return PMC_W_REFUSED;
 	}
 
+	/*
+	 * THE SAVE HOOK IS HERE, not in the HTTP handler, because the shell
+	 * sets channels too and a setting that is remembered only when it came
+	 * through the panel would be the worst kind of half-working. Noted on
+	 * the way OUT, below, and only for a command that was accepted - a
+	 * refusal changed nothing and must not cost a flash write.
+	 */
 	if (strncmp(chan, "PDIO", 4) == 0) {
-		return write_pdio(atoi(chan + 4), on, detail, cap);
+		const enum pmc_write_result r =
+			write_pdio(atoi(chan + 4), on, detail, cap);
+
+		if (r != PMC_W_REFUSED && r != PMC_W_ERROR) {
+			pmc_persist_note();
+		}
+		return r;
 	}
 	if (strncmp(chan, "DO", 2) == 0) {
 		const int n = atoi(chan + 2);
@@ -303,7 +317,13 @@ enum pmc_write_result pmc_io_write(const char *chan, bool on,
 			atomic_and(&pulse_armed, ~BIT(n));
 			pulse_saved[n] = on ? 1 : 0;
 		}
-		return write_do(n, on, detail, cap);
+
+		const enum pmc_write_result r = write_do(n, on, detail, cap);
+
+		if (r != PMC_W_REFUSED && r != PMC_W_ERROR) {
+			pmc_persist_note();
+		}
+		return r;
 	}
 
 	(void)snprintk(detail, cap, "%s is not a writable channel", chan);
@@ -392,6 +412,7 @@ enum pmc_write_result pmc_io_pulse(const char *chan, bool arm,
 			       (unsigned)PMC_PULSE_HIGH_MS,
 			       (unsigned)PMC_PULSE_PERIOD_MS,
 			       pulse_saved[n] == 1 ? "ON" : "OFF");
+		pmc_persist_note();
 		return PMC_W_COMMANDED;
 	}
 
@@ -401,5 +422,15 @@ enum pmc_write_result pmc_io_pulse(const char *chan, bool arm,
 	 * and the restore below is the last write to it.
 	 */
 	atomic_and(&pulse_armed, ~BIT(n));
-	return write_do(n, pulse_saved[n] == 1, detail, cap);
+
+	const enum pmc_write_result r =
+		write_do(n, pulse_saved[n] == 1, detail, cap);
+
+	/*
+	 * Noted whichever way the restore went: the MASK changed, and that is
+	 * the thing being remembered. A channel that stops pulsing must not
+	 * come back pulsing at the next power-up.
+	 */
+	pmc_persist_note();
+	return r;
 }

@@ -2062,3 +2062,116 @@ firmware - which stops a stray request, a scanner and an unauthorized script,
 and stops nobody who has an image of this firmware or who can watch the
 traffic. There is no second factor. **The control is the network, and the token
 is a latch on the gate, not a lock.**
+
+## Settings that survive a power cycle (2026-11-18, 0.103.0)
+
+Asked for: digital outputs, strobes, probe type and RS485 settings remembered
+from one power cycle to the next. Two decisions were taken before any code,
+because the obvious implementation collides with a safety interlock.
+
+### The interlock stays, and the restore waits for the health gate
+
+docs/SAFETY.md's interlock (0) drives every digital output de-energized in the
+earliest init, before networking, so that a reboot or an OTA revert cannot
+leave 24 V in whatever state another image set. Restoring remembered outputs at
+boot would simply delete that.
+
+The resolution chosen was to keep the interlock and restore **after the health
+gate passes** - all five checks, which means at least 60 s of uptime, both
+expanders answering, the analog switches open and the panel having served a
+real HTTP 200. So an image that crash-loops, or one about to be reverted
+because it never got healthy, never re-energizes anything.
+
+Measured end to end. Two outputs set, the board reset, polled throughout:
+
+```
+ 24s  up  31s  doOut 00000000  failing: uptime,panel
+ 33s  up  40s  doOut 00000000  failing: uptime
+ 49s  up  56s  doOut 00000000  failing: uptime
+ 58s  up  65s  doOut 00000000  failing: none        <- gate passes
+ 64s  up  68s  doOut 00100001  failing: none        <- restored
+```
+
+Sixty seconds de-energized, then back. The order is: everything low, prove it,
+then put back what was set.
+
+The off state is remembered too, which is not the same claim: a second cycle
+with both channels switched off came back `00000000` and stayed there, so a
+stored record is honored rather than a stored record being a list of things to
+switch on.
+
+RS485 and probe type restore during init instead, because neither energizes
+anything. Proved by changing them away from their defaults first - a setting
+that kept its default across a reboot proves nothing:
+
+```
+  baud       : 9600   (changed from 19200 before the reset)
+  probe type : K      (changed from PT100)
+```
+
+### The defect: the feature erased its own memory
+
+First version stored DO7 on, reset, and came back with the record reading
+`00000000`. Not a failed write - a successful one, of the wrong thing.
+
+`pmc_persist_init()` applies the stored configuration **through the same
+setters a person uses**, which is the right call: a stored value this image no
+longer accepts must be refused exactly as a typed one would be. But every one
+of those setters calls `pmc_persist_note()`. So restoring the RS485 line
+settings scheduled a save for three seconds later - while interlock (0) still
+had every output low and the health gate was fifty seconds away. The snapshot
+wrote all-off over the record it was about to restore from.
+
+**Before the restore, the live outputs are not a statement of anyone's intent -
+they are the interlock's starting position.** Saving them is saving the absence
+of the thing being remembered. `save_work()` now refuses to write the output
+record until the restore has happened, and `pmc_persist_restore_outputs()`
+notes once on its way out so the post-restore state is captured.
+
+It would have shipped looking like it worked: the panel showed the right thing,
+the record existed, `records written` counted up. Only a power cycle tells you,
+which is the one test a persistence feature cannot skip.
+
+### Smaller things the same test found
+
+- **`have_cfg` / `have_out` were load-time flags only**, so immediately after a
+  save the `persist` command said "none stored" while reporting `records
+  written: 2`. Two statements about the same store disagreeing in one screen.
+  Set on a successful write now.
+- **Records are versioned and rejected whole.** An OTA can change these structs
+  while NVS holds the previous image's bytes, and a struct read back at the
+  wrong size would energize outputs nobody chose. Both are `__packed`, carry a
+  version byte, and are rejected on either a length or a version mismatch -
+  falling back to "nothing remembered", which is the safe direction.
+- **The save is deferred 3 s and coalesced**, and skipped entirely when the
+  snapshot matches what is stored. Dragging a row of outputs on and off costs
+  one flash record, and putting a control back where it started costs none.
+
+## The DO1 boot indicator, removed (2026-11-18, 0.103.0)
+
+It drove digital output 01: steady on while running but not yet healthy,
+blinking once every check passed, dark when the firmware was not running at
+all. It is gone, and the reason is the feature above - an indicator the
+firmware strobes cannot also be a channel a person sets and expects to find
+where they left it. DO1 would have been the one output that silently refused to
+keep its state. Two owners, one 24 V high-side switch.
+
+Verified by sampling: ten reads over seven seconds, `00000000` every time,
+where the same sample used to catch the blink high about one time in sixteen.
+
+**What was given up, recorded so nobody has to rediscover it.** After a reset
+there is now nothing on this board that distinguishes "running but not yet
+healthy" from "in the DFU bootloader" from "crashed before POST_KERNEL" from
+"unpowered", unless the network is up and the panel can be reached. That
+distinction was the whole point of a blink rather than a level: a bootloader
+cannot fake a heartbeat. If it is ever wanted back it is a `k_work_delayable`
+toggling one channel - and the channel it takes must come out of the remembered
+set.
+
+`status_out.c` is now `do_interlock.c`, because a file named for a status
+output that no longer drives one is the kind of name that sends the next reader
+looking for a feature that was deleted. What remains in it is interlock (0) -
+which must not go - and the `dowalk` command, kept because lighting each output
+in turn is the measurement that retires the [LIB] DO channel map, and it
+deliberately bypasses the remembered set so a bring-up sweep is not a state
+anybody has to find restored at the next power-up.

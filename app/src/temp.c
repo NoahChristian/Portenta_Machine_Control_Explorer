@@ -23,6 +23,7 @@
  * apart and the panel says so.
  */
 #include "temp.h"
+#include "persist.h"
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
@@ -382,6 +383,7 @@ bool pmc_temp_mode_set(const char *name, char *detail, size_t cap)
 	LOG_INF("temp mode -> %s", pmc_temp_mode_name(m));
 	(void)snprintk(detail, cap, "mode %s - readings clear until the next sweep\n",
 		       pmc_temp_mode_name(m));
+	pmc_persist_note();
 	return true;
 }
 
@@ -420,6 +422,7 @@ bool pmc_temp_wires_set(uint8_t wires, char *detail, size_t cap)
 	(void)snprintk(detail, cap,
 		       "%u-wire - readings clear until the next sweep\n",
 		       (unsigned)wires);
+	pmc_persist_note();
 	return true;
 }
 

@@ -38,7 +38,7 @@
 
 #include <stm32_ll_system.h>
 
-#include "status_out.h"
+#include "persist.h"
 #include "health.h"
 
 LOG_MODULE_REGISTER(pmc_health, LOG_LEVEL_INF);
@@ -295,17 +295,25 @@ static void health_thread(void *a, void *b, void *c)
 
 	for (;;) {
 		if (health_evaluate(NULL)) {
-			/*
-			 * The indicator goes low FIRST, before confirming.
-			 *
-			 * Order matters: on a bench-flashed image there is
-			 * nothing to confirm, so boot_write_img_confirmed()
-			 * returning early must not leave the board looking
-			 * unhealthy forever. Health is what D1 reports, not
-			 * the state of the image trailer.
-			 */
-			pmc_status_set(false);
 			s_healthy = true;
+
+			/*
+			 * REMEMBERED OUTPUTS GO BACK HERE, AND NOWHERE ELSE.
+			 *
+			 * This is the instant interlock (0) is allowed to be
+			 * undone: every check has passed, which means at least
+			 * 60 s of uptime, both expanders answering, the analog
+			 * switches open and the panel having served a real
+			 * 200. An image that crash-loops, or one that is about
+			 * to be reverted because it never got here, never
+			 * re-energizes anything.
+			 *
+			 * Before the confirm, deliberately. Confirming writes
+			 * the image trailer and can return early on a
+			 * bench-flashed image; the outputs a person set should
+			 * not be waiting on the state of a flash trailer.
+			 */
+			(void)pmc_persist_restore_outputs();
 
 			if (boot_is_img_confirmed()) {
 				LOG_INF("healthy; image needed no confirmation");

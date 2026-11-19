@@ -181,11 +181,14 @@
      same amber darkened rather than gray, so an unlit box still reads as the
      right indicator. `unknown` is a port that did not answer: outlined and
      hollow, so "no reading" can never be mistaken for "reads low". */
-  #pdiorb { display:inline-flex; gap:3px; flex-wrap:wrap; }
-  #pdiorb i { width:1.45rem; height:1.05rem; border-radius:2px;
-              background:#3f3310; border:1px solid #6b5a2a;
-              font:10px/1.05rem ui-monospace,monospace; font-style:normal;
-              text-align:center; color:#6b5a2a; }
+  /* Size and spacing come from the shared rule above. These are the only
+     differences: not a control, and amber because PDIO is the amber family
+     throughout this panel. Empty is that amber darkened rather than gray, so
+     an unlit box still reads as the right indicator; `unknown` is a port that
+     did not answer - dashed and hollow, so "no reading" can never be mistaken
+     for "reads low". */
+  #pdiorb i { font-style:normal; cursor:default; text-align:center;
+              background:#3f3310; border-color:#6b5a2a; color:#9c8440; }
   #pdiorb i.on { background:#ffb020; border-color:#ffc860; color:#3a2a00; }
   #pdiorb i.unknown { background:transparent; border-style:dashed;
                       color:#8d959e; }
@@ -332,7 +335,11 @@
   .ctl .row { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;
               margin:.35rem 0; }
   .ctl label { font-size:.8rem; color:var(--dim); min-width:4.5rem; }
-  .ctl button { font:inherit; font-size:.8rem; padding:.25rem .6rem;
+  /* THE READ-BACK BOXES SHARE THE BUTTONS' RULE, so the row below the PDIO
+     buttons lines up with the row above it by construction rather than by two
+     sets of numbers that agree today. Only color and interactivity differ,
+     below; every dimension comes from here. */
+  .ctl button, #pdiorb i { font:inherit; font-size:.8rem; padding:.25rem .6rem;
                 border-radius:4px; border:1px solid #8886; cursor:pointer;
                 background:transparent; color:inherit; }
   .ctl button:hover { border-color:currentColor; }

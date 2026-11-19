@@ -39,6 +39,7 @@
 #include "temp.h"
 #include "rs485.h"
 #include "io_write.h"
+#include "persist.h"
 #include "page_vars.h"
 
 
@@ -202,6 +203,15 @@ int main(void)
 	 * reported by the health check rather than stopping boot. */
 	(void)pmc_temp_init();
 	(void)pmc_rs485_init();
+
+	/*
+	 * LAST, AND THAT ORDER IS THE WHOLE POINT. pmc_persist_init() applies
+	 * the stored RS485 line settings and probe type through the same
+	 * setters a person would use, so the drivers it configures have to
+	 * exist first. It does NOT touch an output - those go back from the
+	 * health thread, once every check has passed (persist.h).
+	 */
+	(void)pmc_persist_init();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)

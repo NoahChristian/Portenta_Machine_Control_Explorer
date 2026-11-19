@@ -28,6 +28,7 @@
  *   also reported, so a person can see it.
  */
 #include "rs485.h"
+#include "persist.h"
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
@@ -343,6 +344,7 @@ bool pmc_rs485_cfg_set(const struct pmc_485_cfg *in, char *detail, size_t cap)
 		       cfg.mode == PMC_485_RS232 ? "RS232" :
 		       cfg.mode == PMC_485_FULL ? "full duplex" : "half duplex",
 		       (unsigned)pmc_rs485_turnaround_us());
+	pmc_persist_note();
 	return true;
 }
 

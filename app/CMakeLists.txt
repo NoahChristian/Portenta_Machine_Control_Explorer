@@ -35,7 +35,8 @@ target_sources(app PRIVATE
     src/temp.c
     src/rs485.c
     src/snapshot.c
-    src/status_out.c
+    src/do_interlock.c
+    src/persist.c
     src/httpd.c
     src/page_vars.cpp
     src/io_post.cpp
