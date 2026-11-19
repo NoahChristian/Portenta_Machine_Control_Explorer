@@ -2822,7 +2822,7 @@ RS485 side has had since it was written:
   busy without anybody typing.
 - **`tools/canmon.ps1`** - the second console. It follows `/can.json` over the
   NETWORK rather than the serial port, which is the whole trick: the shell on
-  COM24 stays free for `can send` and `can rep` while this prints what
+  the serial port stays free for `can send` and `can rep` while this prints what
   arrives.
 
 Run end to end - canmon watching over Ethernet, the serial shell sending:
