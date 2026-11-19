@@ -57,10 +57,11 @@ static void print_image(const struct shell *sh)
 #if PARTITION_EXISTS(slot0_partition)
 	if (boot_read_bank_header(PARTITION_ID(slot0_partition), &hdr,
 				  sizeof(hdr)) == 0) {
-		shell_print(sh, "image      %u.%u.%u  slot0, %s",
+		shell_print(sh, "image      %u.%u.%u+%u  slot0, %s",
 			    hdr.h.v1.sem_ver.major,
 			    hdr.h.v1.sem_ver.minor,
 			    hdr.h.v1.sem_ver.revision,
+			    hdr.h.v1.sem_ver.build_num,
 			    boot_is_img_confirmed()
 				    ? "confirmed"
 				    : "NOT confirmed - reverts on reset");
@@ -94,9 +95,11 @@ static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "board      %s", CONFIG_BOARD_TARGET);
 	print_image(sh);
 	/*
-	 * The build stamp is the only thing that separates two builds carrying
-	 * the same version number, which is the usual state of a bench session:
-	 * the version changes when an OTA is cut, not when a fix is compiled.
+	 * The build stamp separates two COMPILES carrying the same version,
+	 * which the +build counter cannot: that counter moves when
+	 * tools/bumpver.py is run, and a bench session usually compiles
+	 * several times between bumps. So the line above answers "which image
+	 * is this" and this one answers "is it the one I just built".
 	 */
 	shell_print(sh, "built      %s %s", __DATE__, __TIME__);
 	shell_print(sh, "uptime     %ud %02u:%02u:%02u",

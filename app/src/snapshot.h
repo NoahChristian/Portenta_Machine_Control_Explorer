@@ -53,7 +53,15 @@ struct pmc_ai_read {
 
 struct pmc_slot_read {
 	uint8_t slot;
-	char    version[24];
+	/*
+	 * 32, not 24. The widest version the header can hold is
+	 * "255.255.65535+4294967295" - 24 characters, so 25 bytes with the
+	 * NUL, and 24 truncated it by one. snprintk would have truncated
+	 * silently and the panel would have shown a version short of its last
+	 * digit, which reads as a different image rather than as an error.
+	 * image.h:149 gives the widths: uint8, uint8, uint16, uint32.
+	 */
+	char    version[32];
 	bool    present;
 	bool    active;
 	bool    confirmed;

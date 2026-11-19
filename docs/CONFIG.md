@@ -489,7 +489,7 @@ real console.
 ```
 CONFIG_BOOTLOADER_MCUBOOT=y
 CONFIG_MCUBOOT_BOOTLOADER_MODE_SWAP_SCRATCH=y
-CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="0.69.0"
+CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION="0.8.0+124"
 ```
 
 
@@ -518,6 +518,25 @@ panel cannot disagree with the bootloader about which image is running.
 workqueue stack on its first boot and halted the board; burning the number
 keeps it from ever naming two different binaries, which is the one thing a
 version on a panel must not do.
+
+TWO FIELDS SINCE 2026-11-19, FOR THAT SAME REASON. Through 0.123.0 the minor
+field WAS the flash counter - one build, one bump, 123 of them - which made it
+a usable citation key, and MEASURED.md spends it on about twenty captures.
+Renumbering the release to 0.8.0 would have restarted that counter and walked
+it back through 0.101.0 and the rest, so a stamp already meaning one binary
+would come to mean two: precisely the failure the paragraph above exists to
+prevent, arriving by a different road.
+
+imgtool parses `maj.min.rev+build` (`scripts/imgtool/version.py`) and MCUboot
+carries the build number as its own `uint32` in the header (`image.h:149`:
+`uint8` major, `uint8` minor, `uint16` revision, `uint32` build), so one string
+does both jobs. `maj.min.rev` is the RELEASE and changes when a person decides
+it does; `+build` is the FLASH COUNTER and changes every single time. Zephyr's
+own default for this symbol is `"0.0.0+0"`, so the form is the expected one and
+not a local invention. `tools/bumpver.py --next` moves the build and leaves the
+release alone; naming a release advances the counter too, because cutting one
+is still a flash. `app/src/shell_mcuboot.c` prints all four fields out of the
+header, so the counter is readable on the board and not only in `prj.conf`.
 
 ## Real-time clock
 

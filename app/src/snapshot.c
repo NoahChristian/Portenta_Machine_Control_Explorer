@@ -211,10 +211,21 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 
 		if (boot_read_bank_header(slot_id[i], &hdr, sizeof(hdr)) == 0) {
 			s->slot[i].present = true;
+			/*
+			 * THE BUILD NUMBER IS PART OF THE NAME, not a detail.
+			 * Since 2026-11-19 maj.min.rev is the release and
+			 * +build is the flash counter (docs/CONFIG.md), so
+			 * printing only the first three makes every image of
+			 * one release identical here - which is the exact
+			 * thing a version on a panel must not do. It is read
+			 * from the header beside the others; leaving it out
+			 * was never cheaper, only shorter.
+			 */
 			snprintk(s->slot[i].version, sizeof(s->slot[i].version),
-				 "%u.%u.%u", hdr.h.v1.sem_ver.major,
+				 "%u.%u.%u+%u", hdr.h.v1.sem_ver.major,
 				 hdr.h.v1.sem_ver.minor,
-				 hdr.h.v1.sem_ver.revision);
+				 hdr.h.v1.sem_ver.revision,
+				 hdr.h.v1.sem_ver.build_num);
 		} else {
 			strncpy(s->slot[i].version, "-",
 				sizeof(s->slot[i].version) - 1);

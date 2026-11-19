@@ -12,6 +12,16 @@ machine's account are replaced with `<sdk>` and `<workspace>`. Committed files
 are read on another machine, where that prefix is useless, and the account name
 is not what any of these captures are evidence of. Elisions are always marked.
 
+**The version stamped on each entry changed shape on 2026-11-19, and the old
+ones still mean what they said.** Through `0.123.0` the minor field was the
+flash counter, so `0.107.0` on a heading names one binary and only one. From
+`0.8.0+124` onward the counter lives in the `+build` field and the first three
+digits are the release - `0.8.0+131` and `0.9.0+140` are different images of
+different releases, `0.8.0+124` and `0.8.0+125` different images of the same
+one. No stamp on this page is ambiguous in either scheme, which is the whole
+reason the counter was moved rather than restarted; `docs/CONFIG.md` has the
+arithmetic.
+
 This page is one of three, split by kind of confidence, and a fact has exactly
 one home. Moving something up the ladder means **deleting** it from the page
 below, not copying it:
