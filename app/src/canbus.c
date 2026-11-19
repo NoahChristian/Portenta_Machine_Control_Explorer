@@ -256,6 +256,124 @@ size_t pmc_can_log_read(struct pmc_can_frame *out, size_t cap)
 	return n;
 }
 
+/*
+ * The receive window as a cursor. `ring_head` is already a monotonically
+ * increasing frame index, so it IS the cursor - there is no second counter to
+ * keep in step with the ring.
+ */
+size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
+		       uint64_t *next, bool *lost)
+{
+	k_spinlock_key_t key;
+	size_t n = 0;
+
+	if (out == NULL || next == NULL || lost == NULL) {
+		return 0;
+	}
+
+	key = k_spin_lock(&ring_lock);
+
+	const uint64_t total = ring_head;
+	const uint64_t oldest = (total > PMC_CAN_LOG) ? total - PMC_CAN_LOG : 0;
+
+	*lost = false;
+	if (from < oldest) {
+		/* The frames asked for are gone. Saying so is the point: a
+		   monitor that silently resumes looks like a quiet bus. */
+		*lost = true;
+		from = oldest;
+	}
+
+	for (uint64_t i = from; i < total && n < cap; i++) {
+		out[n++] = ring[i % PMC_CAN_LOG];
+	}
+	*next = from + n;
+
+	k_spin_unlock(&ring_lock, key);
+	return n;
+}
+
+/* ------------------------------------------------------- the repeater --- */
+
+static struct can_frame rep_frame;
+static uint32_t         rep_period_ms;
+static atomic_t         rep_sent;
+
+static void rep_work_fn(struct k_work *w);
+static K_WORK_DELAYABLE_DEFINE(rep_work, rep_work_fn);
+
+static void rep_work_fn(struct k_work *w)
+{
+	ARG_UNUSED(w);
+
+	if (rep_period_ms == 0U || !started) {
+		return;
+	}
+	/*
+	 * No completion callback. On a bus with no second node the previous
+	 * frame is still in flight when the next period comes round, and the
+	 * outcome of a repeat is not what this is for - the state line already
+	 * reports frames in flight and the controller's error counters.
+	 */
+	(void)can_send(dev, &rep_frame, K_NO_WAIT, NULL, NULL);
+	atomic_inc(&rep_sent);
+	k_work_reschedule(&rep_work, K_MSEC(rep_period_ms));
+}
+
+bool pmc_can_repeat(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
+		    uint32_t period_ms, char *detail, size_t cap)
+{
+	if (period_ms == 0U) {
+		rep_period_ms = 0U;
+		(void)k_work_cancel_delayable(&rep_work);
+		(void)snprintk(detail, cap, "repeat stopped after %u frames",
+			       (unsigned)atomic_get(&rep_sent));
+		return true;
+	}
+	if (period_ms < 5U) {
+		(void)snprintk(detail, cap,
+			       "refused: %u ms is faster than this is for - "
+			       "5 ms minimum", period_ms);
+		return false;
+	}
+	if (len > 8U) {
+		(void)snprintk(detail, cap, "refused: 8 bytes maximum");
+		return false;
+	}
+	if (!started) {
+		(void)snprintk(detail, cap, "refused: the controller is "
+					    "stopped");
+		return false;
+	}
+
+	memset(&rep_frame, 0, sizeof(rep_frame));
+	rep_frame.id = id;
+	rep_frame.dlc = can_bytes_to_dlc(len);
+	rep_frame.flags = ext ? CAN_FRAME_IDE : 0;
+	if (len > 0U && data != NULL) {
+		memcpy(rep_frame.data, data, len);
+	}
+
+	atomic_set(&rep_sent, 0);
+	rep_period_ms = period_ms;
+	k_work_reschedule(&rep_work, K_NO_WAIT);
+
+	(void)snprintk(detail, cap, "repeating 0x%x every %u ms%s",
+		       (unsigned)id, period_ms,
+		       loopback ? " (loopback - it comes straight back)" : "");
+	return true;
+}
+
+void pmc_can_repeat_get(uint32_t *period_ms, uint32_t *sent)
+{
+	if (period_ms != NULL) {
+		*period_ms = rep_period_ms;
+	}
+	if (sent != NULL) {
+		*sent = (uint32_t)atomic_get(&rep_sent);
+	}
+}
+
 bool pmc_can_send(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
 		  char *detail, size_t cap)
 {
@@ -518,6 +636,31 @@ static int cmd_can(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "%s", detail);
 		return 0;
 	}
+	/*
+	 * `can rep <ms> <id> [bytes]` - the traffic source for a two-console
+	 * session: one window makes the bus busy, another watches it. `can
+	 * rep 0` stops.
+	 */
+	if (argc >= 2 && strcmp(argv[1], "rep") == 0) {
+		uint8_t data[8];
+		uint8_t len = 0;
+		uint32_t ms = (argc >= 3) ? (uint32_t)strtoul(argv[2], NULL, 0)
+					  : 0U;
+		uint32_t id = (argc >= 4) ? (uint32_t)strtoul(argv[3], NULL, 0)
+					  : 0x100U;
+
+		for (size_t i = 4; i < argc && len < sizeof(data); i++) {
+			data[len++] = (uint8_t)strtoul(argv[i], NULL, 16);
+		}
+		if (!pmc_can_repeat(id, id > 0x7ffU, data, len, ms, detail,
+				    sizeof(detail))) {
+			shell_error(sh, "%s", detail);
+			return -EINVAL;
+		}
+		shell_print(sh, "%s", detail);
+		return 0;
+	}
+
 	if (argc >= 3 && strcmp(argv[1], "send") == 0) {
 		const uint32_t id = (uint32_t)strtoul(argv[2], NULL, 0);
 		uint8_t data[8];
@@ -596,6 +739,8 @@ static int cmd_can(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "  can loopback [off]   internal loopback - proves the");
 	shell_print(sh, "                       controller with no bus at all");
 	shell_print(sh, "  can send <id> [bytes in hex]");
+	shell_print(sh, "  can rep <ms> <id> [bytes]   repeat; 'can rep 0' stops");
+	shell_print(sh, "  can txprobe          is the TX pin driven in this mode");
 	shell_print(sh, "  can bitrate <bps>    10k..1M");
 	shell_print(sh, "  can stb high|low     the transceiver's standby pin");
 	shell_print(sh, "  can recover          restart after BUS_OFF");
@@ -627,6 +772,30 @@ size_t pmc_can_log_read(struct pmc_can_frame *out, size_t cap)
 	ARG_UNUSED(out);
 	ARG_UNUSED(cap);
 	return 0;
+}
+
+size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
+		       uint64_t *next, bool *lost)
+{
+	ARG_UNUSED(from); ARG_UNUSED(out); ARG_UNUSED(cap);
+	if (next != NULL) { *next = 0; }
+	if (lost != NULL) { *lost = false; }
+	return 0;
+}
+
+bool pmc_can_repeat(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
+		    uint32_t period_ms, char *detail, size_t cap)
+{
+	ARG_UNUSED(id); ARG_UNUSED(ext); ARG_UNUSED(data);
+	ARG_UNUSED(len); ARG_UNUSED(period_ms);
+	(void)snprintk(detail, cap, "refused: no CAN in this build");
+	return false;
+}
+
+void pmc_can_repeat_get(uint32_t *period_ms, uint32_t *sent)
+{
+	if (period_ms != NULL) { *period_ms = 0; }
+	if (sent != NULL) { *sent = 0; }
 }
 
 bool pmc_can_send(uint32_t id, bool ext, const uint8_t *data, uint8_t len,

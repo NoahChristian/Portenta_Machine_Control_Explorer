@@ -51,6 +51,7 @@
 #include "health.h"
 #include "httpd.h"
 #include "rs485.h"
+#include "canbus.h"
 #include "io_post.h"
 #include "page_vars.h"
 
@@ -323,6 +324,111 @@ static struct http_resource_detail_dynamic rs485_detail = {
 	.user_data = NULL,
 };
 HTTP_RESOURCE_DEFINE(rs485_resource, pmc_service, "/rs485.json", &rs485_detail);
+
+/* ------------------------------------------------------------ /can.json -- */
+
+/*
+ * The CAN receive window as a CURSOR, so a monitor can follow the bus without
+ * missing frames or replaying them - exactly the shape of /rs485.json above,
+ * and for exactly the same reason.
+ *
+ * /state.json already carries the last few frames, and that is a different
+ * job: it is a snapshot for a page that redraws, and a page polling it WILL
+ * miss frames between polls. This endpoint exists so one console can watch
+ * every frame while another sends them.
+ *
+ * `lost` is reported rather than inferred. A monitor that silently resumes
+ * after an overrun shows a quiet bus, which is the one reading that must
+ * never be a lie here.
+ */
+static int can_handler(struct http_client_ctx *client,
+		       enum http_transaction_status status,
+		       const struct http_request_ctx *request_ctx,
+		       struct http_response_ctx *response_ctx, void *user_data)
+{
+	static const struct http_header hdrs[] = {
+		{ .name = "Content-Type", .value = "application/json" },
+		{ .name = "Cache-Control", .value = "no-store" },
+	};
+	static char body[2048];
+	struct pmc_can_frame frames[PMC_CAN_LOG];
+	struct pmc_can_state st;
+	uint64_t from = 0, next = 0;
+	bool lost = false;
+	uint32_t rep_ms = 0, rep_sent = 0;
+	size_t n, used = 0;
+
+	ARG_UNUSED(client);
+	ARG_UNUSED(user_data);
+
+	if (status != HTTP_SERVER_REQUEST_DATA_FINAL) {
+		return 0;
+	}
+
+	if (request_ctx != NULL && request_ctx->data != NULL &&
+	    request_ctx->data_len > 0) {
+		const char *q = (const char *)request_ctx->data;
+		const char *p = strstr(q, "from=");
+
+		if (p != NULL) {
+			from = (uint64_t)strtoull(p + 5, NULL, 10);
+		}
+	}
+
+	n = pmc_can_rx_read(from, frames, ARRAY_SIZE(frames), &next, &lost);
+	pmc_can_state_read(&st);
+	pmc_can_repeat_get(&rep_ms, &rep_sent);
+
+	used += (size_t)snprintk(body + used, sizeof(body) - used,
+				 "{\"next\":%llu,\"lost\":%s,\"state\":%d,"
+				 "\"loopback\":%s,\"bitrate\":%u,"
+				 "\"txErr\":%u,\"rxErr\":%u,\"rx\":%u,"
+				 "\"txQueued\":%u,\"txOk\":%u,\"txPin\":%u,"
+				 "\"repMs\":%u,\"repSent\":%u,\"f\":[",
+				 next, lost ? "true" : "false", st.bus_state,
+				 st.loopback ? "true" : "false",
+				 (unsigned)st.bitrate,
+				 (unsigned)st.tx_err_cnt,
+				 (unsigned)st.rx_err_cnt,
+				 (unsigned)st.rx_frames,
+				 (unsigned)st.tx_queued, (unsigned)st.tx_ok,
+				 (unsigned)st.tx_pin_toggling,
+				 (unsigned)rep_ms, (unsigned)rep_sent);
+
+	for (size_t i = 0; i < n && used < sizeof(body) - 96; i++) {
+		char hex[2 * 8 + 1] = { 0 };
+		size_t p = 0;
+
+		for (uint8_t b = 0; b < frames[i].dlc && b < 8U; b++) {
+			p += (size_t)snprintk(hex + p, sizeof(hex) - p, "%02x",
+					      frames[i].data[b]);
+		}
+		used += (size_t)snprintk(body + used, sizeof(body) - used,
+					 "%s{\"id\":%u,\"ext\":%u,\"rtr\":%u,"
+					 "\"dlc\":%u,\"d\":\"%s\",\"t\":%lld}",
+					 i ? "," : "", (unsigned)frames[i].id,
+					 frames[i].ext, frames[i].rtr,
+					 frames[i].dlc, hex, frames[i].stamp);
+	}
+	used += (size_t)snprintk(body + used, sizeof(body) - used, "]}");
+
+	response_ctx->body = (const uint8_t *)body;
+	response_ctx->body_len = used;
+	response_ctx->headers = hdrs;
+	response_ctx->header_count = ARRAY_SIZE(hdrs);
+	response_ctx->final_chunk = true;
+	return 0;
+}
+
+static struct http_resource_detail_dynamic can_detail = {
+	.common = {
+		.type = HTTP_RESOURCE_TYPE_DYNAMIC,
+		.bitmask_of_supported_http_methods = BIT(HTTP_GET),
+	},
+	.cb = can_handler,
+	.user_data = NULL,
+};
+HTTP_RESOURCE_DEFINE(can_resource, pmc_service, "/can.json", &can_detail);
 
 /* ------------------------------------------------------------- /io ------ */
 

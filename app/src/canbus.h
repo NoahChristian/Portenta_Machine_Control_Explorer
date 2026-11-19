@@ -43,10 +43,16 @@
 extern "C" {
 #endif
 
-/* How many received frames the panel can show. Small on purpose: this is a
-   window onto a live bus, not a logger, and a deep ring would invite being
-   read as one. */
-#define PMC_CAN_LOG 8
+/*
+ * How many received frames the ring holds.
+ *
+ * Was 8, which is a window and not a buffer: a monitor polling every 400 ms
+ * against a frame every 100 ms loses half of them and only finds out through
+ * the `lost` flag. 32 covers a few seconds of moderate traffic at about a
+ * kilobyte of RAM, and it is still a WINDOW - this is a bench instrument, not
+ * a logger, and nothing here pretends a busy bus can be followed completely.
+ */
+#define PMC_CAN_LOG 32
 
 struct pmc_can_frame {
 	uint32_t id;
@@ -121,6 +127,31 @@ struct pmc_can_state {
 int  pmc_can_init(void);
 void pmc_can_state_read(struct pmc_can_state *out);
 size_t pmc_can_log_read(struct pmc_can_frame *out, size_t cap);
+
+/*
+ * The receive window as a CURSOR, so a monitor can follow the bus without
+ * missing frames or replaying old ones - the same shape as
+ * pmc_rs485_rx_read(), and for the same reason.
+ *
+ * `from` is a frame index, not a position in the ring. Pass 0 to start at the
+ * beginning, then pass back whatever `next` returned. `lost` is set when the
+ * window asked for has already been overwritten, which is the one thing a
+ * monitor must be told rather than left to infer from a gap in the data.
+ */
+size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
+		       uint64_t *next, bool *lost);
+
+/*
+ * Repeat a frame every `period_ms` until stopped with period_ms = 0.
+ *
+ * A TRAFFIC SOURCE, so one console can make the bus busy while another
+ * watches it. The RS485 side has had this since it was written and it is the
+ * single most useful thing on that panel; CAN wants it for the same reason -
+ * a bus you have to keep poking by hand is a bus you cannot watch.
+ */
+bool pmc_can_repeat(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
+		    uint32_t period_ms, char *detail, size_t cap);
+void pmc_can_repeat_get(uint32_t *period_ms, uint32_t *sent);
 
 /* Send one classic frame. `hex` is up to 8 bytes already decoded. */
 bool pmc_can_send(uint32_t id, bool ext, const uint8_t *data, uint8_t len,

@@ -2803,3 +2803,64 @@ and the panel report.
   listener, settles whether the transceiver and the STB polarity are right -
   with no second node and no dongle.
 - **Nothing tests receive** without a real second node.
+
+## Transmit and receive, in two consoles (2026-11-18, 0.120.0)
+
+Testing a bus needs one thing making traffic and another watching it. Both
+ends were the same serial shell, so sending and watching took turns and
+nothing could be observed while it happened.
+
+Three pieces fix that, and none of them is new design - each mirrors what the
+RS485 side has had since it was written:
+
+- **`/can.json?from=<n>`** - the receive window as a CURSOR, returning the
+  frames after an index plus the next cursor, and a `lost` flag when the ring
+  wrapped past it. `/state.json` already carries the last few frames and that
+  is a different job: a page polling a snapshot WILL miss frames between
+  polls, and that is fine for a display and useless for a monitor.
+- **`can rep <ms> <id> [bytes]`** - a repeating transmitter, so the bus stays
+  busy without anybody typing.
+- **`tools/canmon.ps1`** - the second console. It follows `/can.json` over the
+  NETWORK rather than the serial port, which is the whole trick: the shell on
+  COM24 stays free for `can send` and `can rep` while this prints what
+  arrives.
+
+Run end to end - canmon watching over Ethernet, the serial shell sending:
+
+```
+  [ERROR_ACTIVE  loopback  500000 bit/s  txErr 0  rx 22  txPin idle]
+   153.740s  0xa1        1  01
+   154.654s  0x7ff       8  ff ee dd cc bb aa 99 88
+   155.587s  0x555       3  c0 ff ee
+   155.837s  0x555       3  c0 ff ee
+   156.087s  0x555       3  c0 ff ee
+  [ERROR_ACTIVE  loopback  ... rx 45  txPin idle  repeating every 250 ms, 20 sent]
+  [ERROR_ACTIVE  normal    ... rx 45  txPin idle]
+```
+
+Every frame arrived, the repeater held 250 ms to the millisecond, `rx` climbed
+22 to 45 for 23 frames, and **no `lost` gap was reported** - the 32-frame ring
+against a 200 ms poll keeps up with a 250 ms repeat. The status line carries
+the two numbers that explain a silent bus: the controller's state and whether
+the TX pin is moving at all.
+
+### The ring was a window and is now a buffer
+
+`PMC_CAN_LOG` was 8, which is enough for a panel that redraws and not enough
+for a monitor: at 8 frames a 400 ms poll against a 100 ms repeat loses half of
+them. 32 covers a few seconds at about a kilobyte. It is still a window -
+nothing here pretends a busy bus can be followed completely, and the `lost`
+flag says so rather than letting a gap look like quiet.
+
+### What this does and does not test with one board
+
+| mode | what moves | what it proves |
+|---|---|---|
+| loopback | frames come back internally | the controller, the filter, the ring, the endpoint and both consoles |
+| normal, one node | nothing is received; CANH/CANL carry continuous retransmissions | the transmitter and, with a meter on the pair, the transceiver |
+| two nodes | a frame off a real wire | everything, and nothing else does |
+
+**The setup does not change for the real test.** Put a second node on the bus,
+leave the controller in normal mode, and the same two consoles show frames
+arriving off the wire - that is the only configuration in which the RX path is
+exercised at all.
