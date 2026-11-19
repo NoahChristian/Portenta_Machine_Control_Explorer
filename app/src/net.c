@@ -726,6 +726,219 @@ void pmc_net_eth_read(struct pmc_eth *out)
 			      : (int32_t)(k_uptime_get() - s_eth_stamp);
 }
 
+/*
+ * `ethreset` - retry the MAC's DMA software reset, now, from the shell.
+ *
+ * THE EXPERIMENT THIS SETTLES. HAL_ETH_Init() fails at boot because it sets
+ * ETH_DMAMR_SWR and spins until the bit clears, and the bit never does. That
+ * reset is clocked by the RMII reference clock, so the recorded conclusion
+ * was that no clock arrives. Arduino's own schematic says otherwise: the PHY's
+ * nINT/REFCLKO (pin 14) drives the MCU's PA1 directly - the design REQUIRES
+ * the PHY to source the clock, so the module must be strapped for REF_CLK Out.
+ *
+ * Which leaves two possibilities the boot-time failure cannot tell apart:
+ *
+ *   no clock at all          -> this retry hangs too, exactly as boot did
+ *   a clock that arrives LATE -> this retry succeeds, and the fault is a race
+ *                               between the PHY leaving reset and the MAC
+ *                               being initialized, which is ours to fix
+ *
+ * Run it minutes after boot, when the PHY has demonstrably been up and
+ * answering MDIO the whole time. One command, one bit, one answer.
+ *
+ * SAFE ONLY BECAUSE THE DRIVER'S INIT FAILED, which is the same condition the
+ * register probe above relies on: no driver owns this peripheral, nothing is
+ * transmitting, and there is no DMA descriptor list to corrupt. It refuses to
+ * run if the MAC ever did initialize.
+ */
+static int cmd_ethreset(const struct shell *sh, size_t argc, char **argv)
+{
+	int64_t t0;
+	uint32_t waited;
+	const bool redo_phy = (argc > 1 && strcmp(argv[1], "phy") == 0);
+
+	if (device_is_ready(s_eth_dev)) {
+		shell_error(sh, "the MAC initialized normally - refusing to "
+				"reset a peripheral its driver owns");
+		return -EBUSY;
+	}
+	if ((RCC->AHB1ENR & RCC_AHB1ENR_ETH1MACEN) == 0U) {
+		shell_error(sh, "the ETH MAC clock gate is off; nothing to do");
+		return -ENODEV;
+	}
+
+	/*
+	 * `ethreset phy` - RE-LATCH THE PHY'S STRAPS, and the theory it tests.
+	 *
+	 * The LAN8742A samples its configuration straps on the RISING EDGE OF
+	 * nRST, not only at power-on, and nRST is PJ15 - ours to drive. Two
+	 * straps read wrong on this board: the mode came up 000 (10BASE-T half,
+	 * autoneg off) where the part's default is 111, and nINTSEL came up
+	 * selecting nINT rather than REFCLKO, which is why PA1 sits static.
+	 *
+	 * Those strap pins are the RXD and LED lines. At boot the PHY's reset
+	 * is released by a regulator at init priority 75, while the MCU's
+	 * Ethernet pins are not put into alternate-function mode until the MAC
+	 * initializes at 80. So the straps are latched while those pads are in
+	 * whatever state reset left them - which is not nothing, and is not
+	 * under the PHY's control.
+	 *
+	 * Pulsing nRST NOW re-latches them with every pad configured as it will
+	 * actually be used. If the straps come back different, the boot-time
+	 * ordering is the fault and it is ours. If they come back identical,
+	 * the strap state is set by the board and no amount of software fixes
+	 * it.
+	 */
+	if (redo_phy) {
+		uint16_t bmcr = 0;
+
+		shell_print(sh, "pulsing the PHY reset (PJ15) to re-latch the "
+				"straps...");
+		GPIOJ->BSRR = BIT(15 + 16);        /* PJ15 low: assert reset  */
+		k_msleep(25);
+		GPIOJ->BSRR = BIT(15);             /* release: straps latch   */
+		k_msleep(100);                     /* datasheet: 50 ms to use */
+
+		if (eth_mdio_raw((uint8_t)s_eth.phy_addr, 0U, &bmcr) == 0) {
+			shell_print(sh, "BMCR after re-reset: 0x%04x %s",
+				    bmcr,
+				    bmcr == 0U ? "(still mode 000)" :
+						 "(CHANGED)");
+		} else {
+			shell_warn(sh, "the PHY did not answer MDIO after the "
+				       "reset");
+		}
+		shell_print(sh, "");
+	}
+
+	/*
+	 * IS THERE A CLOCK ON PA1 AT ALL? Answered without a scope.
+	 *
+	 * GPIOA->IDR reflects the PAD, not the peripheral, and it does so even
+	 * when the pin is in alternate-function mode - so the CPU can sample
+	 * the RMII reference clock directly. A 50 MHz square wave sampled by a
+	 * read loop aliases into nonsense as a waveform, which does not matter:
+	 * the only question is whether both levels appear. A pin that is
+	 * TOGGLING gives a mix. A pin that is static, floating or undriven
+	 * gives one value a thousand times.
+	 *
+	 * This cannot measure the frequency and does not try. It separates
+	 * "no clock" from "a clock the MAC is not using", which is exactly the
+	 * fork the boot-time failure leaves open.
+	 */
+	{
+		const uint32_t moder = (GPIOA->MODER >> (1U * 2U)) & 0x3U;
+		const uint32_t af = (GPIOA->AFR[0] >> (1U * 4U)) & 0xfU;
+		unsigned ones = 0;
+
+		for (unsigned i = 0; i < 1000U; i++) {
+			if (GPIOA->IDR & BIT(1)) {
+				ones++;
+			}
+		}
+
+		shell_print(sh, "PA1 MODER %u (%s), AF%u (%s)",
+			    (unsigned)moder,
+			    moder == 0U ? "input" : moder == 1U ? "output" :
+			    moder == 2U ? "alternate function" : "analog",
+			    (unsigned)af,
+			    af == 11U ? "ETH - correct" : "NOT ETH");
+		shell_print(sh, "PA1 sampled 1000x: %u high, %u low  -> %s",
+			    ones, 1000U - ones,
+			    (ones == 0U || ones == 1000U)
+				    ? "STATIC: nothing is toggling this pin"
+				    : "TOGGLING: a clock is present");
+		shell_print(sh, "");
+	}
+
+	shell_print(sh, "before:  DMAMR 0x%08x  SWR %u",
+		    (unsigned)ETH->DMAMR,
+		    (unsigned)((ETH->DMAMR & ETH_DMAMR_SWR) ? 1U : 0U));
+
+	ETH->DMAMR |= ETH_DMAMR_SWR;
+
+	t0 = k_uptime_get();
+	while ((ETH->DMAMR & ETH_DMAMR_SWR) != 0U) {
+		if (k_uptime_get() - t0 > 500) {
+			break;
+		}
+	}
+	waited = (uint32_t)(k_uptime_get() - t0);
+
+	if ((ETH->DMAMR & ETH_DMAMR_SWR) == 0U) {
+		shell_print(sh, "after:   SWR CLEARED in %u ms", waited);
+		shell_print(sh, "");
+		shell_print(sh, "The reset completed, so the RMII reference "
+				"clock IS reaching the MAC.");
+		shell_print(sh, "The boot-time failure is then a RACE, not a "
+				"missing clock: the MAC");
+		shell_print(sh, "was initialized before the PHY was sourcing "
+				"REF_CLK. That is ours to fix.");
+	} else {
+		shell_print(sh, "after:   SWR STILL SET after %u ms", waited);
+		shell_print(sh, "");
+		shell_print(sh, "No reference clock reaches the MAC even now, "
+				"with the PHY long up");
+		shell_print(sh, "and answering MDIO. That is not a timing "
+				"problem. Next step is a");
+		shell_print(sh, "scope on PA1 - see docs/MEASURED.md.");
+	}
+	return 0;
+}
+
+SHELL_CMD_ARG_REGISTER(ethreset, NULL,
+		       "Retry the MAC's DMA reset ('ethreset phy' re-latches "
+		       "the PHY straps first).",
+		       cmd_ethreset, 1, 1);
+
+/*
+ * THE FIX: PULSE THE PHY'S RESET AGAIN, LATE, BEFORE THE MAC INITIALIZES.
+ *
+ * Measured 2026-11-18. At boot the LAN8742A latches its configuration straps
+ * wrong: mode 000 (10BASE-T half, auto-negotiation off, where the part's own
+ * default is 111) and nINTSEL selecting nINT instead of REFCLKO - so pin 14
+ * idles high as an interrupt line instead of sourcing the 50 MHz RMII
+ * reference clock. PA1 then sits static, the MAC's DMA software reset never
+ * completes for want of that clock, HAL_ETH_Init returns -EIO, and Zephyr
+ * reports no Ethernet at all. That cost this project a long detour into
+ * believing the module was strapped wrong in hardware and could not be fixed
+ * in firmware.
+ *
+ * It can. The part re-samples its straps on EVERY rising edge of nRST, not
+ * only at power-on, and nRST is PJ15. Pulsing it here - after the rails, the
+ * crystal and the pads have all settled, and before the MAC is initialized -
+ * latches the straps correctly. Measured from the shell before being made
+ * automatic: BMCR 0x0000 -> 0x3000, PA1 static -> toggling, DMA reset 500 ms
+ * timeout -> cleared in 0 ms, and phy_mii then reporting 100 Mb full duplex.
+ *
+ * WHAT IS NOT KNOWN is WHY the boot-time latch is wrong. Three candidates and
+ * no measurement separating them: the MCU's Ethernet pads are not yet in
+ * alternate-function mode when the regulator releases reset at priority 75
+ * (the MAC configures them at 80); a rail or the PHY's 25 MHz crystal is not
+ * settled that early; or the regulator's own startup delay is not being
+ * honored the way it reads. The fix works whichever it is, which is why it is
+ * a second pulse rather than a reordering - but it is a workaround over an
+ * unexplained cause, and that is worth knowing before trusting it.
+ *
+ * PRIORITY 78: after the ethernet_phy_en regulator at 75, before
+ * CONFIG_ETH_INIT_PRIORITY at 80. The literal matters - see the note in
+ * do_interlock.c about init levels being linker section names.
+ */
+static int pmc_eth_phy_relatch(void)
+{
+	if ((RCC->AHB4ENR & RCC_AHB4ENR_GPIOJEN) == 0U) {
+		return 0;    /* no GPIOJ clock: the regulator never ran */
+	}
+
+	GPIOJ->BSRR = BIT(15 + 16);   /* PJ15 low: assert the PHY reset */
+	k_busy_wait(25000);           /* datasheet minimum is 100 us    */
+	GPIOJ->BSRR = BIT(15);        /* release: the straps latch here */
+	k_busy_wait(100000);          /* 100 ms before the part is used */
+	return 0;
+}
+
+SYS_INIT(pmc_eth_phy_relatch, POST_KERNEL, 78);
+
 #else /* &mac disabled */
 
 #define PMC_HAVE_ETH 0

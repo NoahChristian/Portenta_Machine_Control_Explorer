@@ -205,6 +205,21 @@ Ordered deliberately, with room on both sides: the regulator at 75 releases
 reset, then the MAC, then the MDIO bus, then the PHY on it - and all of them
 before CONFIG_NET_INIT_PRIO=90 brings the interfaces up.
 
+AND THAT ORDERING WAS NOT ENOUGH, WHICH TOOK A WHILE TO ESTABLISH. Fixing it
+did not fix Ethernet: the MAC still failed init for want of the RMII
+reference clock, because the PHY latched its configuration straps wrong when
+the regulator released its reset - nINTSEL selecting nINT rather than REFCLKO,
+so pin 14 idled high instead of sourcing 50 MHz.
+
+pmc_eth_phy_relatch() in app/src/net.c now pulses that reset line once more at
+priority 78, between the regulator and the MAC. The part re-samples its straps
+on every rising edge of nRST, so the second pulse latches them correctly and
+Ethernet comes up at 100 Mbit full duplex. Why the first latch is wrong is
+still unexplained - one of the candidates is this very init order, the pads
+not being in alternate-function mode at priority 75 - and the measurements are
+in docs/MEASURED.md under "Ethernet works, and the conclusion above was
+wrong".
+
 MDIO COMES AFTER THE MAC, NOT BEFORE IT, which is the opposite of what the
 dependency looks like from the outside. In the devicetree the mdio node is a
 CHILD of ethernet@40028000, so mdio depends on the MAC rather than the other

@@ -1360,7 +1360,23 @@ correctly. Settle it by scoping PA1 for 50 MHz, or by booting the mbed
 `PortentaEthernet` example on this assembly: if Ethernet works there, this
 conclusion is wrong and the fault is in software after all.
 
-### What is left, and it is hardware
+### RETRACTED - IT WAS NOT HARDWARE, AND THE FIX IS TEN LINES
+
+Everything from "One cause fits all of it" to the end of this section is
+**wrong**. The strap theory was right that the straps were wrong, and wrong
+about why and about it being unfixable. The LAN8742A re-latches its straps on
+every rising edge of nRST, which is PJ15 and ours to drive; pulsing it once
+more before the MAC initializes makes Ethernet work from boot at 100 Mbit full
+duplex. See "Ethernet works, and the conclusion above was wrong (2026-11-18)"
+at the end of this file.
+
+Left in place rather than deleted because the measurements in it are sound and
+only the conclusion drawn from them was not. The fix is what matters here: a
+working 100 Mbit interface beats a well-documented broken one. The record of
+how the wrong conclusion was reached is kept because it is cheap to keep, not
+because it is the valuable part.
+
+### What was thought to be left, and thought to be hardware
 
 Three questions this bench cannot answer from software, and the next step is a
 scope on PA1 or the carrier schematic:
@@ -2175,3 +2191,131 @@ which must not go - and the `dowalk` command, kept because lighting each output
 in turn is the measurement that retires the [LIB] DO channel map, and it
 deliberately bypasses the remembered set so a bring-up sweep is not a state
 anybody has to find restored at the next power-up.
+
+## Ethernet works, and the conclusion above was wrong (2026-11-18, 0.107.0)
+
+The RJ45 carries traffic. `initRes 0`, carrier up, 100 Mbit full duplex,
+auto-negotiated, a DHCP lease, and the panel served over it:
+
+```
+eth: {"present":true,"rc":0,"carrier":true,"link":true,"fullDuplex":true,
+      "speedMbit":100,"forced":false,"hasAddr":true,"initRes":0}
+
+Ethernet link speed: 100 Mbits full-duplex
+DHCPv4 state      : bound
+
+full panel: 167393 bytes in 157 ms  = 1,041 kB/s
+```
+
+**1,041 kB/s over the wire against about 85 kB/s for the same payload over the
+radio** - better than ten to one, on the link that was reported as broken
+hardware.
+
+### The fix
+
+Ten lines, in `pmc_eth_phy_relatch()`: pulse PJ15 - the PHY's nRST - once more
+at init priority 78, after the regulator that releases it at 75 and before the
+MAC initializes at 80.
+
+That is the whole change. The LAN8742A samples its configuration straps on
+**every rising edge of nRST**, not only at power-on, and nRST is a GPIO this
+firmware already owns.
+
+### What was actually wrong
+
+At boot the PHY latched its straps wrong, two ways at once:
+
+| strap | latched | should be | consequence |
+|---|---|---|---|
+| MODE[2:0] | 000 | 111 | 10BASE-T half, auto-negotiation off |
+| nINTSEL | nINT | REFCLKO | **pin 14 idles high instead of sourcing 50 MHz** |
+
+The second one is what killed it. The MAC's DMA software reset is clocked by
+the RMII reference clock; with no clock the reset never completes,
+`HAL_ETH_Init()` returns -EIO after its 500 ms timeout, and Zephyr reports no
+Ethernet at all.
+
+### The three measurements that found it, in order
+
+**1. Arduino's own schematic says the PHY must source the clock.** Net
+`ET0RCLK` runs from the MCU to U5 pin 14, and the symbol names pin 14
+`nINT/REFCLKO`. Corroborated by three other pins whose numbers the symbol also
+gives: `ET0DV` to pin 11 (`CRS_DV/MODE2`), `ET0TX1` to 18 (`TXD1`), `ET0MDC`
+to 13. So the design REQUIRES REF_CLK Out mode - which means a module that
+cannot drive that clock would be a module on which Ethernet never worked for
+anybody, and Arduino ships and documents it.
+
+Also settled there: `ET0RCLK` lands on ball **N4, which is PA1**, while
+**PA1_C is ball T2**. The two are joined only by the SYSCFG analog switch, so
+the switch is NOT in the Ethernet clock path and opening it for AI2 costs
+Ethernet nothing. The Kconfig help's "genuine either/or" worry is answered: it
+is not one.
+
+**2. `ethreset` - retry the DMA reset at runtime.** This separates "no clock"
+from "a clock that arrives too late", which the boot-time failure cannot. Run
+80 seconds after boot with the PHY long up and answering MDIO:
+
+```
+before:  DMAMR 0x00000001  SWR 1
+after:   SWR STILL SET after 501 ms
+```
+
+Not a race. No clock, even at steady state.
+
+**3. Sample PA1 with the CPU - no scope needed.** `GPIOA->IDR` reflects the
+pad even in alternate-function mode, so a read loop is a crude clock detector.
+It cannot measure a frequency and does not need to; the only question is
+whether both levels appear.
+
+```
+PA1 MODER 2 (alternate function), AF11 (ETH - correct)
+PA1 sampled 1000x: 1000 high, 0 low  -> STATIC
+```
+
+Our pinctrl was right, and the pin was dead - held high, which is what an
+open-drain interrupt line looks like idle. That is pin 14 behaving as nINT.
+
+**Then the same three, after pulsing nRST:**
+
+```
+BMCR after re-reset: 0x3000 (CHANGED)          <- was 0x0000
+PA1 sampled 1000x: 996 high, 4 low  -> TOGGLING
+before:  DMAMR 0x00000000  SWR 0
+after:   SWR CLEARED in 0 ms
+<inf> phy_mii: PHY (0) Link speed 100 Mb, full duplex
+```
+
+### WHY the boot-time latch is wrong is still not known
+
+Three candidates, and no measurement separating them:
+
+- the MCU's Ethernet pads are not yet in alternate-function mode when the
+  regulator releases reset at priority 75 - the MAC configures them at 80;
+- a supply rail or the PHY's 25 MHz crystal is not settled that early;
+- the regulator's `startup-delay-us = <50000>` is not being honored the way it
+  reads.
+
+**The fix works whichever it is, and that is why it is a second pulse rather
+than a reordering.** But it is a workaround over an unexplained cause. If the
+first candidate is right the honest fix is upstream, in the board's init
+order, and worth sending there.
+
+### The error that cost the detour
+
+The earlier conclusion named a real mechanism - the straps were genuinely
+wrong, and nINTSEL genuinely was selecting nINT - and then asserted two things
+that were not measured: that the strap state came from the carrier's LED
+circuit, and that "the strap is the only control for REFCLKO, so the clock is
+not fixable in firmware". The second is false for a reason stated in the same
+datasheet: straps re-latch on nRST, and nRST is a pin this firmware drives.
+
+The two caveats recorded beside that conclusion were both right, and both
+named the test that would have settled it a day earlier: scope PA1, or boot
+the mbed example and see whether Ethernet works there. The first was never
+done because it needed a scope - and the CPU could have done it, badly but
+well enough, the whole time.
+
+### What this does not change
+
+WiFi is still the default interface. Ethernet being up and faster is an
+argument for revisiting that, not a reason to have already done it.
