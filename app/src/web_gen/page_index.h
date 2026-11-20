@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "93ff965a"
-#define PAGE_INDEX_BYTES 106437
+#define PAGE_INDEX_BUILD "6601bd31"
+#define PAGE_INDEX_BYTES 108363
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -819,6 +819,8 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 <h2 class="sect">CAN</h2>
 <div class="ctl">
   <div class="row"><label>state</label><span id="canstate" class="dim">reading...</span></div>
+  
+  <div class="row"><label>canopen</label><span id="canopen" class="dim">reading...</span></div>
   <div class="row">
     <label>send</label>
     <input id="canid" type="text" placeholder="0x123" style="width:6rem">
@@ -2247,6 +2249,17 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
     var inflight = (c.txQueued || 0) - (c.txOk + (c.txNoAck || 0) + c.txFail);
     var flight = inflight > 0
       ? ', <b class="bad">' + inflight + ' still in flight</b>' : '';
+
+    /*
+     * REJECTED IS NOT FAILED, and keeping them apart is what stops the
+     * subtraction above going negative. A send the controller would not
+     * accept never entered the queue; with one mailbox held by a frame
+     * nobody acknowledges, every send after it is refused immediately, and
+     * a heartbeat producer alone on a bus collects hundreds of these.
+     */
+    var rej = (c.txReject || 0) > 0
+      ? ' &middot; <b class="warn">' + c.txReject + ' refused before ' +
+        'queueing</b>' : '';
     var note = (inflight > 0 && c.state === 2)
       ? '<br><span class="warn">Nobody acknowledged that frame. The ACK bit ' +
         'must be driven by a different node &mdash; a transmitter sends ' +
@@ -2262,12 +2275,41 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       ' &middot; ' + (c.started ? 'started' : 'stopped') +
       ' &middot; STB ' + (c.stb ? 'high' : 'low') +
       '<br>tx ' + (c.txQueued || 0) + ' queued, ' + c.txOk + ' ok, ' +
-      c.txFail + ' failed' + flight + ' &middot; rx ' + c.rx +
+      c.txFail + ' failed' + flight + rej + ' &middot; rx ' + c.rx +
       ' &middot; controller errors tx ' + c.txErr + ' rx ' + c.rxErr +
       '<br>TX pin PH13 ' + (c.txPin ? '<b class="ok">toggling</b> &mdash; ' +
         'the transceiver is being driven'
         : '<span class="dim">static &mdash; nothing is transmitting</span>') +
       note;
+
+    /*
+     * THE NMT STATE IS NAMED, NOT PRINTED AS A BYTE. 0x7f and 0x05 are
+     * meaningless to anybody who has not got CiA 301 open, and the whole
+     * point of this panel is that the board explains itself.
+     */
+    var co = j.canopen;
+    var coEl = document.getElementById('canopen');
+    if (coEl) {
+      if (!co || !co.on) {
+        coEl.innerHTML = '<span class="dim">not in this image</span>';
+      } else {
+        var sts = { 0: 'boot-up', 4: 'stopped', 5: 'operational',
+                    127: 'pre-operational' };
+        coEl.innerHTML =
+          'node <b>' + co.node + '</b> &middot; ' +
+          '<b class="' + (co.state === 5 ? 'ok' : '') + '">' +
+          (sts[co.state] || ('state ' + co.state)) + '</b>' +
+          ' &middot; heartbeat ' +
+          (co.hbMs ? co.hbMs + ' ms' : '<span class="warn">off</span>') +
+          ' &middot; ids 0x' + (0x700 + co.node).toString(16) +
+          ' / 0x' + (0x600 + co.node).toString(16) +
+          '<br><span class="dim">sent ' + co.boots + ' boot-up, ' + co.hb +
+          ' heartbeat &middot; ' + co.nmt + ' NMT accepted &middot; ' +
+          co.sdo + ' SDO in, ' + co.sdoOk + ' answered, ' + co.sdoAbort +
+          ' aborted' + (co.drop ? ' &middot; ' + co.drop + ' dropped' : '') +
+          '</span>';
+      }
+    }
 
     document.getElementById('canloop').textContent =
       c.loopback ? 'loopback off' : 'loopback on';

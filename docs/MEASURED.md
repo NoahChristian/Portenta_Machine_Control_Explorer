@@ -2981,6 +2981,143 @@ The MAX31865 fault spam is a separate, pre-existing condition - an open RTD
 input - and is **not** fixed here. It is recorded because it is the thing that
 will hang the next tool written against this console.
 
+## A CANopen node, and what one board can prove about it (2026-11-20, 0.12.0+135)
+
+`can send` proves a controller. It does not answer the question anybody with
+a CAN tool actually asks, which is "is there a node on this bus". So there is
+a minimal CANopen node now: boot-up, producer heartbeat, the four NMT
+commands, and an expedited SDO server over five mandatory objects. Not a
+stack - no PDOs, no segmented transfer, no SYNC, no EMCY, no heartbeat
+consumer, no device profile. `app/src/canopen.h` lists what is missing and
+why that is the honest stopping point for a bring-up tool.
+
+```
+node       5   state pre-operational (0x7f)   heartbeat 1000 ms
+ids        heartbeat 0x705, SDO in 0x605, out 0x585, NMT 0x000
+identity   vendor 0x00000000  product 0x504d4345  rev 0x000c0000  serial 0x07642c07
+bus        started, 500000 bit/s, normal - a frame needs a second node to acknowledge it
+```
+
+Vendor id zero is a claim, not a placeholder: identifiers are assigned by CiA
+and none is assigned to this project, and the space is real - somebody owns
+whatever gets invented. Device type 0x1000 is zero for the same reason. This
+board would be a DS-401 generic I/O module if anything here conformed to that
+profile; nothing does, so writing 0x191 there would make a scanner report a
+module that then answers none of the profile's objects.
+
+### The self-test, which runs with nothing connected
+
+```
+canopen selftest - node 5, INTERNAL loopback.
+Nothing past the MCU is tested: no transceiver, no wire, no second node.
+
+  boot-up on reset           PASS  0x705  1 byte, 0x00
+  heartbeat cadence          PASS  200 and 200 ms apart at 200 ms, state 0x7f
+  nmt start                  PASS  heartbeat 0x05, wanted 0x05
+  nmt pre-operational        PASS  heartbeat 0x7f, wanted 0x7f
+  nmt stop                   PASS  heartbeat 0x04, wanted 0x04
+  sdo silent when stopped    PASS  no answer on 0x585 in 200 ms
+  sdo read 1018:02           PASS  cmd 0x43, 0x504d4345 ('PMCE')
+  sdo abort on 5555:00       PASS  cmd 0x80, abort 0x06020000
+  sdo write 1017:00 = 400    PASS  read back 400 ms, cmd 0x4b
+  restored                   PASS  pre-operational, heartbeat 1000 ms, loopback off
+
+  10 passed.
+```
+
+The board is both the node and the tool: internal loopback delivers a
+transmitted frame to the receive path without reaching the TX pin, so the
+node receives its own NMT commands and answers its own SDO requests. That
+exercises the state machine, every NMT transition, the object dictionary, the
+SDO server in both directions and the abort path, **and touches nothing past
+the MCU**. `tools/canopen_test.ps1` runs it over the USB shell and throws
+unless every check passes - a wrapper that printed the same text and exited 0
+either way would be a transcript, not a test.
+
+Step 6 is the one worth explaining. CiA 301 says a node in the stopped state
+answers NMT and its heartbeat and nothing else, so the correct response to an
+SDO request there is **no response at all** - not an abort, because an abort
+is a response. The test asserts a silence, which is the only check here that
+passes by nothing happening and therefore the only one that could pass
+because the whole node is dead. The nine checks around it are what make it
+evidence.
+
+### Two defects, both found by the test rather than by reading
+
+**The heartbeat period did not take effect until the period already running
+had elapsed.** Writing 0x1017 = 200 to a node whose period was 1000 ms left
+the next heartbeat up to a second away. From the bus that is indistinguishable
+from a node that ignored the write, which is how a flaky CANopen device
+looks.
+
+The first fix made it worse: the thread re-read the period when its loop next
+went round, which **is** up to a second later, so the next heartbeat moved
+later rather than sooner, and the test went from 1 heartbeat in the window to
+0. A timing change made from another thread is invisible to one already
+blocked. The fix is a poke - a sentinel queue entry with an id no CAN frame
+can carry (0xFFFFFFFF, past the 29-bit maximum) - so the setter wakes the
+thread and the deadline is recomputed at once. Polling on a short tick would
+also have worked, at the cost of a wakeup ten times a second forever to make
+a setting that changes twice a day feel responsive.
+
+**And the in-flight counter went negative, in front of everybody:**
+
+```
+frames   tx 27 queued, 21 ok, 615 failed, **4294966687 STILL IN FLIGHT**; rx 21
+```
+
+`tx_fail` was incremented both when `can_send()` refused a frame and when a
+queued frame completed with an error, and the in-flight figure subtracts it
+from `tx_queued` - but a refused send was never queued. The CANopen heartbeat
+is the first thing on this board that ever sent repeatedly into a full
+mailbox, and it made the arithmetic wrap. 600 refusals were also hiding
+inside a number that reads as "the controller is broken". Split into
+`tx_reject` (before the queue) and `tx_fail` (after it), so the difference
+cannot go below zero:
+
+```
+tx 3 queued, 0 ok, 0 failed, 3 still in flight, 51 refused before queueing
+```
+
+Three is the number of TX buffers the controller has. All three hold frames
+nobody acknowledged, and every send after that is refused immediately - which
+is the whole story of a lone CANopen node on a silent wire, told in one line.
+
+### `can_mcan: Message RAM access failure`, bisected
+
+It appeared once per self-test run. Two conditions, one command each:
+
+```
+A. bus silent, `can loopback on` then `off`        no MRAF
+B. a frame in flight, `can loopback on`            MRAF, on the switch
+```
+
+So the MRAF interrupt is raised when a mode change reconfigures message RAM
+with a transmission still pending - a property of switching modes with a
+frame in flight, not of loopback and not of the CANopen node. It is logged
+and nothing else; the self-test passes through it. Condition A is the
+control, and without it this would have been a guess about loopback.
+
+### An OTA failure that was NOT this, and the control that said so
+
+Two uploads failed back to back at 96% and 72%, where the one before them had
+succeeded. The heartbeat was transmitting into an unacknowledged bus at the
+time, and the board had the symptoms to match: ERROR_PASSIVE, tx error 131,
+the TX pin toggling continuously. A sibling finding on this bench - six GPIO
+interrupts stopping the radio answering SDIO IOCTLs - makes interrupt load a
+live suspect here.
+
+```
+heartbeat off, controller restarted  ->  OTA succeeded
+heartbeat on, ERROR_PASSIVE, TX pin toggling  ->  OTA succeeded
+```
+
+**The control refuted it.** The upload works fine with the bus transmitting,
+so CAN activity is not the cause and those two failures remain unexplained -
+most likely the radio, which already has a drop counter in `/state.json` for
+exactly this argument. Recorded because the correlation was good enough to
+act on and would have been written up as a finding without the second run.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it
@@ -2997,6 +3134,8 @@ section may be cited as evidence.
 | TBD | what to connect | what settles it |
 |---|---|---|
 | **A frame received off a real wire.** One node cannot test its own receiver; loopback is internal and measured to leave the TX pin recessive, so the RX path has never carried anything. | a second CAN node at 500 kbit/s on CANH/CANL, 120 ohm terminated | `tools/canmon.ps1` prints a frame this board did not send, and `rx` rises with `txOk` unchanged |
+| **That a standard tool sees the CANopen node.** The node answers itself through loopback, ten checks, every time; no other implementation has ever parsed a byte of it. | any USB-CAN adapter, 500 kbit/s, terminated | `candump can0` shows `705#7F` every second, `cansend can0 000#0105` moves it to `05`, and `canopen`'s scanner finds node 5 and reads 0x1018 |
+| **Whether the heartbeat is even transmitted.** Every heartbeat so far has been refused by a full mailbox or has sat unacknowledged; `txOk` has never moved in normal mode. | the same adapter - one listener is enough to acknowledge | `txOk` climbs once per heartbeat and `refused before queueing` stops rising |
 | **The transceiver works at all.** Nothing past the MCU pin has been exercised. | nothing - one node is enough | normal mode, `can send`; the unacknowledged frame retransmits forever, so a meter or scope on CANH/CANL shows continuous activity. Silence there means the transceiver or STB is wrong |
 | **STB polarity.** PA13 is driven LOW at init on the common convention; the part is not identified and the carrier schematic is not to hand. | a meter on CANH/CANL, as above | `can stb high` / `can stb low` with traffic running: the level at which the bus goes quiet is standby |
 | **TX and RX are not swapped at the connector.** The pin mapping was corrected against the silicon's own table, against the mbed library, and is still `[MBED]`-grade. | a second node | it communicates, or it does not |
@@ -3018,6 +3157,31 @@ section may be cited as evidence.
 | **The DO channel map.** `[LIB]`, never checked against this hardware. | 24 V on J6 pin 1 and a lamp | `dowalk` lights each in turn; the LED that moves is the one it names |
 | **The PDIO read map**, and whether 24 V on terminal 04 really appears at index 2. Observed once and unexplained - see the reported/read-back discrepancy above. | 24 V moved one terminal at a time | the index that lights for each terminal, all twelve |
 
+### Temperature
+
+Nothing in this file is a temperature reading. The family is swept, the mux
+dwell is argued for in `temp.c` and the fault registers are rendered, and no
+probe has ever been on a terminal.
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **Any temperature at all.** Every number this family has reported came from an empty terminal block. | a PT100 on TEMP0, or a decade box at 100 ohm | the panel's Temperature block reads about 0 C at 100 ohm and follows the box, and its fault cell reads clear instead of `0x04` over/under voltage. This family has **no console reader and no JSON endpoint** - the panel is the only way to see it, which is worth fixing before the probe arrives rather than after |
+| **That the MAX31855 answers at all.** With no probe every thermocouple read is "open", which is equally consistent with three empty terminals and with a chip that is not responding - an undriven MISO reads as all ones, and all ones has the fault bit set. The raw word is captured for exactly this reason. | a K-type thermocouple on TEMP0 | the raw word is neither `0xFFFFFFFF` nor `0x00000000`, and bits 4..15 carry a die temperature that looks like a warm room |
+| **Which channel the mux actually selects.** SEL0-2 are one-hot and `TH` throws between the two parts; the map is `[MANUAL]`, from datasheet 3-8 and 3-9. | one probe, moved between the three terminals | the channel whose reading changes is the one the terminal is wired to |
+| **The J coefficient.** J is read through the K-type part with `S_K/S_J` applied to the delta from the cold junction. Derived from the Seebeck ratio, never checked against a J probe, and the panel marks it approximate. | a J thermocouple and a reference temperature | the corrected reading against the reference, across a span - both Seebeck coefficients are curves, so one point proves little |
+| **Three-wire RTD.** Two handles on one chip select differ only in the three-wire bit; reading through one of them IS selecting the wire count. Never exercised with a three-wire probe. | a three-wire PT100 | the same resistance reads the same temperature through both handles when it should, and differently when the lead resistance is real |
+
+### RS485, past the jumper
+
+RS485 is proven end to end and the control-line polarities were settled by
+experiment - that capture is above, dated 2026-11-17. What a jumper cannot
+provide is a second station.
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **A reply.** Reading your own bytes back proves the wire, not the protocol. Nothing here has parsed a response, timed a turnaround against a real slave, or seen an exception code. | any Modbus RTU slave on the pair | a read of a holding register returns the slave's data, and a bad function code returns an exception rather than a timeout |
+| **Whether the turnaround is fast enough.** `/RE` and `DE` are driven in software from the UART's own completion, which is the part the datasheet says nothing about. A slave that answers inside the turnaround window is invisible. | the same slave, at the top baud rate | the reply lands at 115200 as well as at 9600; a rate that works slow and fails fast is the turnaround, not the wiring |
+
 ### Served, and waiting
 
 Both monitors and both endpoints exist now so that connecting the hardware is
@@ -3028,6 +3192,8 @@ GET /can.json?from=<n>   cursor, frames plus a `lost` flag
 GET /enc.json            counts, rate, lines, index and errors
 tools/canmon.ps1         live CAN console
 tools/encmon.ps1         live encoder console
+tools/canopen_test.ps1   the CANopen self-test, asserted
+canopen status           node, ids, identity and counters
 ```
 
 `/enc.json` carries no cursor and `/can.json` does, which is the distinction

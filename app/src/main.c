@@ -43,6 +43,7 @@
 #include "whoami.h"
 #include "enc.h"
 #include "canbus.h"
+#include "canopen.h"
 #include "page_vars.h"
 
 
@@ -221,6 +222,18 @@ int main(void)
 	(void)pmc_enc_init();
 	if (IS_ENABLED(CONFIG_PMC_CANBUS)) {
 		(void)pmc_can_init();
+		/*
+		 * AFTER the controller, because it installs the receive tap
+		 * and pmc_can_init() is what adds the filter that feeds it.
+		 * It also starts transmitting a heartbeat, which on a wire
+		 * with no second node leaves the controller retransmitting in
+		 * ERROR_PASSIVE - that is what a lone CAN node does, it is
+		 * reported rather than hidden, and CONFIG_PMC_CANOPEN turns
+		 * it off.
+		 */
+		if (IS_ENABLED(CONFIG_PMC_CANOPEN)) {
+			(void)pmc_canopen_init();
+		}
 	}
 
 	/*

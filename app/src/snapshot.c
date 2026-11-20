@@ -177,6 +177,7 @@ void pmc_snapshot_take(struct pmc_snapshot *s)
 	}
 	pmc_can_state_read(&s->can);
 	s->n_can_log = pmc_can_log_read(s->can_log, ARRAY_SIZE(s->can_log));
+	pmc_canopen_state_read(&s->co);
 	pmc_net_info_read(&s->net);
 	pmc_net_thru_read(&s->thru);
 
@@ -621,7 +622,8 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      "\"can\":{\"present\":%s,\"started\":%s,\"loopback\":%s,"
 		      "\"stb\":%u,\"bitrate\":%u,\"state\":%d,"
 		      "\"txErr\":%u,\"rxErr\":%u,\"txOk\":%u,\"txNoAck\":%u,"
-		      "\"txFail\":%u,\"txQueued\":%u,\"txPin\":%u,\"rx\":%u,\"log\":[",
+		      "\"txFail\":%u,\"txQueued\":%u,\"txReject\":%u,"
+		      "\"txPin\":%u,\"rx\":%u,\"log\":[",
 		      s->can.present ? "true" : "false",
 		      s->can.started ? "true" : "false",
 		      s->can.loopback ? "true" : "false",
@@ -630,6 +632,7 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 		      (unsigned)s->can.tx_err_cnt, (unsigned)s->can.rx_err_cnt,
 		      (unsigned)s->can.tx_ok, (unsigned)s->can.tx_no_ack,
 		      (unsigned)s->can.tx_fail, (unsigned)s->can.tx_queued,
+		      (unsigned)s->can.tx_reject,
 		      (unsigned)s->can.tx_pin_toggling,
 		      (unsigned)s->can.rx_frames);
 
@@ -649,6 +652,25 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 			      f->dlc, hex, f->stamp);
 	}
 	n += snprintk(out + n, cap - n, "]},");
+
+	/*
+	 * The CANopen node, beside the controller it speaks through rather
+	 * than in a section of its own: a node id without the bus state next
+	 * to it is half an answer, because a node in pre-operational on a
+	 * controller nobody acknowledges is not a node anything can reach.
+	 */
+	n += snprintk(out + n, cap - n,
+		      "\"canopen\":{\"on\":%s,\"node\":%u,\"state\":%u,"
+		      "\"hbMs\":%u,\"boots\":%u,\"hb\":%u,\"nmt\":%u,"
+		      "\"sdo\":%u,\"sdoOk\":%u,\"sdoAbort\":%u,"
+		      "\"drop\":%u,\"rev\":%u,\"serial\":%u},",
+		      s->co.enabled ? "true" : "false",
+		      (unsigned)s->co.node, (unsigned)s->co.state,
+		      (unsigned)s->co.hb_ms, (unsigned)s->co.boots,
+		      (unsigned)s->co.hb_sent, (unsigned)s->co.nmt_rx,
+		      (unsigned)s->co.sdo_rx, (unsigned)s->co.sdo_ok,
+		      (unsigned)s->co.sdo_abort, (unsigned)s->co.dropped,
+		      (unsigned)s->co.revision, (unsigned)s->co.serial);
 
 	/*
 	 * THE RADIO'S OWN DROP COUNTER, and the reason it is here.

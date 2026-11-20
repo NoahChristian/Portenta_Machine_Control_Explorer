@@ -45,6 +45,10 @@ Working on hardware:
 | Writes | 8 digital out (level and pulse), 12 PDIO, 3 analog out — token-gated |
 | Supply | 24 V presence inferred from the encoder pull-ups; 3V3 and 12 V indicated |
 | Clock | PCF8563 set from NTP, carried through power-off by the on-board supercap |
+| Serial | RS485 proven end to end into its own jumpered pair, Modbus RTU frames built with the CRC computed; RS232 and all eight control lines driven from the panel |
+| Temperature | Three channels across two converters sharing one bus and one mux, read as a rotation rather than a snapshot, with the converter's own fault word rendered |
+| Encoders | Both channels armed and decoded in software, counting edges, rate, index pulses and illegal transitions |
+| CAN | FDCAN1 at 500 kbit/s, a 32-frame receive window with a cursor, a repeating transmitter, and a minimal CANopen node with its own self-test — all of it proven in internal loopback, which touches nothing past the MCU |
 | Panel | Rendered on the board from `web/index.html`, with a drawing of the carrier whose terminals carry live state |
 
 **Each write says only what it can prove.** A digital output reports
@@ -55,10 +59,20 @@ reads low with no fault flag, which means the `24V IN` terminal is unfed
 rather than that anything failed. An analog output reports the value it set,
 and says the volts-per-count is derived rather than measured.
 
-Not built yet: temperature, encoder counts, RS485 and CAN. Only one channel
-has been confirmed at the connector with a meter, so the rest of the board
-drawing renders dashed — the expander channel maps are transcribed, not yet
-proven here.
+**What is left is hardware, not code.** Every family above is built and
+served; what none of them has had is something on the other end of the
+terminal. No probe has been connected to a temperature channel, CAN has never
+received a frame off a wire — one node cannot acknowledge its own frame, and
+the loopback that works is internal — and no shaft has ever turned an encoder,
+so every count they have reported is zero. Exactly one channel has been
+confirmed at the connector with a meter, which is why the rest of the board
+drawing renders dashed: the expander channel maps are transcribed, not proven
+here.
+
+Each of those gaps names the thing to connect and the number that settles it,
+in
+[the TBD list](docs/MEASURED.md#tbd---measurements-this-board-is-wired-for-and-has-not-taken).
+Nothing in that section may be cited as evidence.
 
 ### The panel is a template the board renders, not a page a script assembles
 
@@ -91,10 +105,17 @@ Two consequences worth stating, because each replaced something worse:
 
 The board has **no display and no software-controllable LED** — the only LED
 the datasheet mentions is a hard-wired power indicator that does not change on
-reset. So the USB CDC-ACM shell and, later, the web panel are the only two ways
-to see anything, and `DO1` is driven as a boot indicator: high from early boot,
-low once every health check passes. `d1 walk` steps through all eight outputs
-if the lit one is not the one you expect.
+reset. So the USB CDC-ACM shell and the web panel are the only two ways to see
+anything at all.
+
+A boot indicator on `DO1` used to be the third, and it was **removed**: an
+output the firmware strobes cannot also be a channel somebody sets and expects
+to find where they left it, and DO1 would have been the one output that
+silently refused to keep its state. What that gave up is recorded in
+[docs/MEASURED.md](docs/MEASURED.md) — after a reset nothing on this board now
+distinguishes "running but not yet healthy" from "in the DFU bootloader" from
+"unpowered" unless the network is up. `dowalk` still lights each of the eight
+outputs in turn, which is the measurement that settles the channel map.
 
 It also has **no BOOT0 button, no SWD header and no JTAG header**. Its
 topology table lists exactly one button, `PB1 RESET`, and the Portenta H7's own
@@ -323,6 +344,12 @@ the ladder means deleting it from the page below, not copying it.
 | [docs/HARDWARE_FROM_MANUAL.md](docs/HARDWARE_FROM_MANUAL.md) | read from a datasheet; never seen on hardware |
 | [docs/INFERRED_FROM_MBED.md](docs/INFERRED_FROM_MBED.md) | what another program believes; mbed-only, not authoritative about silicon |
 | [docs/MEASURED.md](docs/MEASURED.md) | observed here, with the command that produced it |
+
+Beside those, one page per subsystem that needed more explaining than a
+comment could hold: [docs/CANOPEN.md](docs/CANOPEN.md),
+[docs/FLASH.md](docs/FLASH.md), [docs/OTA.md](docs/OTA.md),
+[docs/CONFIG.md](docs/CONFIG.md), [docs/SHIELD.md](docs/SHIELD.md) and
+[docs/PROVISIONING.md](docs/PROVISIONING.md).
 
 Captured output is pasted verbatim and never retyped into a table — a table is
 something a person composed, and the value of captured output is that nobody

@@ -56,6 +56,52 @@ config PMC_CANBUS
 	  The other half of the same bisection as PMC_ENCODERS. PA13 is also
 	  SWDIO, so this is the switch that gives a debugger back as well.
 
+config PMC_CANOPEN
+	bool "A minimal CANopen node on the CAN bus"
+	depends on PMC_CANBUS
+	default y
+	help
+	  Boot-up, producer heartbeat, the four NMT commands and an expedited
+	  SDO server over five mandatory objects - enough that candump,
+	  cansend and python-canopen see a real node rather than a controller
+	  that can be made to send bytes.
+
+	  NOT a CANopen stack. No PDOs, no segmented transfer, no SYNC, no
+	  EMCY, no heartbeat consumer, no device profile. See app/src/canopen.h
+	  for the full list of what is missing and why that is the honest
+	  stopping point for a bring-up tool.
+
+	  It costs one thread, and it transmits: with the heartbeat on and no
+	  second node on the wire, the controller sits in ERROR_PASSIVE
+	  retransmitting, which is what a lone CAN node does. Turn this off to
+	  keep the bus silent, or set the heartbeat to 0 at runtime.
+
+config PMC_CANOPEN_NODE_ID
+	int "CANopen node id (1-127)"
+	depends on PMC_CANOPEN
+	default 5
+	range 1 127
+	help
+	  Arbitrary, and changeable at runtime with `canopen node <n>`. It is
+	  NOT remembered across a reset, deliberately: `canopen selftest`
+	  asserts against a known identity, and a node id somebody has to look
+	  up before trusting the output is worse than one that is always the
+	  same at boot.
+
+config PMC_CANOPEN_HEARTBEAT_MS
+	int "Producer heartbeat period in ms (0 disables)"
+	depends on PMC_CANOPEN
+	default 1000
+	range 0 65535
+	help
+	  1000 ms is the usual industrial default and is what a scanner
+	  expects to wait for. 0 means the node says nothing until it is
+	  asked something, which also means a scanner will not find it.
+
+	  This is object 0x1017, so a CANopen master can write it over SDO,
+	  and a reset puts it back to this value - which is what reset
+	  communication is specified to do.
+
 config PMC_ETH_PHY_RELATCH
 	bool "Pulse the Ethernet PHY's reset again before the MAC initializes"
 	default y

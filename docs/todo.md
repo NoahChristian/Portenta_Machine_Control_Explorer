@@ -19,13 +19,34 @@ about how to drive a protocol over it. There is visible consternation upstream
 actually sends and receives on a port would be worth more than any amount of
 description.
 
-Scope for a first pass: one RTU master or slave, a handful of registers, and
-the DE/RE timing made visible in the panel so the turnaround can be seen rather
-than inferred. The eight control lines (DE, RE, EN, RS232 mode, full-duplex
-term, term, slew, HF) are the interesting part — which combination is correct
-for 2-wire RTU is not written down anywhere found so far.
+**Most of this is done.** The eight control lines were the interesting part and
+they are settled by measurement rather than by reading a pin list — two were
+inverted, `/RE` among them, which had the board deaf for a whole session. A
+Modbus RTU frame is built with its CRC computed and sent, the turnaround is
+driven and visible on the panel, and with `TXP485` jumpered to `RXP485` the
+board receives its own bytes back: the UART, the SP335, the receiver, the ISR
+ring and `/rs485.json` all proven in one pass. See docs/MEASURED.md.
 
-*Waiting on:* the channel table, and a second RS485 device to talk to.
+What is left is the half a jumper cannot reach: a **reply**. Sending a frame
+and reading your own bytes back proves the wire, not the protocol — no second
+station has ever answered a request, so nothing here has parsed a response,
+timed a turnaround against a real slave, or hit an exception code.
+
+*Waiting on:* a second RS485 device to talk to.
+
+### CANopen, now that there is a node to point at it
+
+A minimal node exists and passes a ten-check self-test against itself through
+internal loopback — see [CANOPEN.md](CANOPEN.md). Everything it does has been
+verified by the only implementation that has ever read it, which is the same
+implementation. That is the gap.
+
+*Waiting on:* a USB-CAN adapter. One listener is enough to acknowledge, which
+is all that stands between `txOk` never moving and a heartbeat that completes.
+
+After that, and not before: **CANopenNode** for PDOs and a real object
+dictionary. Adopting a stack before the wire is proven means debugging both at
+once, with neither acting as a control for the other.
 
 ### USB on J15 — host or sink, and what for
 
@@ -236,21 +257,21 @@ on hardware that is missing.
 
 ## The panel, now that it renders
 
-- **Nothing on the board drawing is `measured`.** All 56 channels in
-  `tools/terminals.csv` say `pinout` or `photo`, so every one renders with a
-  dashed screw block. Confirming a mapping at the connector with a meter and
-  flipping that column is the single highest-value piece of bench work here,
-  and it is what the dashes exist to keep anyone from forgetting.
-- **The 28 channel LEDs never light**, because DIN, DO and PDIO live on the
-  two TCA6424A expanders and nothing in the image reads them (M2). The
-  snapshot reports "no reader in this image yet" rather than LOW, deliberately:
-  an absent reader and a reading of zero must not render the same.
-- **No write path yet.** `HTMLTPL_FORMS=0`, so the form binder and the CSRF
-  token are not compiled in at all. M4 flips it to 1, adds
-  `HtmlTplEntropyZephyr.cpp` upstream to seed the token from
-  `sys_csrand_get()`, and adds `htmlTplFeedFromZephyr()` — which has to
-  accumulate a POST body across several callbacks into a buffer that outlives
-  the render, because the binder NUL-terminates decoded values in place.
+- **One channel on the board drawing is `measured`, and it is DO1.** Every
+  other row in `tools/terminals.csv` says `pinout` or `photo`, so every other
+  terminal renders with a dashed screw block. Confirming a mapping at the
+  connector with a meter and flipping that column is the single
+  highest-value piece of bench work here, and it is what the dashes exist to
+  keep anyone from forgetting.
+- ~~**The 28 channel LEDs never light**~~ — done. Both expanders are read and
+  all 20 digital channels render live, and the distinction that mattered was
+  kept: an absent reader still reports "no reader in this image yet" rather
+  than LOW, because that must not look like a reading of zero.
+- ~~**No write path yet**~~ — done. `HTMLTPL_FORMS=1`, the CSRF token is seeded
+  from `sys_csrand_get()` through the engine's `HtmlTplEntropyZephyr.cpp`, and
+  writes are live and token-gated. The POST body is accumulated across
+  callbacks into a static buffer that outlives the render, because the binder
+  NUL-terminates decoded values in place.
 - **The rendered page is 72 KB on the wire against a 12 KB template**, and
   about a sixth of that is the design-time sample attributes that
   `data-tpl-attr` leaves in place so the file still previews in a browser.
@@ -277,8 +298,10 @@ on hardware that is missing.
   confidently energizes the wrong 24 V output.
 - **0x36 on the Portenta's internal I2C bus** is unidentified. It is on the
   module's bus rather than the carrier's, so it is more likely part of the H7.
-- **The DO1 pin mapping** behind the boot indicator is inferred, not measured.
-  `d1 walk` exists to settle it by watching which LED moves.
+- **The other seven DO pin mappings** are inferred, not measured. DO1 is
+  confirmed; `dowalk` exists to settle the rest by watching which LED moves,
+  and it deliberately bypasses the remembered output set so a bring-up sweep
+  is not a state somebody finds restored at the next power-up.
 
 ---
 

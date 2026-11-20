@@ -30,6 +30,7 @@
 #include "expander.h"
 #include "enc.h"
 #include "canbus.h"
+#include "canopen.h"
 
 /* How many received CAN frames travel in the snapshot. Fewer than the ring
    holds, because state.json has a fixed buffer and a truncated document is a
@@ -260,6 +261,12 @@ struct pmc_snapshot {
 	struct pmc_can_state  can;
 	struct pmc_can_frame  can_log[PMC_SNAP_CANLOG];
 	size_t                n_can_log;
+
+	/* The CANopen node above that controller: its NMT state and what it
+	   has answered. Taken in the same instant as the frame window, so the
+	   state byte on the page and the heartbeat in the window below it
+	   cannot disagree. */
+	struct pmc_co_state_read co;
 };
 
 /* From shell_mcuboot.c - the swap state, which the panel is now the only

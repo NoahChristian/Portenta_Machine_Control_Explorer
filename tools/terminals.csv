@@ -15,9 +15,13 @@
 #   photo    = read off the product photograph
 #   measured = confirmed on this board, at the connector
 #
-# NOTHING HERE IS "measured" YET. Every row says so, and the panel renders
-# an unmeasured terminal differently, because a plausible-looking map that
-# energizes the wrong 24 V output is the failure this column exists to stop.
+# EXACTLY ONE ROW IS "measured", and it is DO1. Every other row says pinout or
+# photo, and the panel renders an unmeasured terminal differently, because a
+# plausible-looking map that energizes the wrong 24 V output is the failure
+# this column exists to stop. This comment said "nothing here is measured yet"
+# for longer than it was true, which is the small version of the same failure:
+# a count in prose beside the data it counts goes stale the first time the data
+# changes and nothing checks it.
 row,block,order,label,chan,kind,conf,pad
 top,PWR SUPPLY,0,24V IN,,supply_in,pinout,
 top,PWR SUPPLY,1,24V IN,,supply_in,pinout,

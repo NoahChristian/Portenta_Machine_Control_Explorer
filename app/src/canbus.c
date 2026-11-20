@@ -44,17 +44,26 @@ static bool  loopback;
 static uint8_t stb_level;
 static uint32_t bitrate = DT_PROP_OR(DT_NODELABEL(fdcan1), bitrate, 500000);
 
-static atomic_t tx_ok, tx_fail, tx_no_ack, tx_queued, rx_frames;
+static atomic_t tx_ok, tx_fail, tx_no_ack, tx_queued, tx_reject, rx_frames;
 
 /* The receive window. Written from the RX callback, read by the panel. */
 static struct pmc_can_frame ring[PMC_CAN_LOG];
 static uint32_t ring_head;
 static struct k_spinlock ring_lock;
 
+/* Set once at init; see pmc_can_rx_tap_set() and the note in canbus.h. */
+static pmc_can_rx_tap_t rx_tap;
+
+void pmc_can_rx_tap_set(pmc_can_rx_tap_t fn)
+{
+	rx_tap = fn;
+}
+
 static void rx_cb(const struct device *d, struct can_frame *f, void *user)
 {
 	k_spinlock_key_t key;
 	struct pmc_can_frame *slot;
+	struct pmc_can_frame copy;
 
 	ARG_UNUSED(d);
 	ARG_UNUSED(user);
@@ -74,7 +83,20 @@ static void rx_cb(const struct device *d, struct can_frame *f, void *user)
 	}
 	memcpy(slot->data, f->data, slot->dlc);
 	slot->stamp = k_uptime_get();
+	copy = *slot;
 	k_spin_unlock(&ring_lock, key);
+
+	/*
+	 * A COPY, AND OUTSIDE THE LOCK. The ring entry is reused after
+	 * PMC_CAN_LOG more frames and the tap's consumer runs on its own
+	 * thread, so handing it the slot would hand it storage that can change
+	 * under it. Called with no lock held because this runs in interrupt
+	 * context already and holding a spinlock across somebody else's code
+	 * is how one subsystem's mistake becomes another's.
+	 */
+	if (rx_tap != NULL) {
+		rx_tap(&copy);
+	}
 }
 
 /*
@@ -211,6 +233,7 @@ void pmc_can_state_read(struct pmc_can_state *out)
 	out->rx_err_cnt = cnt.rx_err_cnt;
 	out->tx_ok = (uint32_t)atomic_get(&tx_ok);
 	out->tx_fail = (uint32_t)atomic_get(&tx_fail);
+	out->tx_reject = (uint32_t)atomic_get(&tx_reject);
 	out->tx_no_ack = (uint32_t)atomic_get(&tx_no_ack);
 	out->tx_queued = (uint32_t)atomic_get(&tx_queued);
 	out->rx_frames = (uint32_t)atomic_get(&rx_frames);
@@ -291,6 +314,15 @@ size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
 
 	k_spin_unlock(&ring_lock, key);
 	return n;
+}
+
+uint64_t pmc_can_rx_cursor(void)
+{
+	const k_spinlock_key_t key = k_spin_lock(&ring_lock);
+	const uint64_t at = ring_head;
+
+	k_spin_unlock(&ring_lock, key);
+	return at;
 }
 
 /* ------------------------------------------------------- the repeater --- */
@@ -430,7 +462,12 @@ bool pmc_can_send(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
 	k_mutex_unlock(&lock);
 
 	if (rc != 0) {
-		atomic_inc(&tx_fail);
+		/*
+		 * REJECTED, NOT FAILED, and they are counted apart - see
+		 * canbus.h. This one was never queued, so counting it as a
+		 * failure made "queued minus the outcomes" go negative.
+		 */
+		atomic_inc(&tx_reject);
 		(void)snprintk(detail, cap, "refused: can_send %d%s", rc,
 			       rc == -EAGAIN ? " (no free mailbox)" : "");
 		return false;
@@ -692,12 +729,21 @@ static int cmd_can(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "errors   tx %u  rx %u  (controller's own counters)",
 		    s.tx_err_cnt, s.rx_err_cnt);
 
+	/* Rejected sends are NOT in this subtraction; they never reached the
+	   queue. That mistake printed 4,294,966,629 once. See canbus.h. */
 	const uint32_t inflight = s.tx_queued -
 				  (s.tx_ok + s.tx_no_ack + s.tx_fail);
 
 	shell_print(sh, "frames   tx %u queued, %u ok, %u failed, "
 			"**%u STILL IN FLIGHT**; rx %u",
 		    s.tx_queued, s.tx_ok, s.tx_fail, inflight, s.rx_frames);
+	if (s.tx_reject != 0U) {
+		shell_print(sh, "rejected %u send%s the controller would not "
+				"take - with one mailbox held by a frame",
+			    s.tx_reject, s.tx_reject == 1U ? "" : "s");
+		shell_print(sh, "         nobody acknowledges, every later "
+				"send is refused immediately.");
+	}
 	shell_print(sh, "TX pin   PH13 %s",
 		    s.tx_pin_toggling ? "TOGGLING - the transceiver is being "
 					"driven"
@@ -782,6 +828,10 @@ size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
 	if (lost != NULL) { *lost = false; }
 	return 0;
 }
+
+uint64_t pmc_can_rx_cursor(void) { return 0; }
+
+void pmc_can_rx_tap_set(pmc_can_rx_tap_t fn) { ARG_UNUSED(fn); }
 
 bool pmc_can_repeat(uint32_t id, bool ext, const uint8_t *data, uint8_t len,
 		    uint32_t period_ms, char *detail, size_t cap)

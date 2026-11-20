@@ -384,7 +384,8 @@ static int can_handler(struct http_client_ctx *client,
 				 "{\"next\":%llu,\"lost\":%s,\"state\":%d,"
 				 "\"loopback\":%s,\"bitrate\":%u,"
 				 "\"txErr\":%u,\"rxErr\":%u,\"rx\":%u,"
-				 "\"txQueued\":%u,\"txOk\":%u,\"txPin\":%u,"
+				 "\"txQueued\":%u,\"txOk\":%u,\"txReject\":%u,"
+				 "\"txPin\":%u,"
 				 "\"repMs\":%u,\"repSent\":%u,\"f\":[",
 				 next, lost ? "true" : "false", st.bus_state,
 				 st.loopback ? "true" : "false",
@@ -393,6 +394,7 @@ static int can_handler(struct http_client_ctx *client,
 				 (unsigned)st.rx_err_cnt,
 				 (unsigned)st.rx_frames,
 				 (unsigned)st.tx_queued, (unsigned)st.tx_ok,
+				 (unsigned)st.tx_reject,
 				 (unsigned)st.tx_pin_toggling,
 				 (unsigned)rep_ms, (unsigned)rep_sent);
 

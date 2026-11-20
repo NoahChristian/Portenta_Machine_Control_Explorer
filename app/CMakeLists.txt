@@ -37,6 +37,7 @@ target_sources(app PRIVATE
     src/rs485.c
     src/enc.c
     src/canbus.c
+    src/canopen.c
     src/snapshot.c
     src/do_interlock.c
     src/persist.c

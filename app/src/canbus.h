@@ -104,6 +104,25 @@ struct pmc_can_state {
 	uint32_t tx_no_ack;
 
 	/*
+	 * SENDS THE CONTROLLER NEVER ACCEPTED, counted apart from the ones it
+	 * accepted and then could not complete - and the separation is not
+	 * tidiness, it is what makes the subtraction above valid.
+	 *
+	 * Measured: with a CANopen heartbeat producing one frame a second
+	 * into a bus with no second node, the first frame occupies a TX
+	 * mailbox forever and every send after it returns -EAGAIN
+	 * immediately. Those were counted in tx_fail, which is subtracted
+	 * from tx_queued - but a rejected send was never queued, so the
+	 * difference went NEGATIVE and the shell reported
+	 * "**4294966629 STILL IN FLIGHT**". Six hundred rejections also hid
+	 * inside a number that reads as "the controller is broken".
+	 *
+	 * So: tx_reject is before the queue, tx_fail is after it, and
+	 * queued - ok - no_ack - fail cannot go below zero.
+	 */
+	uint32_t tx_reject;
+
+	/*
 	 * Is the TX pin actually moving? Sampled with the CPU, the same way
 	 * PA1 was checked for the Ethernet reference clock. It cannot measure
 	 * a bit rate and does not try: it separates "the controller is
@@ -140,6 +159,37 @@ size_t pmc_can_log_read(struct pmc_can_frame *out, size_t cap);
  */
 size_t pmc_can_rx_read(uint64_t from, struct pmc_can_frame *out, size_t cap,
 		       uint64_t *next, bool *lost);
+
+/*
+ * The index the NEXT received frame will take.
+ *
+ * For a caller that wants to watch what happens from HERE ON, which is what
+ * a test does: take the cursor, do the thing, then read forward from it.
+ * Without this the only way to find the current position is to read the whole
+ * window and count, which races against the frame that arrives while you are
+ * counting.
+ */
+uint64_t pmc_can_rx_cursor(void);
+
+/*
+ * A TAP ON THE RECEIVE PATH, for a protocol that has to ANSWER frames rather
+ * than display them.
+ *
+ * ONE tap, set once at init. Not a subscriber list: a list is a lifetime
+ * problem and an ordering problem, and this file has exactly one consumer
+ * above it. A second one is a reason to write the list then, with the
+ * question of what happens when the first one answers a frame the second one
+ * also wanted already answered.
+ *
+ * IT RUNS IN THE DRIVER'S RECEIVE CALLBACK, WHICH IS INTERRUPT CONTEXT on
+ * this controller. So it must copy the frame and return - no logging, no
+ * sending, no mutex, nothing that can block. The CANopen node queues the
+ * frame to its own thread and does every reply from there, which is also why
+ * the frame it is handed is a copy rather than a pointer into the ring: the
+ * ring entry can be overwritten before the handler thread ever runs.
+ */
+typedef void (*pmc_can_rx_tap_t)(const struct pmc_can_frame *f);
+void pmc_can_rx_tap_set(pmc_can_rx_tap_t fn);
 
 /*
  * Repeat a frame every `period_ms` until stopped with period_ms = 0.
