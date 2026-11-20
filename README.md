@@ -213,6 +213,14 @@ stricter than the code requires, and that is the price of being obtainable.
 
 ## Building
 
+> **There is no binary in the release repository — you will need to build it.**
+
+Not for secrecy: the image has carried no secret since 0.8.0, and that was
+verified by a byte scan with a control. It is because a *usable* binary would
+have to come with a bootloader holding **this project's** public key, which
+would make this project the signing authority on your board. You generate your
+own key instead, below, and nothing here is ever asked to sign for you.
+
 Needs a Zephyr west workspace, the Zephyr SDK, and a checkout of
 **Arduino_HTTP_HTML** beside this repository — see the table above.
 Override its location with `-DHTMLTPL_DIR=<path>` or `$env:HTMLTPL_DIR`.
@@ -236,6 +244,37 @@ serves the previous page.
 Pinned toolchain, because the HTTP server is marked experimental upstream and
 several Kconfig symbols moved recently: Zephyr 4.5.99, SDK 1.0.1,
 arm-zephyr-eabi gcc 14.3.0.
+
+### Your own signing key, before the first bootloader build
+
+MCUboot verifies every image against a public key compiled into the
+bootloader. Generate the pair once, keep the private half outside every
+repository, and **you are your own signing authority** — no image signed
+anywhere else will boot on your board, including one signed here.
+
+```powershell
+imgtool keygen -k <dir>/pmc-explorer-ec-p256.pem -t ecdsa-p256
+
+cp mcuboot/pmc-key.conf.example  mcuboot/pmc-key.conf   # the bootloader verifies
+cp app/mcuboot-key.conf.example  app/mcuboot-key.conf   # imgtool signs
+# point BOTH at the .pem above - they must name the same key
+```
+
+Both `*-key.conf` files are gitignored; only the blank templates are
+committed. The bootloader's half is **fail-closed**: `mcuboot/pmc.conf` names
+a deliberately missing `.pem`, overridden by `pmc-key.conf` listed last. Drop
+that override — `git clean -xdf` is enough — and the build *fails* rather than
+falling back to MCUboot's own `root-ec-p256.pem`, which is committed in the
+MCUboot repository and therefore published. A bootloader built against that
+key accepts an image anyone can sign. The guard exists because the fallback
+was measured on this bench: it built, with one warning among hundreds, and
+produced a bootloader that flashed and ran.
+
+**Back the key up.** Lose it and no future image can be signed for a board
+already carrying that bootloader. The way back is a full reinstall over
+double-tap RESET, which works — but it is a trip to the bench rather than an
+update over the air. Details and the application half in
+[docs/OTA.md](docs/OTA.md).
 
 ## Installing, once
 
