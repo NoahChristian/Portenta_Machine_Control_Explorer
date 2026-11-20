@@ -146,8 +146,52 @@ function Get-SlotHash {
     return $null
 }
 
+# Send a shell command and collect the reply.
+#
+# TWO DEADLINES, AND THE SECOND ONE IS LOAD BEARING.
+#
+#   QuietMs   stop once the console has been silent this long. This is how a
+#             reply is known to be complete, since the shell marks no end.
+#   TotalMs   stop regardless. Without it, a console that keeps talking holds
+#             this function forever.
+#
+# THAT IS NOT HYPOTHETICAL AND IT COST A SESSION. With an RTD front end
+# unattached, this board logs
+#
+#     <err> MAX31865: Fault Register: 0x04, Over/under voltage fault
+#
+# continuously. Measured on the bench with DTR asserted: 3129 bytes in 6 s,
+# LONGEST SILENCE 599 ms. Every QuietMs this script passes -- 1800, 2500,
+# 3000 -- is longer than that, so `$last.Restart()` fired before the quiet
+# window could ever close and the loop never exited. `tools/ota.ps1` sat for
+# over ten minutes having printed nothing, on a board that was answering its
+# console and serving its web panel the whole time.
+#
+# A faulting sensor is an ORDINARY state for a bench board. A discovery routine
+# that cannot survive one is a discovery routine that works until the day you
+# need it.
+#
+# BEWARE MEASURING THIS WITHOUT DTR. Zephyr's CDC-ACM sends nothing until DTR
+# is asserted, so a probe that omits it reports the console silent and appears
+# to exonerate exactly this cause. That misreading is why the fix took two
+# attempts.
+#
+# A capped read still works: the caller matches on CONTENT -- the mdns name, a
+# dotted quad -- and a reply interleaved with log lines still contains it. What
+# a cap cannot do is turn silence into an answer, so it says when it fired
+# rather than returning a short read that looks like a complete one.
 function Invoke-ZShell {
-    param([string]$Port, [string]$Cmd, [int]$QuietMs = 2500)
+    param(
+        [string]$Port,
+        [string]$Cmd,
+        [int]$QuietMs = 2500,
+        # Four quiet windows, floor 8 s: long enough that a merely slow reply
+        # still completes normally, short enough that a stuck port is a pause
+        # rather than a hang.
+        [int]$TotalMs = 0
+    )
+    if ($TotalMs -le 0) { $TotalMs = [Math]::Max(8000, $QuietMs * 4) }
+
     $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
     $sp.ReadTimeout = 500
     try {
@@ -155,9 +199,18 @@ function Invoke-ZShell {
         $sp.DiscardInBuffer(); $sp.Write("$Cmd`r`n")
         $sb = New-Object System.Text.StringBuilder
         $last = [Diagnostics.Stopwatch]::StartNew()
-        while ($last.ElapsedMilliseconds -lt $QuietMs) {
+        $total = [Diagnostics.Stopwatch]::StartNew()
+        while ($last.ElapsedMilliseconds -lt $QuietMs -and
+               $total.ElapsedMilliseconds -lt $TotalMs) {
             try { $c = $sp.ReadExisting(); if ($c) { [void]$sb.Append($c); $last.Restart() } } catch {}
             Start-Sleep -Milliseconds 60
+        }
+        if ($total.ElapsedMilliseconds -ge $TotalMs) {
+            # Said out loud. A cap that fires silently is the same class of
+            # problem as the hang it replaced: the operator cannot tell a
+            # complete reply from a truncated one.
+            Write-Host ("  {0} kept talking for {1} ms; reading what arrived" -f $Port, $TotalMs) `
+                -ForegroundColor DarkYellow
         }
         return $sb.ToString()
     } finally { if ($sp.IsOpen) { $sp.Close() } }
@@ -192,23 +245,73 @@ if (-not $Ip) {
             $ifc = Invoke-ZShell -Port $c -Cmd 'net iface' -QuietMs 3000
         } catch { continue }
 
-        # The FIRST address under an interface that is actually up. Matching
-        # any dotted quad would also match a netmask, a gateway and a DHCP
-        # server, all of which appear in the same block.
-        if ($ifc -match '(?m)^\s*((?:\d{1,3}\.){3}\d{1,3})/\d{1,3}\.') {
-            $Ip = $Matches[1]
-            break
+        # EVERY address, then the one whose SMP SERVER ANSWERS -- not the first
+        # one that parses.
+        #
+        # Matching a dotted quad followed by `/` and a netmask is still how an
+        # address is told apart from the netmask, gateway and DHCP server that
+        # share the block. What changed is which of the matches is believed.
+        #
+        # This board has eth0 AND wlan0, both up, both holding a DHCP address on
+        # the same subnet. Measured on the bench:
+        #
+        #     eth0    ping=True   smp=no SMP reply
+        #     wlan0   ping=True   smp=ANSWERS
+        #
+        # Taking the first match took eth0 -- the one that pings and cannot be
+        # updated. The old comment called it "the FIRST address under an
+        # interface that is actually up", which was true and not sufficient:
+        # both interfaces are up, and being up is not the same as being the one
+        # the SMP server is bound to. Discovery would hand back a reachable,
+        # useless address, and the failure would surface as an upload timeout
+        # against a board that was answering its console throughout.
+        #
+        # `image state-read` is the probe because it is READ-ONLY: it stages
+        # nothing, erases nothing, and is the same call used to read the slots
+        # later. Asking the question that matters beats inferring it from
+        # interface order, which is not a promise of anything.
+        $addrs = [regex]::Matches($ifc, '(?m)^\s*((?:\d{1,3}\.){3}\d{1,3})/\d{1,3}\.') |
+                 ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+        if (-not $addrs) { continue }
+
+        foreach ($a in $addrs) {
+            Write-Host "  trying SMP at $a ..." -ForegroundColor DarkGray
+            $probe = & $smpmgr --ip $a --timeout 6 image state-read 2>&1 | Out-String
+            if ($probe -match 'ImageState|slot=') {
+                $Ip = $a
+                Write-Host "  SMP answers at $a" -ForegroundColor DarkGray
+                break
+            }
+            Write-Host "  no SMP reply at $a" -ForegroundColor DarkGray
         }
+        if ($Ip) { break }
+
+        # Addresses but no SMP on any of them is a DIFFERENT fault from having
+        # no address, and saying so saves looking at WiFi credentials that are
+        # fine.
+        Write-Host ("  {0} has {1} address(es) but none answered SMP" -f $c, $addrs.Count) `
+            -ForegroundColor DarkYellow
     }
 
     if (-not $Ip) {
         throw @"
-No IPv4 address found on the board.
+No address on this board answered SMP.
 
-Check `net iface` over the shell. If wlan0 is down, the board has no stored
-credentials or could not join: tools/wifi_provision.ps1 puts them in NVS. Note
-the CYW4343W is 802.11 b/g/n, so a 5 GHz-only SSID is never found however
-correct the passphrase is.
+Two different faults end up here, and the lines above say which:
+
+  "no IPv4 address"      the board has no address at all. If wlan0 is down it
+                         has no stored credentials or could not join:
+                         tools/wifi_provision.ps1 puts them in NVS. Note the
+                         CYW4343W is 802.11 b/g/n, so a 5 GHz-only SSID is
+                         never found however correct the passphrase is.
+
+  "none answered SMP"    the board HAS an address and is reachable, but the
+                         SMP server is not answering there. It may be bound to
+                         a different interface -- this board can hold an
+                         address on both eth0 and wlan0 -- or MCUMGR may not be
+                         in the running image at all. Pass -Ip to aim at a
+                         specific one, and `net iface` over the shell lists
+                         them.
 "@
     }
 }
