@@ -231,6 +231,58 @@ image costs one reboot rather than a trip to the bench. The confirming is done
 by the health gate, not by the upload tool, so "the update stuck" means the
 image proved its I/O answers. `health` says which condition is failing.
 
+## Identity: `whoami`
+
+The board says what it is, in a format with a specification and a conformance
+checker rather than one invented here:
+
+> **[whoami-spec](https://github.com/NoahChristian/whoami-spec)** — schema
+> **1.0005**, release **v0.8.0**.
+
+```
+whoami          the full report
+whoami 1        the same, for a caller that has declared it reads major 1
+whoami 9999     a major nobody implements: the preamble alone, and stop
+appid           just the matchable line
+```
+
+**The emitter is not written here.** `app/src/whoami_core.{c,h}` is vendored
+from that release and carries the SHA-256 of the original bytes in its header,
+so an edit made locally is caught rather than shipped. Everything the format
+mandates — the frozen two-line preamble, the major negotiation, the 11-column
+grid, the `appid` grammar — comes from there. What this repository supplies is
+the *values*: the reset cause, the boot history, the image and slot state.
+
+That split exists because of a specific failure. The format was first
+implemented three times by hand, once per board. All three were tested, all
+three passed, and all three shared a defect — each did I/O on the request path,
+one of them a 31 KB flash CRC on every call to an ungated HTTP endpoint. The
+bug was in none of the three implementations; it was in there being three.
+
+The practices worth carrying into anything that *reads* one of these reports
+are in the spec's own
+[`ref/README.md`](https://github.com/NoahChristian/whoami-spec/blob/main/ref/README.md),
+and each is named by the failure it prevents:
+
+- **A line is a slice, never a whitespace search.** Columns 1–11 are the label.
+  The fixed width is what lets a label hold a space; splitting on the first one
+  reads `front end` as `front` and silently moves `end` into the value — a
+  corrupted read that looks like a successful one.
+- **Bound every count before obeying it**, and cap its length before converting
+  it, so a value that would wrap never becomes a small number that looks
+  reasonable.
+- **Skip `special` blocks by count; never parse inside one.** A reader that
+  parses block content lets the far end forge any field it likes, `attest`
+  included.
+- **A refusal is a successful read**, not a parse failure. A device that cannot
+  speak the requested major answers with the frozen preamble and stops.
+- **Classify errors by token or type, never by message text.**
+
+Eleven reference readers — C, Python/MicroPython, JavaScript, TypeScript, Ruby,
+Rust, Java, R, Julia, MATLAB, PowerShell — are held to one shared 18-case
+corpus, because each implementation testing only itself is precisely what
+produced the defect above.
+
 ## The documents
 
 Split by **kind of confidence**, and a fact has exactly one home. Moving it up
