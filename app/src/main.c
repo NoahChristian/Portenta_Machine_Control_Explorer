@@ -40,6 +40,7 @@
 #include "rs485.h"
 #include "io_write.h"
 #include "persist.h"
+#include "whoami.h"
 #include "enc.h"
 #include "canbus.h"
 #include "page_vars.h"
@@ -230,6 +231,18 @@ int main(void)
 	 * health thread, once every check has passed (persist.h).
 	 */
 	(void)pmc_persist_init();
+
+	/*
+	 * AFTER pmc_persist_init(), because that is what runs
+	 * settings_subsys_init() and the boot history lives in settings.
+	 * Recording this boot before the subsystem exists would write nothing
+	 * and leave a history claiming the board has never started.
+	 *
+	 * It also reads and CLEARS the reset cause, so this must be the only
+	 * caller -- a second reader would find the register already wiped and
+	 * report "unavailable" for a boot whose cause is sitting in the ring.
+	 */
+	whoami_history_begin();
 
 	/*
 	 * Deliberately not a busy loop and deliberately not a k_sleep(FOREVER)
