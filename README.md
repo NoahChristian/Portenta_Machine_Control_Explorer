@@ -159,11 +159,32 @@ signing key** instead, which costs nothing and is reversible: an image signed
 for another board on this bench is refused here, proven with `imgtool verify`
 in both directions. See [docs/OTA.md](docs/OTA.md).
 
+## External dependencies
+
+Two, both public, both pinned — and the pin is **enforced**, not described.
+
+| Depends on | Required | Enforced by |
+|---|---|---|
+| [whoami-spec](https://github.com/NoahChristian/whoami-spec) | **v0.8.0** | `app/src/whoami_core.{c,h}` are vendored and carry the SHA-256 of the original bytes in their headers; an edit here no longer matches the release |
+| [Arduino_HTTP_HTML](https://github.com/NoahChristian/Arduino_HTTP_HTML) | **0.10.0 or newer** | `check_engine_version()` in `tools/gen_page.py` reads the engine's `library.properties` and refuses to generate against an older one |
+
+Neither is a submodule. `whoami-spec` is **vendored** — the two files are copied
+in, so this repository builds with no sibling checkout. `Arduino_HTTP_HTML` is a
+**path dependency**, because the panel is a template the board renders rather
+than markup assembled in C, so the generator is not optional.
+
+**Why the engine floor is 0.10.0 and not something earlier.** The generated
+header includes `<HtmlTplPort.h>`; older engines emitted `<Arduino.h>`. That
+change landed in the engine under version **0.9.2** — the same version the two
+commits before it carried. So 0.9.2 is an **ambiguous version**: two different
+output behaviors answer to one number, and a floor of 0.9.2 would admit the half
+that does not work here. 0.10.0 is the first version that unambiguously carries
+the new seam.
+
 ## Building
 
 Needs a Zephyr west workspace, the Zephyr SDK, and a checkout of
-**Arduino_HTTP_HTML** beside this repository — the panel is a template the
-board renders, so the engine is a build dependency, not an optional extra.
+**Arduino_HTTP_HTML** beside this repository — see the table above.
 Override its location with `-DHTMLTPL_DIR=<path>` or `$env:HTMLTPL_DIR`.
 
 Every argument in the build script was arrived at by a build failing in a way
