@@ -19,7 +19,12 @@
 /*
  * The machine-matchable identity line, without a trailing newline:
  *
- *     appid <token> [unit <n>] fw <major.minor.patch>
+ *     appid      <token> [unit <n>] fw <major.minor.patch>
+ *
+ * Padded into the report's 11-column label field, because this is BOTH the
+ * `appid` command's whole output and one line of `whoami`'s report, and those
+ * two must be the same bytes. Padding at either call site instead would be two
+ * places to keep in step.
  *
  * The token is a CONTRACT. Scripts match on it to decide which board they
  * are holding, on a bench where every Zephyr CDC device enumerates as

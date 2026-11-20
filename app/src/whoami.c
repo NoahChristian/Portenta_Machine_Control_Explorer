@@ -18,18 +18,16 @@
  * it is confirmed, and when it was built. A script that asks one question and
  * gets one answer has nowhere left to be wrong.
  *
- * TWO DELIBERATE OMISSIONS.
+ * ONE DELIBERATE OMISSION. No IP and no MAC. This output is meant to be pasted
+ * verbatim into docs/MEASURED.md, which is the whole value of captured output,
+ * and an address in a committed file is not allowed here. `net iface` prints
+ * them when they are what you actually want.
  *
- * No second identity token. The matchable string is the hostname, the same one
- * mdnsname prints and the same one the tools already grep for - a `whoami`
- * that minted its own project string would be a second thing to keep in step,
- * and the first time they drifted the scripts would be matching the one that
- * was not authoritative.
- *
- * No IP and no MAC. This output is meant to be pasted verbatim into
- * docs/MEASURED.md, which is the whole value of captured output, and an
- * address in a committed file is not allowed here. `net iface` prints them
- * when they are what you actually want.
+ * THE REPORT IS A DOCUMENTED FORMAT, not this board's own layout: every line
+ * is a label in an 11-column field followed by its value, the first two lines
+ * are a frozen preamble, and a caller names the schema major it speaks. The
+ * grammar, the required fields and the reasoning are in the whoami spec; this
+ * file is one emitter of it.
  */
 
 #include <zephyr/kernel.h>
@@ -44,15 +42,41 @@
 #include <zephyr/version.h>           /* KERNEL_VERSION_STRING, BUILD_VERSION */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 LOG_MODULE_REGISTER(whoami, LOG_LEVEL_INF);
 
 /*
+ * THE SCHEMA THIS EMITS, and the majors it can speak.
+ *
+ * The major is the FORMAT: a reader that does not know it cannot parse the
+ * body at all, because a familiar label may mean something else under another
+ * major. The revision is corrections only and never moves a field, so any
+ * reader of major 1 reads every 1.xxxx - it is four digits and zero-padded
+ * because `1.12` cannot be told from `1.1200`, and the two orderings disagree.
+ *
+ * This board emits major 1 and speaks nothing else. Emitting an older major
+ * would cost flash on the constrained side of the link and no device is
+ * obliged to; SAYING so is free, and it is what lets a caller report "speaks
+ * 1, I wanted 2" instead of a parse failure.
+ */
+#define WHOAMI_SCHEMA "1.0005"
+#define WHOAMI_MAJOR  1UL
+#define WHOAMI_SPEAKS "1"
+
+/* The label field is 11 columns wide and the value starts at column 12. A
+ * label is parsed by SLICING that field, not by searching for whitespace,
+ * which is what lets a label contain a space with no escaping. Every line
+ * below pads to this width by hand, so the width is written here once to be
+ * checked against. */
+#define WHOAMI_LABEL_WIDTH 11
+
+/*
  * THE APPID LINE. One format, shared by every board on this bench:
  *
- *     appid <token> [unit <n>] fw <major.minor.patch>
+ *     appid      <token> [unit <n>] fw <major.minor.patch>
  *
  *   token   lowercase and hyphenated, unique to the application, and NEVER
  *           renamed or reused -- scripts match on it to decide which board
@@ -69,15 +93,25 @@ LOG_MODULE_REGISTER(whoami, LOG_LEVEL_INF);
  * board's for several minutes. That is the incident the whole whoami family
  * came from, and until now this was the only one of the three that could not
  * state its own name in one greppable line.
+ *
+ * IT IS A REPORT LINE AND A COMMAND, AND THEY ARE THE SAME BYTES. The label is
+ * padded into the 11-column field here rather than at one of the two call
+ * sites, so `appid` on its own and the `appid` line inside `whoami` cannot
+ * come out differently -- there is one string and one definition of it.
  */
 #define WHOAMI_APP "portenta-machine-control"
+
+/* The one padded label in this file that is not written beside its own line,
+ * so it is the one a reader cannot check by eye against its neighbors. */
+BUILD_ASSERT(sizeof("appid      ") - 1 == WHOAMI_LABEL_WIDTH,
+	     "the appid label must fill the 11-column field exactly");
 
 int whoami_app_id(char *buf, size_t cap)
 {
 	if (!buf || cap == 0) {
 		return -EINVAL;
 	}
-	const int n = snprintf(buf, cap, "appid " WHOAMI_APP " fw %s",
+	const int n = snprintf(buf, cap, "appid      " WHOAMI_APP " fw %s",
 			       CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION);
 
 	if (n < 0 || (size_t)n >= cap) {
@@ -244,12 +278,59 @@ static void print_image(const struct shell *sh)
 		    CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION);
 }
 
+/*
+ * THE FROZEN PREAMBLE. These two lines have the same grammar under every
+ * schema major that will ever exist, which is what makes them readable by a
+ * caller that cannot parse the body - and that is the whole mechanism: a
+ * reader meeting a major it does not know can still discover WHICH one it is
+ * looking at and WHAT ELSE this device could have said.
+ *
+ * ONE function, called by the report and by the refusal, so the two can never
+ * disagree about what this board speaks.
+ */
+static void print_preamble(const struct shell *sh)
+{
+	shell_print(sh, "schema     " WHOAMI_SCHEMA);
+	shell_print(sh, "speaks     " WHOAMI_SPEAKS);
+}
+
 static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 {
 	const uint64_t up = (uint64_t)k_uptime_get() / 1000U;
+	unsigned long want = WHOAMI_MAJOR;
 
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
+	/*
+	 * THE CALLER DECLARES FIRST. `whoami <major>` says what the asker can
+	 * read, and this board answers in that major or not at all. A bare
+	 * `whoami` is the human form and gets this board's own newest, which
+	 * is why a TOOL may not use it.
+	 */
+	if (argc > 1) {
+		char *end;
+
+		want = strtoul(argv[1], &end, 10);
+		if (end == argv[1] || *end != '\0') {
+			shell_error(sh, "usage: whoami [<schema major>]");
+			return -EINVAL;
+		}
+	}
+
+	print_preamble(sh);
+
+	/*
+	 * ASKED FOR A MAJOR THIS BOARD DOES NOT SPEAK: the preamble and
+	 * nothing else. Not this board's own newest report, which the caller
+	 * has already said it cannot read, and not silence - the caller can
+	 * always read those two lines, so it ends with "speaks 1, I wanted N"
+	 * rather than with a parse failure or a timeout.
+	 *
+	 * This is the path that only runs on the day a new major ships, so it
+	 * is the path most likely to be wrong and never noticed. Ask for a
+	 * version nobody implements (`whoami 9999`) and watch it stop here.
+	 */
+	if (want != WHOAMI_MAJOR) {
+		return 0;
+	}
 
 	/*
 	 * The matchable line FIRST and verbatim, as on the sibling boards, so
@@ -262,18 +343,37 @@ static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "%s", id);
 	}
 	shell_print(sh, "project    Portenta Machine Control Explorer");
-	shell_print(sh, "hostname   %s  (the name to match on)",
-		    net_hostname_get());
 	shell_print(sh, "board      %s", CONFIG_BOARD_TARGET);
-	print_image(sh);
 	/*
 	 * The build stamp separates two COMPILES carrying the same version,
 	 * which the +build counter cannot: that counter moves when
 	 * tools/bumpver.py is run, and a bench session usually compiles
-	 * several times between bumps. So the line above answers "which image
-	 * is this" and this one answers "is it the one I just built".
+	 * several times between bumps. So the image line below answers "which
+	 * image is this" and this one answers "is it the one I just built".
 	 */
 	shell_print(sh, "built      %s %s   (this firmware)", __DATE__, __TIME__);
+	shell_print(sh, "uptime     %ud %02u:%02u:%02u",
+		    (unsigned int)(up / 86400U),
+		    (unsigned int)((up / 3600U) % 24U),
+		    (unsigned int)((up / 60U) % 60U),
+		    (unsigned int)(up % 60U));
+	/*
+	 * WHAT THIS BOARD COULD PROVE, not a claim about this report. The
+	 * report is unauthenticated by definition - anything that can answer
+	 * on the port can produce one - so the field says what is on offer,
+	 * and `none` is the honest answer here: there is no per-device key and
+	 * no secure element behind it, so there is nothing to sign with.
+	 */
+	shell_print(sh, "attest     none");
+
+	/*
+	 * Everything above is required by the schema and everything below is
+	 * recommended-or-extra, in that order, so a reader has the fields it
+	 * must have before it meets anything it is allowed not to understand.
+	 */
+	shell_print(sh, "hostname   %s  (the name to match on)",
+		    net_hostname_get());
+	print_image(sh);
 	/*
 	 * `core` beside `built`, matching the sibling boards. Here the whole
 	 * image is compiled from source, so __DATE__ covers it -- but the
@@ -283,11 +383,6 @@ static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 	 */
 	shell_print(sh, "core       Zephyr %s (%s)   (compiled from source here)",
 		    KERNEL_VERSION_STRING, STRINGIFY(BUILD_VERSION));
-	shell_print(sh, "uptime     %ud %02u:%02u:%02u",
-		    (unsigned int)(up / 86400U),
-		    (unsigned int)((up / 3600U) % 24U),
-		    (unsigned int)((up / 60U) % 60U),
-		    (unsigned int)(up % 60U));
 
 	char now[64];
 
@@ -318,7 +413,7 @@ static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/* `whoami id` -- the one line, for a script that wants to match and move on.
+/* `appid` -- the one line, for a script that wants to match and move on.
  * Not a different answer, literally the same function. */
 static int cmd_whoami_id(const struct shell *sh, size_t argc, char **argv)
 {
@@ -335,11 +430,17 @@ static int cmd_whoami_id(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/* The same bytes as `whoami`'s first line, kept as its own command because a
- * detection script should not have to read a whole report to match one
- * token. */
+/* The same bytes as the `appid` line inside the report, kept as its own
+ * command because a detection script should not have to read a whole report
+ * to match one token. */
 SHELL_CMD_REGISTER(appid, NULL, "Identify this application to a script",
 		   cmd_whoami_id);
 
-SHELL_CMD_REGISTER(whoami, NULL,
-		   "Which board, which image, since when.", cmd_whoami);
+/*
+ * One optional argument, and it is an ARGUMENT rather than a subcommand: a
+ * bare number is the major the caller speaks, and the shell would have to
+ * carry a child entry per version to treat it as a name.
+ */
+SHELL_CMD_ARG_REGISTER(whoami, NULL,
+		       "whoami [<schema major>] - which board, which image, "
+		       "since when.", cmd_whoami, 1, 1);
