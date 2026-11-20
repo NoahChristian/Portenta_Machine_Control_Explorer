@@ -60,7 +60,7 @@ import sys
 # and the cause was three commits away in another repository with no version
 # number to point at. A path-based dependency that records no version cannot say
 # what it was built against, and cannot notice that it moved.
-ENGINE_MIN = (0, 10, 0)
+ENGINE_MIN = (0, 11, 0)
 
 
 def parse_version(text):

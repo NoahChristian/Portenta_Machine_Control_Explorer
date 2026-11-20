@@ -166,20 +166,29 @@ Two, both public, both pinned — and the pin is **enforced**, not described.
 | Depends on | Required | Enforced by |
 |---|---|---|
 | [whoami-spec](https://github.com/NoahChristian/whoami-spec) | **v0.8.0** | `app/src/whoami_core.{c,h}` are vendored and carry the SHA-256 of the original bytes in their headers; an edit here no longer matches the release |
-| [Arduino_HTTP_HTML](https://github.com/NoahChristian/Arduino_HTTP_HTML) | **0.10.0 or newer** | `check_engine_version()` in `tools/gen_page.py` reads the engine's `library.properties` and refuses to generate against an older one |
+| [Arduino_HTTP_HTML](https://github.com/NoahChristian/Arduino_HTTP_HTML) | **v0.11.0 or newer** | `check_engine_version()` in `tools/gen_page.py` reads the engine's `library.properties` and refuses to generate against an older one |
 
 Neither is a submodule. `whoami-spec` is **vendored** — the two files are copied
 in, so this repository builds with no sibling checkout. `Arduino_HTTP_HTML` is a
 **path dependency**, because the panel is a template the board renders rather
 than markup assembled in C, so the generator is not optional.
 
-**Why the engine floor is 0.10.0 and not something earlier.** The generated
-header includes `<HtmlTplPort.h>`; older engines emitted `<Arduino.h>`. That
-change landed in the engine under version **0.9.2** — the same version the two
-commits before it carried. So 0.9.2 is an **ambiguous version**: two different
-output behaviors answer to one number, and a floor of 0.9.2 would admit the half
-that does not work here. 0.10.0 is the first version that unambiguously carries
-the new seam.
+**Why the floor is v0.11.0, and why not 0.10.0.** Generated headers include
+`<HtmlTplPort.h>`; older engines emitted `<Arduino.h>`. That change landed in
+the engine under version **0.9.2** -- the same version the two commits before it
+carried -- so 0.9.2 is an **ambiguous version**: two different output behaviors
+answer to one number, and a floor naming it would admit the half that does not
+work here.
+
+0.10.0 is where the seam and the Zephyr adapter actually arrived, and it would
+be the honest technical floor. It is not the floor because **it was never
+tagged.** The engine bumped `library.properties` four times -- 0.9.1, 0.9.2,
+0.10.0, 0.11.0 -- and released none of them until v0.11.0. A floor naming a
+version with no tag cannot be checked out, downloaded or referenced; it is a
+description of a string in somebody's working tree.
+
+So the floor is the oldest version that exists as a release. It is marginally
+stricter than the code requires, and that is the price of being obtainable.
 
 ## Building
 
