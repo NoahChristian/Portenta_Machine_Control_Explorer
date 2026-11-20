@@ -62,8 +62,22 @@ LOG_MODULE_REGISTER(whoami, LOG_LEVEL_INF);
  * obliged to; SAYING so is free, and it is what lets a caller report "speaks
  * 1, I wanted 2" instead of a parse failure.
  */
-#define WHOAMI_SCHEMA "1.0005"
-#define WHOAMI_MAJOR  1UL
+/*
+ * THESE COME FROM THE VENDORED CORE NOW, and are aliases rather than values.
+ *
+ * They used to be literals here, and the same literals were written out by
+ * hand in two other firmwares. That is how this format came to be implemented
+ * three separate times, and how all three ended up sharing a defect that each
+ * one's own tests passed over: a thing tested only against itself is tested
+ * against its own assumptions.
+ *
+ * One definition, in whoami_core.h at whoami-spec v0.8.0. Editing it here
+ * would be caught by the vendoring check rather than shipped.
+ */
+#include "whoami_core.h"
+
+#define WHOAMI_SCHEMA WHOAMI_CORE_SCHEMA
+#define WHOAMI_MAJOR  ((unsigned long)WHOAMI_CORE_MAJOR)
 #define WHOAMI_SPEAKS "1"
 
 /* The label field is 11 columns wide and the value starts at column 12. A
@@ -111,10 +125,23 @@ int whoami_app_id(char *buf, size_t cap)
 	if (!buf || cap == 0) {
 		return -EINVAL;
 	}
-	const int n = snprintf(buf, cap, "appid      " WHOAMI_APP " fw %s",
-			       CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION);
+	/*
+	 * BUILT BY THE SHARED CORE, not by an snprintf of our own. The grammar
+	 * is `<token> [unit <n>] fw <version>` with `fw` LAST, so a parser can
+	 * take the final whitespace-separated field without first knowing
+	 * whether `unit` was present -- a rule about the format rather than
+	 * about this board, and one that was hand-written in three firmwares.
+	 */
+	struct whoami_info info;
+	int n;
 
-	if (n < 0 || (size_t)n >= cap) {
+	memset(&info, 0, sizeof(info));
+	info.token = WHOAMI_APP;
+	info.unit  = -1;   /* there is one of these, so the field is omitted */
+	info.fw    = CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION;
+
+	n = whoami_appid_line(buf, cap, &info);
+	if (n < 0) {
 		return -ENOMEM;
 	}
 	return n;
@@ -288,10 +315,21 @@ static void print_image(const struct shell *sh)
  * ONE function, called by the report and by the refusal, so the two can never
  * disagree about what this board speaks.
  */
-static void print_preamble(const struct shell *sh)
+/*
+ * The preamble used to be written out here, by hand, as two shell_print calls
+ * -- and identically, by hand, in two other firmwares. whoami_render() emits
+ * it now. Deleted rather than left unused: a second way to produce the frozen
+ * lines is a second thing that can drift from them, and it drifts silently
+ * because both halves keep compiling.
+ */
+
+/*
+ * The seam to the shared core: it hands back one finished line and knows
+ * nothing about Zephyr, a shell, or this board.
+ */
+static void emit_line(void *ctx, const char *line)
 {
-	shell_print(sh, "schema     " WHOAMI_SCHEMA);
-	shell_print(sh, "speaks     " WHOAMI_SPEAKS);
+	shell_print((const struct shell *)ctx, "%s", line);
 }
 
 static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
@@ -315,56 +353,72 @@ static int cmd_whoami(const struct shell *sh, size_t argc, char **argv)
 		}
 	}
 
-	print_preamble(sh);
-
 	/*
-	 * ASKED FOR A MAJOR THIS BOARD DOES NOT SPEAK: the preamble and
-	 * nothing else. Not this board's own newest report, which the caller
-	 * has already said it cannot read, and not silence - the caller can
-	 * always read those two lines, so it ends with "speaks 1, I wanted N"
-	 * rather than with a parse failure or a timeout.
+	 * THE PREAMBLE, THE NEGOTIATION AND THE REQUIRED FIELDS, ALL FROM THE
+	 * SHARED CORE.
 	 *
-	 * This is the path that only runs on the day a new major ships, so it
-	 * is the path most likely to be wrong and never noticed. Ask for a
-	 * version nobody implements (`whoami 9999`) and watch it stop here.
+	 * Anything but 1 is the refusal: the preamble and nothing else. Not
+	 * this board's own newest report, which the caller has already said it
+	 * cannot read, and not silence -- the caller can always read those two
+	 * frozen lines, so it ends with "speaks 1, I wanted N" rather than with
+	 * a parse failure or a timeout.
+	 *
+	 * That decision used to be an `if` right here, and an identical `if`
+	 * lived in two other firmwares. It is a rule about the protocol rather
+	 * than about this board, and a copy per firmware is how one firmware
+	 * comes to disagree with the others on the one path nobody exercises.
+	 *
+	 * It only runs on the day a new major ships, so it is the path most
+	 * likely to be wrong and never noticed. Ask for a version nobody
+	 * implements (`whoami 9999`) and watch it stop here.
 	 */
-	if (want != WHOAMI_MAJOR) {
-		return 0;
-	}
+	{
+		struct whoami_info info;
+		char project[64];
+		char built[72];
+		char uptime[32];
 
-	/*
-	 * The matchable line FIRST and verbatim, as on the sibling boards, so
-	 * a script may parse any of the three the same way and the human and
-	 * machine forms cannot drift -- they are the same bytes.
-	 */
-	char id[72];
+		snprintf(project, sizeof(project),
+			 "Portenta Machine Control Explorer");
+		/*
+		 * The build stamp separates two COMPILES carrying the same
+		 * version, which the +build counter cannot: that counter moves
+		 * when tools/bumpver.py is run, and a bench session usually
+		 * compiles several times between bumps. So the image line
+		 * below answers "which image is this" and this one answers "is
+		 * it the one I just built".
+		 */
+		snprintf(built, sizeof(built), "%s %s   (this firmware)",
+			 __DATE__, __TIME__);
+		snprintf(uptime, sizeof(uptime), "%ud %02u:%02u:%02u",
+			 (unsigned int)(up / 86400U),
+			 (unsigned int)((up / 3600U) % 24U),
+			 (unsigned int)((up / 60U) % 60U),
+			 (unsigned int)(up % 60U));
 
-	if (whoami_app_id(id, sizeof(id)) > 0) {
-		shell_print(sh, "%s", id);
+		memset(&info, 0, sizeof(info));
+		info.token   = WHOAMI_APP;
+		info.unit    = -1;
+		info.fw      = CONFIG_MCUBOOT_IMGTOOL_SIGN_VERSION;
+		info.project = project;
+		info.board   = CONFIG_BOARD_TARGET;
+		info.built   = built;
+		info.uptime  = uptime;
+		/*
+		 * WHAT THIS BOARD COULD PROVE, not a claim about this report.
+		 * The report is unauthenticated by definition -- anything that
+		 * can answer on the port can produce one -- so the field says
+		 * what is on offer, and `none` is the honest answer here:
+		 * there is no per-device key and no secure element behind it,
+		 * so there is nothing to sign with.
+		 */
+		info.attest  = "none";
+
+		if (whoami_render(emit_line, (void *)sh, &info,
+				  (want > 0x7FFFFFFFUL) ? -1 : (int)want) != 1) {
+			return 0;
+		}
 	}
-	shell_print(sh, "project    Portenta Machine Control Explorer");
-	shell_print(sh, "board      %s", CONFIG_BOARD_TARGET);
-	/*
-	 * The build stamp separates two COMPILES carrying the same version,
-	 * which the +build counter cannot: that counter moves when
-	 * tools/bumpver.py is run, and a bench session usually compiles
-	 * several times between bumps. So the image line below answers "which
-	 * image is this" and this one answers "is it the one I just built".
-	 */
-	shell_print(sh, "built      %s %s   (this firmware)", __DATE__, __TIME__);
-	shell_print(sh, "uptime     %ud %02u:%02u:%02u",
-		    (unsigned int)(up / 86400U),
-		    (unsigned int)((up / 3600U) % 24U),
-		    (unsigned int)((up / 60U) % 60U),
-		    (unsigned int)(up % 60U));
-	/*
-	 * WHAT THIS BOARD COULD PROVE, not a claim about this report. The
-	 * report is unauthenticated by definition - anything that can answer
-	 * on the port can produce one - so the field says what is on offer,
-	 * and `none` is the honest answer here: there is no per-device key and
-	 * no secure element behind it, so there is nothing to sign with.
-	 */
-	shell_print(sh, "attest     none");
 
 	/*
 	 * Everything above is required by the schema and everything below is
