@@ -377,24 +377,45 @@ row was; and two tails of one sentence stapled together in the RTC section
 above.
 
 Every one of those was written true and went stale underneath. None was caught
-by a gate, because **this repository gates everything except prose**:
+by a gate, because **this repository gated everything except prose**:
 generated files have `--check`, spelling has a word list, secrets have two
 hooks, commit messages have a hook. A sentence claiming a subsystem does not
-exist has nothing in front of it.
+exist had nothing in front of it.
 
-*Waiting on:* nobody. These are a morning's work each and none needs hardware.
+Part of that is closed now — the checks below — but only the mechanical part.
+**The claim itself still has no gate and cannot have one**, which is why this
+section stays open after the tooling landed.
 
-- **Check that every command named in a document exists.** Grep the docs for
-  backticked words that look like shell commands, and check each against the
-  `SHELL_CMD_REGISTER` names in `app/src/` and the scripts in `tools/`. That
-  alone would have caught `d1 walk`, which was renamed `dowalk` when
-  `status_out.c` became `do_interlock.c`.
-- **Check that every relative link resolves.** Cheap, and the failure is
-  invisible until a reader clicks.
-- **Check prose counts against the data they count.** `tools/terminals.csv`
-  said "NOTHING HERE IS measured YET" while carrying one measured row; a count
-  written beside the data it counts goes stale the first time the data changes
-  and nothing notices.
+**Two of the three proposed checks now exist**, as `tools/docscan.py`, check
+16 in `tools/pre-commit`. It is proved the way everything else here is: an
+18-case `--selftest`, half of whose cases exist only to show it still refuses
+something, then a planted stale path and a planted dead link refused by the
+real hook.
+
+- ~~**Check that every relative link resolves**~~ — done, heading anchors
+  included, so a link into `MEASURED.md`'s TBD section cannot rot when the
+  heading is reworded.
+- ~~**Check that every repository path named in a document exists**~~ — done.
+  It found two on its first run, both under `tools/`: a `channels.csv` that
+  was never created under that name, and a `shell_cmd.py` inherited from a
+  plan and never ported. (Naming them without their directory is not a dodge —
+  the check would fire on this very sentence otherwise, which is the correct
+  behavior for a document that names a path, and the reason to write the
+  *filename* when the subject is the name rather than the file.)
+- **A command check was written, measured and withdrawn.** It read the verbs
+  out of `SHELL_CMD_REGISTER` and refused any command-shaped backtick naming
+  something else, which does catch `d1 walk`. On these documents it produced
+  **45 findings, 2 of them real** — the rest prose (`no supply`, `per rev`),
+  C fragments (`struct net_buf`), devicetree and captured output, all
+  legitimately in backticks. One true positive is not worth forty false ones,
+  and this bench has already watched a gate that fired on routine work get
+  bypassed. Reinstating it needs a way to tell a command from a sentence; the
+  cases are kept in the selftest so that trying again means seeing them go red
+  first.
+- **Check prose counts against the data they count** — *not attempted, and
+  that is a conclusion rather than a gap.* `tools/terminals.csv` said "NOTHING
+  HERE IS measured YET" while carrying one measured row. Only a human knows
+  that sentence was a claim about a column rather than a description of one.
 - **Re-read a paragraph after any mechanical edit to it.** The RTC section's
   spliced sentence and the over-long replacement that produced "on the a
   sibling project on this bench bench" in another repo are the same failure: a

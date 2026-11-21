@@ -300,8 +300,11 @@ decision currently resting on something other than observation.
   settled — `PG_7` driven by HRTIM, per the datasheet — but Zephyr has
   no HRTIM driver, so nothing in this image can drive it yet. AO0, AO1 and
   AO3 are ordinary PWM and come first.
-- **The USB CDC-ACM VID/PID this board enumerates as.** `tools/shell_cmd.py`
-  inherits `2FE3:0004` from the Giga and that is almost certainly wrong here.
+- **The USB CDC-ACM VID/PID this board enumerates as.** Still never recorded.
+  The tool that would have cared about it is gone: `tools/pmcshell.ps1` asks
+  every port `mdnsname` and keeps the one that answers `portentaexplorer`,
+  which is the better rule anyway — picking a board by VID/PID or by port
+  number has already sent a command to the wrong one on this bench.
 - **Whether a full scratch swap completes**, and how long 1280 KB through the
   QSPI takes.
 

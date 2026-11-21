@@ -155,7 +155,7 @@ Three separate non-identities:
    doing so would confirm a write against the wrong bit.
 3. **The DIN map is neither** ascending nor a simple reversal.
 
-These belong in `tools/channels.csv` as data with a `[mbed]` provenance tag and
+These belong in `tools/terminals.csv` as data with a `[mbed]` provenance tag and
 the upstream commit, **never open-coded at a call site**. Then each one gets
 verified on the board a channel at a time, because a transcription error here
 produces a panel that confidently energizes the wrong 24 V output.

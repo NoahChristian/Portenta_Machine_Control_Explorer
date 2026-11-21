@@ -306,6 +306,32 @@ if [ -n "$notutf8" ]; then
   fail=1
 fi
 
+# --- 16. The documents against the tree they describe ------------------------
+#
+# Links that resolve and repository paths that exist. Added 2026-11-20 after a
+# sweep found the README claiming four built subsystems were "not built yet",
+# a command named under a name it lost two releases ago, and two references to
+# files that had never existed in this repository - none of which anything
+# checked, because this hook gated everything EXCEPT prose.
+#
+# It reads the WORKING TREE, not the index, which is the same trade
+# gen_page.py --check makes: a partially staged commit can pass here and ship
+# a broken link. The alternative is reconstructing the tree from the index for
+# every path lookup, and the failure it would catch has never happened.
+#
+# A command check was written, measured and WITHDRAWN - 45 findings on these
+# documents, 2 of them real. The reasoning is in the script's header, and a
+# gate that cries wolf is one this repository has already watched get
+# bypassed.
+DOCSCAN="$(dirname "$0")/../tools/docscan.py"
+[ -f "$DOCSCAN" ] || DOCSCAN="tools/docscan.py"
+if [ -f "$DOCSCAN" ]; then
+  python "$DOCSCAN" || fail=1
+else
+  say "docscan.py not found at $DOCSCAN - NOT a pass"
+  fail=1
+fi
+
 # --- Checks not yet registered ----------------------------------------------
 #
 # Each is added HERE, as a fail-if-missing block, on the same commit that first
