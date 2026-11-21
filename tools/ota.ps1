@@ -72,19 +72,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 
-# Dot-sourced HERE, ABOVE this script's own Invoke-ZShell, and the order is
-# load-bearing: PowerShell takes the LAST definition, so the copy further down
-# this file keeps winning and nothing about the OTA path changes today. What is
-# wanted from pmcshell.ps1 is Get-PmcHost alone.
-#
-# THE TWO COPIES OF Invoke-ZShell HAVE ALREADY DRIFTED, which is the thing that
-# file was created to prevent: this one bounds the read with a computed
-# $TotalMs of four quiet windows, floor 8 s; the shared one takes a flat
-# $MaxMs = 20000. Both terminate, so the live-lock lesson did reach both - but
-# they are two implementations of one rule and only one of them is the one with
-# the reasoning written down. Unifying them means re-testing the OTA path,
-# which is a change of its own; it is on the punchlist rather than smuggled in
-# here.
+# The shared serial plumbing: Invoke-ZShell, Find-PmcPort and Get-PmcHost.
+# ONE COPY, which this file briefly was not - see the note where its own
+# Invoke-ZShell used to be.
 . (Join-Path $PSScriptRoot 'pmcshell.ps1')
 
 $venv = Join-Path $HOME 'zephyrproject\.venv\Scripts'
@@ -162,75 +152,12 @@ function Get-SlotHash {
     return $null
 }
 
-# Send a shell command and collect the reply.
-#
-# TWO DEADLINES, AND THE SECOND ONE IS LOAD BEARING.
-#
-#   QuietMs   stop once the console has been silent this long. This is how a
-#             reply is known to be complete, since the shell marks no end.
-#   TotalMs   stop regardless. Without it, a console that keeps talking holds
-#             this function forever.
-#
-# THAT IS NOT HYPOTHETICAL AND IT COST A SESSION. With an RTD front end
-# unattached, this board logs
-#
-#     <err> MAX31865: Fault Register: 0x04, Over/under voltage fault
-#
-# continuously. Measured on the bench with DTR asserted: 3129 bytes in 6 s,
-# LONGEST SILENCE 599 ms. Every QuietMs this script passes -- 1800, 2500,
-# 3000 -- is longer than that, so `$last.Restart()` fired before the quiet
-# window could ever close and the loop never exited. `tools/ota.ps1` sat for
-# over ten minutes having printed nothing, on a board that was answering its
-# console and serving its web panel the whole time.
-#
-# A faulting sensor is an ORDINARY state for a bench board. A discovery routine
-# that cannot survive one is a discovery routine that works until the day you
-# need it.
-#
-# BEWARE MEASURING THIS WITHOUT DTR. Zephyr's CDC-ACM sends nothing until DTR
-# is asserted, so a probe that omits it reports the console silent and appears
-# to exonerate exactly this cause. That misreading is why the fix took two
-# attempts.
-#
-# A capped read still works: the caller matches on CONTENT -- the mdns name, a
-# dotted quad -- and a reply interleaved with log lines still contains it. What
-# a cap cannot do is turn silence into an answer, so it says when it fired
-# rather than returning a short read that looks like a complete one.
-function Invoke-ZShell {
-    param(
-        [string]$Port,
-        [string]$Cmd,
-        [int]$QuietMs = 2500,
-        # Four quiet windows, floor 8 s: long enough that a merely slow reply
-        # still completes normally, short enough that a stuck port is a pause
-        # rather than a hang.
-        [int]$TotalMs = 0
-    )
-    if ($TotalMs -le 0) { $TotalMs = [Math]::Max(8000, $QuietMs * 4) }
-
-    $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
-    $sp.ReadTimeout = 500
-    try {
-        $sp.Open(); $sp.DtrEnable = $true; Start-Sleep -Milliseconds 450
-        $sp.DiscardInBuffer(); $sp.Write("$Cmd`r`n")
-        $sb = New-Object System.Text.StringBuilder
-        $last = [Diagnostics.Stopwatch]::StartNew()
-        $total = [Diagnostics.Stopwatch]::StartNew()
-        while ($last.ElapsedMilliseconds -lt $QuietMs -and
-               $total.ElapsedMilliseconds -lt $TotalMs) {
-            try { $c = $sp.ReadExisting(); if ($c) { [void]$sb.Append($c); $last.Restart() } } catch {}
-            Start-Sleep -Milliseconds 60
-        }
-        if ($total.ElapsedMilliseconds -ge $TotalMs) {
-            # Said out loud. A cap that fires silently is the same class of
-            # problem as the hang it replaced: the operator cannot tell a
-            # complete reply from a truncated one.
-            Write-Host ("  {0} kept talking for {1} ms; reading what arrived" -f $Port, $TotalMs) `
-                -ForegroundColor DarkYellow
-        }
-        return $sb.ToString()
-    } finally { if ($sp.IsOpen) { $sp.Close() } }
-}
+# Invoke-ZShell was defined here and is now in tools/pmcshell.ps1, dot-sourced
+# at the top of this file. It had drifted from that copy in both directions -
+# this one had the derived ceiling and the warning when it fires, that one had
+# the mandatory parameters - so the unified version took the better half of
+# each, and the measured account of the live-lock that made the ceiling
+# necessary moved with it. The discovery below calls it exactly as before.
 
 if (-not $Ip) {
     # THE NAME FIRST, because it costs one UDP exchange and the serial sweep
@@ -243,14 +170,56 @@ if (-not $Ip) {
     # SERVER ANSWERS, not the first one found, and a name cannot promise that.
     # So: try the name, keep it only if SMP replies there, otherwise fall
     # through to the sweep that checks each address in turn.
+    # THE NAME CAN RESOLVE TO MORE THAN ONE ADDRESS, AND BOTH ARE REAL.
+    # This board holds a DHCP lease on eth0 AND wlan0 whenever both links are
+    # up, and the mDNS responder answers for both. A name therefore does not
+    # identify an interface.
+    #
+    # AND SMP DOES NOT ANSWER ON BOTH. Measured 2026-11-20 with both links up:
+    # the sweep tried the Ethernet address first and got nothing, then the
+    # WiFi address and got a reply. The SMP/UDP server is bound to one
+    # interface, which is the fault this script's own error text has always
+    # anticipated - "it may be bound to a different interface" - now observed.
+    # So picking by any rule other than ASKING is picking wrong half the time,
+    # and "prefer Ethernet because it is faster" would have picked the
+    # interface that does not serve SMP at all.
+    #
+    # Hence: the name gives candidates, and SMP decides.
+    #
+    #   one address   probe it, and skip the serial port entirely
+    #   several       fall through to the sweep, which probes each in turn
+    #
+    # AN ADDRESS, NOT THE NAME, is carried through the rest of the run either
+    # way. Handing the name to the post-reset rejoin poll let it resolve to
+    # the other interface and report a failed update on a board that had
+    # swapped, booted and confirmed perfectly well - printing swapclear advice
+    # for a fault that did not exist, which is worse than printing nothing.
     $mdns = Get-PmcHost -Repo $repo
-    Write-Host "trying SMP at $mdns ..." -ForegroundColor DarkGray
-    $probe = & $smpmgr --ip $mdns --timeout 6 image state-read 2>&1 | Out-String
-    if ($probe -match 'ImageState|slot=') {
-        $Ip = $mdns
-        Write-Host "  SMP answers at $mdns" -ForegroundColor DarkGray
-    } else {
-        Write-Host "  no SMP reply by name - asking the board over USB" `
+    $cands = @()
+    try {
+        $cands = @([System.Net.Dns]::GetHostAddresses($mdns) |
+                   Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+                   ForEach-Object { $_.IPAddressToString } |
+                   Select-Object -Unique)
+    } catch {
+        Write-Host "  $mdns did not resolve - asking the board over USB" `
+            -ForegroundColor DarkGray
+    }
+
+    if ($cands.Count -eq 1) {
+        Write-Host "trying SMP at $mdns ..." -ForegroundColor DarkGray
+        $probe = & $smpmgr --ip $cands[0] --timeout 6 image state-read 2>&1 | Out-String
+        if ($probe -match 'ImageState|slot=') {
+            $Ip = $cands[0]
+            Write-Host "  SMP answers at $Ip ($mdns)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  no SMP reply there - asking the board over USB" `
+                -ForegroundColor DarkGray
+        }
+    } elseif ($cands.Count -gt 1) {
+        Write-Host ("  {0} is on {1} interfaces; only one serves SMP, so the " `
+                    -f $mdns, $cands.Count) -ForegroundColor DarkGray
+        Write-Host "  board is asked for the list and each is probed" `
             -ForegroundColor DarkGray
     }
 }

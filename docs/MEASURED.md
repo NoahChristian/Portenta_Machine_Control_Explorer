@@ -3121,6 +3121,69 @@ most likely the radio, which already has a drop counter in `/state.json` for
 exactly this argument. Recorded because the correlation was good enough to
 act on and would have been written up as a finding without the second run.
 
+## SMP answers on one interface, and the name answers for both (2026-11-20, 0.12.0+137)
+
+With Ethernet and the radio both up, the board holds a DHCP lease on each and
+the mDNS responder answers for both. `portentaexplorer.local` therefore
+resolves to two addresses, and **only one of them serves SMP**:
+
+```
+  portentaexplorer.local is on 2 interfaces
+  trying SMP at <eth0 address> ...     (no reply)
+  trying SMP at <wlan0 address> ...
+  SMP answers at <wlan0 address>
+```
+
+The SMP/UDP server is bound to one interface. `tools/ota.ps1` has warned about
+this possibility since it was written - *"it may be bound to a different
+interface - this board can hold an address on both eth0 and wlan0"* - and this
+is the first time it has been seen rather than guessed at.
+
+**It also kills the obvious optimization.** Preferring Ethernet because it is
+twelve times faster would pick the interface that does not answer at all. The
+address worth having is the one whose SMP server replies, which is why the
+discovery probes each in turn instead of ranking them - the rule the serial
+sweep already used, now also applied to the addresses a name resolves to.
+
+### And it is why addressing by name needs care
+
+Moving the tools to `portentaexplorer.local` is right for the panel and the
+monitors, which answer on any interface. For SMP it is not enough on its own:
+handing the name straight to `smpmgr` works only when the name happens to
+resolve to the interface that serves SMP. Worse, handing it to the post-reset
+rejoin poll reported a FAILED update on a board that had swapped, booted and
+confirmed perfectly well, and printed `swapclear` recovery advice for a fault
+that did not exist. Advice to run a recovery tool on a healthy board is worse
+than no advice.
+
+So the name is used to find candidates and an **address** is carried through
+the rest of the run.
+
+### The HTTP path updated it when SMP would not
+
+With both links up, three consecutive `smpmgr` uploads to the one address that
+answers failed partway - `upload failed - slot1 holds no readable image`,
+which is the tool checking rather than assuming. The same image over HTTP went
+in first time:
+
+```
+==> staging 1155447 bytes over HTTP
+    staged 1155447 bytes; now arm it with do=otatest
+==> arming slot1
+    armed: slot1 is pending
+==> resetting
+
+slot=0  version='0.12.0.137'  active=True
+slot=1  version='0.12.0.136'  confirmed=True
+```
+
+That is the reason docs/OTA.md already prefers the HTTP route: SMP/UDP is
+lockstep with no window, so one lost datagram in either direction ends the
+transfer. **Why the loss rate changed is not established** - the same radio
+address took an upload successfully earlier the same day, with Ethernet down
+rather than up - and a guess about asymmetric routing is recorded here as a
+guess, not a finding.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it

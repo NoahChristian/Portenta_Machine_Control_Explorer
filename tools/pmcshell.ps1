@@ -37,18 +37,65 @@ function Invoke-ZShell {
         MaxMs IS NOT OPTIONAL POLISH, it is what makes this terminate. "Read
         until quiet" with no ceiling is a live-lock against a board that logs:
         anything printing more often than QuietMs restarts the quiet timer
-        forever, and the call never returns. Measured - this hung a
-        provisioning run past five minutes on a board whose network thread
-        logs every two seconds, with an empty output file and nothing to say
-        which port it was stuck on. The quiet timer decides when the REPLY is
-        finished; this decides when to stop waiting for one.
+        forever, and the call never returns. The quiet timer decides when the
+        REPLY is finished; this decides when to stop waiting for one.
+
+        THAT IS NOT HYPOTHETICAL AND IT COST A SESSION. With an RTD front end
+        unattached, this board logs
+
+            <err> MAX31865: Fault Register: 0x04, Over/under voltage fault
+
+        continuously. Measured on the bench with DTR asserted: 3129 bytes in
+        6 s, LONGEST SILENCE 599 ms. Every QuietMs these tools pass - 1800,
+        2500, 3000 - is longer than that, so the quiet timer restarted before
+        its window could ever close and the loop never exited. ota.ps1 sat for
+        over ten minutes having printed nothing, on a board that was answering
+        its console and serving its web panel the whole time.
+
+        A faulting sensor is an ORDINARY state for a bench board. A routine
+        that cannot survive one is a routine that works until the day it is
+        needed.
+
+        BEWARE MEASURING THIS WITHOUT DTR. Zephyr's CDC-ACM sends nothing
+        until DTR is asserted, so a probe that omits it reports the console
+        silent and appears to exonerate exactly this cause. That misreading is
+        why the fix took two attempts.
+
+        A capped read still works, because callers match on CONTENT - the mDNS
+        name, a dotted quad - and a reply interleaved with log lines still
+        contains it. What a cap cannot do is turn silence into an answer,
+        which is why it says when it fired rather than returning a short read
+        that looks like a complete one.
+
+        THE CEILING IS DERIVED FROM THE QUIET WINDOW, not a flat number. Four
+        quiet windows with an 8 s floor: long enough that a merely slow reply
+        still finishes normally, short enough that a stuck port is a pause
+        rather than a hang - and it scales, so a caller that raises QuietMs for
+        a command that thinks before answering does not also have to remember
+        to raise the ceiling. Pass MaxMs to override it outright.
+
+        AND IT SAYS SO WHEN IT FIRES. A cap that truncates silently is the same
+        class of problem as the hang it replaced: the caller cannot tell a
+        complete reply from a cut-off one. Expect to see it on this bench
+        routinely - the board logs an open-RTD fault about ten times a second
+        with no probe connected, which is faster than any quiet window, so the
+        ceiling rather than the silence is what ends most reads here.
+
+        THIS FUNCTION HAD TWO COPIES AND THEY DRIFTED. ota.ps1 carried its own
+        with the derived ceiling and this warning; this one had a flat
+        MaxMs = 20000 and neither. Both terminated, so the live-lock lesson had
+        reached both - but the better half of it lived only in the copy nobody
+        was reading. Unified here on 2026-11-20, taking the better half of each.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Port,
         [Parameter(Mandatory = $true)][string]$Cmd,
         [int]$QuietMs = 2500,
-        [int]$MaxMs = 20000
+        # 0 means derive it from QuietMs; see above.
+        [int]$MaxMs = 0
     )
+    if ($MaxMs -le 0) { $MaxMs = [Math]::Max(8000, $QuietMs * 4) }
+
     $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
     $sp.ReadTimeout = 500
     try {
@@ -62,6 +109,10 @@ function Invoke-ZShell {
                $total.ElapsedMilliseconds -lt $MaxMs) {
             try { $c = $sp.ReadExisting(); if ($c) { [void]$sb.Append($c); $last.Restart() } } catch {}
             Start-Sleep -Milliseconds 60
+        }
+        if ($total.ElapsedMilliseconds -ge $MaxMs) {
+            Write-Host ("  {0} kept talking for {1} ms; reading what arrived" `
+                        -f $Port, $MaxMs) -ForegroundColor DarkYellow
         }
         return $sb.ToString()
     } finally { if ($sp.IsOpen) { $sp.Close() } }
