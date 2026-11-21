@@ -357,6 +357,14 @@ Small, specific, and none of it blocked on hardware.
   radio's own `rxDrops` counter is already in `/state.json` for exactly this
   argument — the next time an upload stalls, read it before reasoning about
   anything else.
+- **Two copies of `Invoke-ZShell`, and they have drifted.** `pmcshell.ps1`
+  exists because "two would drift", and `ota.ps1` still carries its own: the
+  shared one bounds the read with a flat `MaxMs = 20000`, `ota.ps1`'s computes
+  four quiet windows with an 8 s floor. Both terminate, so the live-lock
+  lesson reached both — but only one of them has the reasoning written beside
+  it, and the next fix will land in whichever copy the person is looking at.
+  Unifying them means re-testing the OTA path, which is why it was not
+  smuggled into the change that dot-sourced that file for `Get-PmcHost`.
 - **CANopenNode, but not yet.** See the CANopen item at the top: a stack is
   the right thing to adopt once PDOs or a real object dictionary are wanted,
   and the wrong thing to adopt before a second node has ever acknowledged a

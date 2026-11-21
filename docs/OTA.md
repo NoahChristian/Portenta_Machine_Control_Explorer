@@ -59,9 +59,9 @@ the intended way to discover it.
 ## Updating, thereafter
 
 ```powershell
-pwsh tools/wifi_provision.ps1   # once per board; credentials go to NVS
-pwsh tools/otahttp.ps1 -Ip <board> -Arm -Reset    # over TCP, preferred
-pwsh tools/ota.ps1                                # over UDP, the SMP path
+pwsh tools/wifi_provision.ps1       # once per board; credentials go to NVS
+pwsh tools/otahttp.ps1 -Arm -Reset  # over TCP, preferred
+pwsh tools/ota.ps1                  # over UDP, the SMP path
 ```
 
 ### Prefer the HTTP path, and the reason is retransmission

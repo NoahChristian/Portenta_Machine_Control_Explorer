@@ -40,7 +40,7 @@
 
 .EXAMPLE
     # console 1 - watch
-    pwsh tools/canmon.ps1 -Ip portentaexplorer.local
+    pwsh tools/canmon.ps1                  # the mDNS name is the default
 
     # console 2 - make traffic, over the serial shell
     can loopback
@@ -49,11 +49,18 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Ip,
+    # BY NAME, NOT BY ADDRESS. The default comes from Get-PmcHost, which reads
+    # CONFIG_NET_HOSTNAME out of the firmware's own prj.conf. An address is a
+    # DHCP lease and this board changes subnet when it switches between
+    # Ethernet and the radio; the name follows it. -Ip still works, so an
+    # invocation written down earlier does not break.
+    [Alias('Ip')][string]$Target,
     [int]$IntervalMs = 250
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'pmcshell.ps1')
+if (-not $Target) { $Target = Get-PmcHost }
 $cursor = 0
 $started = Get-Date
 $seen = 0
@@ -61,13 +68,13 @@ $states = @('ERROR_ACTIVE', 'ERROR_WARNING', 'ERROR_PASSIVE', 'BUS_OFF',
             'STOPPED')
 
 Write-Host ""
-Write-Host "watching http://$Ip/can.json   (ctrl-c to stop)" -ForegroundColor Cyan
+Write-Host "watching http://$Target/can.json   (ctrl-c to stop)" -ForegroundColor Cyan
 Write-Host ""
 
 # Start at the END of what the board already has, not the beginning: this is
 # a monitor, and replaying history on startup would look like live traffic.
 try {
-    $first = Invoke-RestMethod -Uri "http://$Ip/can.json" -TimeoutSec 5
+    $first = Invoke-RestMethod -Uri "http://$Target/can.json" -TimeoutSec 5
     $cursor = $first.next
 } catch {
     Write-Host "cannot reach the board: $($_.Exception.Message)" -ForegroundColor Red
@@ -78,7 +85,7 @@ $lastLine = ''
 
 while ($true) {
     try {
-        $j = Invoke-RestMethod -Uri "http://$Ip/can.json?from=$cursor" -TimeoutSec 5
+        $j = Invoke-RestMethod -Uri "http://$Target/can.json?from=$cursor" -TimeoutSec 5
     } catch {
         Write-Host ("{0:HH:mm:ss}  board unreachable" -f (Get-Date)) -ForegroundColor DarkYellow
         Start-Sleep -Milliseconds 1000

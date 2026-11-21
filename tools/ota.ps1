@@ -58,7 +58,7 @@
 
 .EXAMPLE
     pwsh tools/ota.ps1
-    pwsh tools/ota.ps1 -Ip portentaexplorer.local
+    pwsh tools/ota.ps1 -Ip <address>       # only to override the name
 #>
 [CmdletBinding()]
 param(
@@ -71,6 +71,22 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+
+# Dot-sourced HERE, ABOVE this script's own Invoke-ZShell, and the order is
+# load-bearing: PowerShell takes the LAST definition, so the copy further down
+# this file keeps winning and nothing about the OTA path changes today. What is
+# wanted from pmcshell.ps1 is Get-PmcHost alone.
+#
+# THE TWO COPIES OF Invoke-ZShell HAVE ALREADY DRIFTED, which is the thing that
+# file was created to prevent: this one bounds the read with a computed
+# $TotalMs of four quiet windows, floor 8 s; the shared one takes a flat
+# $MaxMs = 20000. Both terminate, so the live-lock lesson did reach both - but
+# they are two implementations of one rule and only one of them is the one with
+# the reasoning written down. Unifying them means re-testing the OTA path,
+# which is a change of its own; it is on the punchlist rather than smuggled in
+# here.
+. (Join-Path $PSScriptRoot 'pmcshell.ps1')
+
 $venv = Join-Path $HOME 'zephyrproject\.venv\Scripts'
 $smpmgr = Join-Path $venv 'smpmgr.exe'
 $img = Join-Path $repo 'build\app\zephyr\zephyr.signed.bin'
@@ -214,6 +230,29 @@ function Invoke-ZShell {
         }
         return $sb.ToString()
     } finally { if ($sp.IsOpen) { $sp.Close() } }
+}
+
+if (-not $Ip) {
+    # THE NAME FIRST, because it costs one UDP exchange and the serial sweep
+    # below costs several seconds and a port that may be in use.
+    #
+    # It is a PROBE and not a substitution, which is the whole point. The
+    # mDNS name resolves to ONE address - whichever interface the responder
+    # answers on - and this board holds an address on both eth0 and wlan0.
+    # The sweep below exists because the right address is the one whose SMP
+    # SERVER ANSWERS, not the first one found, and a name cannot promise that.
+    # So: try the name, keep it only if SMP replies there, otherwise fall
+    # through to the sweep that checks each address in turn.
+    $mdns = Get-PmcHost -Repo $repo
+    Write-Host "trying SMP at $mdns ..." -ForegroundColor DarkGray
+    $probe = & $smpmgr --ip $mdns --timeout 6 image state-read 2>&1 | Out-String
+    if ($probe -match 'ImageState|slot=') {
+        $Ip = $mdns
+        Write-Host "  SMP answers at $mdns" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  no SMP reply by name - asking the board over USB" `
+            -ForegroundColor DarkGray
+    }
 }
 
 if (-not $Ip) {

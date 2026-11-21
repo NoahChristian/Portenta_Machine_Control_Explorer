@@ -30,19 +30,22 @@
     How often to poll.
 
 .EXAMPLE
-    pwsh tools/encmon.ps1 -Ip portentaexplorer.local
+    pwsh tools/encmon.ps1                  # the mDNS name is the default
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Ip,
+    # BY NAME, NOT BY ADDRESS - see the note in canmon.ps1 and Get-PmcHost.
+    [Alias('Ip')][string]$Target,
     [int]$IntervalMs = 250
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'pmcshell.ps1')
+if (-not $Target) { $Target = Get-PmcHost }
 
 Write-Host ""
-Write-Host "watching http://$Ip/enc.json   (ctrl-c to stop)" -ForegroundColor Cyan
+Write-Host "watching http://$Target/enc.json   (ctrl-c to stop)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host ("{0,-6} {1,12} {2,10}  {3} {4} {5}  {6,7} {7,9} {8,8}" -f
             'ch', 'count', 'counts/s', 'A', 'B', 'I', 'index', 'per rev',
@@ -52,7 +55,7 @@ $last = @{}
 
 while ($true) {
     try {
-        $j = Invoke-RestMethod -Uri "http://$Ip/enc.json" -TimeoutSec 5
+        $j = Invoke-RestMethod -Uri "http://$Target/enc.json" -TimeoutSec 5
     } catch {
         Write-Host ("{0:HH:mm:ss}  board unreachable" -f (Get-Date)) -ForegroundColor DarkYellow
         Start-Sleep -Milliseconds 1000

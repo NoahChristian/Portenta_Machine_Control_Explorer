@@ -35,13 +35,15 @@
     With -Arm, also reboot so the swap happens now.
 
 .EXAMPLE
-    pwsh tools/otahttp.ps1 -Ip portentaexplorer.local
-    pwsh tools/otahttp.ps1 -Ip portentaexplorer.local -Arm -Reset
+    pwsh tools/otahttp.ps1                 # the mDNS name is the default
+    pwsh tools/otahttp.ps1 -Arm -Reset     # upload, mark for test, reboot
+    pwsh tools/otahttp.ps1 -Target <address>   # only to override the name
 #>
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Ip,
+    # BY NAME, NOT BY ADDRESS - see the note in canmon.ps1 and Get-PmcHost.
+    [Alias('Ip')][string]$Target,
     [string]$Token = $env:PMC_API_TOKEN,
     [switch]$Arm,
     [switch]$Reset,
@@ -49,6 +51,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'pmcshell.ps1')
+if (-not $Target) { $Target = Get-PmcHost }
 $repo = Split-Path -Parent $PSScriptRoot
 $img = Join-Path $repo 'build\app\zephyr\zephyr.signed.bin'
 
@@ -71,7 +75,7 @@ Write-Host "==> staging $($bytes.Length) bytes over HTTP" -ForegroundColor Cyan
 
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 try {
-    $r = Invoke-WebRequest -Uri "http://$Ip/ota" -Method Post `
+    $r = Invoke-WebRequest -Uri "http://$Target/ota" -Method Post `
         -Headers @{ 'X-PMC-Token' = $Token } `
         -ContentType 'application/octet-stream' `
         -Body $bytes -TimeoutSec $TimeoutSec -UseBasicParsing
@@ -93,13 +97,13 @@ if ($say -notmatch "staged\s+$($bytes.Length)\s+bytes") {
 
 if (-not $Arm) {
     Write-Host ""
-    Write-Host "not armed. To arm:  pwsh tools/otahttp.ps1 -Ip $Ip -Arm" -ForegroundColor Yellow
+    Write-Host "not armed. To arm:  pwsh tools/otahttp.ps1 -Target $Target -Arm" -ForegroundColor Yellow
     exit 0
 }
 
 Write-Host "==> arming slot1" -ForegroundColor Cyan
 $body = "token=$([uri]::EscapeDataString($Token))&do=otatest"
-$a = Invoke-WebRequest -Uri "http://$Ip/io" -Method Post `
+$a = Invoke-WebRequest -Uri "http://$Target/io" -Method Post `
     -ContentType 'application/x-www-form-urlencoded' `
     -Body $body -TimeoutSec 30 -UseBasicParsing
 $asay = ($a.Content | Out-String).Trim()
@@ -114,7 +118,7 @@ if (-not $Reset) {
 
 Write-Host "==> resetting" -ForegroundColor Cyan
 try {
-    Invoke-WebRequest -Uri "http://$Ip/reset" -Method Post `
+    Invoke-WebRequest -Uri "http://$Target/reset" -Method Post `
         -ContentType 'application/x-www-form-urlencoded' `
         -Body "token=$([uri]::EscapeDataString($Token))" `
         -TimeoutSec 10 -UseBasicParsing | Out-Null

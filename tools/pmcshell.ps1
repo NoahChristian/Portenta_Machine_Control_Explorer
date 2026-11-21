@@ -107,6 +107,53 @@ function Find-PmcPort {
     return $null
 }
 
+function Get-PmcHost {
+    <#
+    .SYNOPSIS
+        The board's mDNS name, read from the firmware that answers to it.
+
+    .DESCRIPTION
+        ADDRESS THE BOARD BY NAME. A DHCP lease is not a property of the unit,
+        and this one has already moved to a different SUBNET - not just a
+        different host - the moment Ethernet came up and the radio went down.
+        That is the designed behavior: Ethernet preferred, radio as fallback,
+        re-decided on every link poll. It silently invalidates any address
+        written down earlier, and the name follows the board across the switch.
+
+        IT IS READ FROM app/prj.conf RATHER THAN WRITTEN HERE. CONFIG_NET_HOSTNAME
+        is what the firmware actually registers with the mDNS responder, so a
+        copy of the name in each tool would be four places to change and three
+        of them would be missed. Throws rather than guessing a default: a tool
+        that falls back to a hard-coded name after failing to read the real one
+        is a tool that talks to the wrong board on the day they differ.
+
+        A NOTE ON RESOLUTION, because the obvious check lies. `Resolve-DnsName
+        portentaexplorer.local` FAILS on this PC - it queries unicast DNS - while
+        Invoke-WebRequest to the same name succeeds, because the Windows socket
+        resolver handles .local through mDNS. Anything resolving through the
+        normal socket path works: PowerShell's web cmdlets, .NET, Python, and
+        therefore smpmgr.
+    #>
+    param([string]$Repo)
+
+    if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
+    $conf = Join-Path $Repo 'app\prj.conf'
+    if (-not (Test-Path $conf)) {
+        throw "$conf not found - cannot read the board's mDNS name"
+    }
+    $text = Get-Content $conf -Raw
+    if ($text -match '(?m)^\s*CONFIG_NET_HOSTNAME\s*=\s*"([^"]+)"') {
+        return "$($Matches[1]).local"
+    }
+    throw @"
+CONFIG_NET_HOSTNAME not found in $conf.
+
+That symbol is what the firmware registers with the mDNS responder, so without
+it there is no name to address the board by. Pass -Target <address> to aim at
+one directly.
+"@
+}
+
 function Get-SecretFromHeader {
     <#
     .SYNOPSIS
