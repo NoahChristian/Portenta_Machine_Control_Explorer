@@ -4,6 +4,18 @@ Unordered. Each item says what it is waiting on, because "not done yet" and
 "blocked on a measurement" are different states and only one of them is work
 somebody can pick up.
 
+**Measurements the board is wired for and has not taken are NOT here.** They
+live in
+[MEASURED.md's TBD section](MEASURED.md#tbd---measurements-this-board-is-wired-for-and-has-not-taken),
+each naming the thing to connect and the number that settles it: a CAN frame
+off a real wire, any encoder count at all, a temperature from a real probe, a
+reply from a second RS485 station, and the DO and PDIO channel maps at the
+connector. One list, in the file whose job is evidence — copying them here
+would make two lists that disagree within a month.
+
+What is in this file is work somebody could start today: open questions about
+the hardware, and code that is known to be missing or known to be wrong.
+
 ---
 
 ## Hardware questions this project exists to answer
@@ -247,11 +259,20 @@ takes the 1.0.0 default, which clocks the SoC's internal RTC from LSI rather
 than 4.10.0's LSE. Irrelevant while the wall clock is the carrier's part;
 wrong the moment anything uses the internal one.
 
-*Waiting on:* a `pcf8563@51` node on the Portenta's internal bus, `CONFIG_RTC`
-and SNTP in the build. One commit's work, and nothing in it is blocked on
-hardware.
-and SNTP in the build. All of it is one commit's work; none of it is blocked
-on hardware that is missing.
+**Done**, and the paragraph above is kept because it is the design. `CONFIG_RTC`
+and `CONFIG_SNTP` are in the build, the carrier's PCF8563 is read at boot, the
+clock is set from NTP when it is unset, and `struct pmc_clock_drift` carries
+`ppm_tenths` beside the span it was measured over — a ppm figure without its
+interval being the thing that paragraph exists to prevent.
+
+*What is left of it:* nothing functional. The board revision point still
+stands — the target carries none, so it takes 1.0.0 and the SoC's internal RTC
+runs from LSI rather than 4.10.0's LSE. Irrelevant while the wall clock is the
+carrier's part, wrong the moment anything uses the internal one.
+
+(Two tails of the same sentence were stapled together here for an unknown
+number of commits, which is its own entry under **Keeping the documents
+honest** below.)
 
 ---
 
@@ -272,11 +293,14 @@ on hardware that is missing.
   writes are live and token-gated. The POST body is accumulated across
   callbacks into a static buffer that outlives the render, because the binder
   NUL-terminates decoded values in place.
-- **The rendered page is 72 KB on the wire against a 12 KB template**, and
-  about a sixth of that is the design-time sample attributes that
+- **The page is 108,363 bytes and 82% of its budget**, up from 72 KB when this
+  line was first written. About a sixth is the design-time sample attributes
   `data-tpl-attr` leaves in place so the file still previews in a browser.
-  That is the right trade today — nothing polls, so a page load is a rare
-  event — but it is the first thing to look at if the panel ever feels slow.
+  Still the right trade — nothing polls, so a page load is a rare event — but
+  82% is no longer "the first thing to look at if it feels slow", it is a
+  ceiling with four more subsystems' worth of panel to go. The budget raise is
+  already recorded once in MEASURED.md as a deliberate decision; the next one
+  should buy something rather than just raise the number.
 
 ## Known-wrong or unverified, carried from the code
 
@@ -304,6 +328,83 @@ on hardware that is missing.
   is not a state somebody finds restored at the next power-up.
 
 ---
+
+## Left over from 0.12.0
+
+Small, specific, and none of it blocked on hardware.
+
+- **Temperature has no console reader and no JSON endpoint.** Every other
+  family has at least one: `/rs485.json`, `/can.json`, `/enc.json`, and shell
+  commands for CAN, the encoders and the outputs. Temperature is panel-only,
+  which means the one family whose wrong answers are *plausible numbers*
+  rather than errors is also the one that cannot be watched from a script
+  while somebody moves a probe between terminals. Worth having before the
+  probe arrives rather than after.
+- **The CANopen node id and heartbeat period are not persisted.** Deliberate
+  for now — `canopen selftest` asserts against a known identity and a node id
+  somebody has to look up first is worse than one that is always the same at
+  boot. If it should survive a reset it belongs in `persist.c` with the rest
+  of the remembered set, through the same setters a person would use.
+- **`can_mcan: Message RAM access failure` on a mode switch with a frame in
+  flight.** Bisected and benign — it is logged and nothing else, and the
+  self-test passes through it — but *why* the controller raises MRAF when
+  message RAM is reconfigured with a pending transmission is unexplained at
+  the register level. One runtime read of CCCR and the TX buffer state at the
+  moment of the switch would settle it.
+- **Two OTA uploads failed and the cause was never found.** They failed at 96%
+  and 72% with the CAN heartbeat transmitting into an unacknowledged bus; the
+  control run with the bus transmitting succeeded, so CAN is ruled out. The
+  radio's own `rxDrops` counter is already in `/state.json` for exactly this
+  argument — the next time an upload stalls, read it before reasoning about
+  anything else.
+- **CANopenNode, but not yet.** See the CANopen item at the top: a stack is
+  the right thing to adopt once PDOs or a real object dictionary are wanted,
+  and the wrong thing to adopt before a second node has ever acknowledged a
+  frame, because then neither the stack nor the bus is a control for the
+  other.
+
+---
+
+## Keeping the documents honest
+
+**This is a standing item, not a one-off.** On 2026-11-20 a sweep found the
+README claiming temperature, the encoders, RS485 and CAN were "not built yet"
+while all four were built, served and on the panel; a boot indicator described
+two releases after it was removed; a console command named under a name it no
+longer had; this file describing a panel with no write path and no channel
+reads; the terminal map's header saying nothing in it was measured when one
+row was; and two tails of one sentence stapled together in the RTC section
+above.
+
+Every one of those was written true and went stale underneath. None was caught
+by a gate, because **this repository gates everything except prose**:
+generated files have `--check`, spelling has a word list, secrets have two
+hooks, commit messages have a hook. A sentence claiming a subsystem does not
+exist has nothing in front of it.
+
+*Waiting on:* nobody. These are a morning's work each and none needs hardware.
+
+- **Check that every command named in a document exists.** Grep the docs for
+  backticked words that look like shell commands, and check each against the
+  `SHELL_CMD_REGISTER` names in `app/src/` and the scripts in `tools/`. That
+  alone would have caught `d1 walk`, which was renamed `dowalk` when
+  `status_out.c` became `do_interlock.c`.
+- **Check that every relative link resolves.** Cheap, and the failure is
+  invisible until a reader clicks.
+- **Check prose counts against the data they count.** `tools/terminals.csv`
+  said "NOTHING HERE IS measured YET" while carrying one measured row; a count
+  written beside the data it counts goes stale the first time the data changes
+  and nothing notices.
+- **Re-read a paragraph after any mechanical edit to it.** The RTC section's
+  spliced sentence and the over-long replacement that produced "on the a
+  sibling project on this bench bench" in another repo are the same failure: a
+  scan for the old text reports clean, because the old text is exactly what is
+  no longer there.
+- **The harder half, which no gate can do**: a claim like "not built yet" is
+  true when written and false later, and nothing mechanical knows which. The
+  answer is a habit rather than a tool — when a subsystem lands, grep the docs
+  for its name before the commit, the same way `MEASURED.md` requires a claim
+  to be *deleted* from the page below when it moves up the ladder.
 
 ## Lessons to fold into the tooling
 
