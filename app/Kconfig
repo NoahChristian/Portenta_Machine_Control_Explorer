@@ -89,14 +89,31 @@ config PMC_CANOPEN_NODE_ID
 	  same at boot.
 
 config PMC_CANOPEN_HEARTBEAT_MS
-	int "Producer heartbeat period in ms (0 disables)"
+	int "Producer heartbeat period in ms (0 = silent until asked)"
 	depends on PMC_CANOPEN
-	default 1000
+	default 0
 	range 0 65535
 	help
-	  1000 ms is the usual industrial default and is what a scanner
-	  expects to wait for. 0 means the node says nothing until it is
-	  asked something, which also means a scanner will not find it.
+	  SILENT BY DEFAULT, AND THAT DEFAULT WAS MEASURED RATHER THAN
+	  CHOSEN. At 1000 ms - the usual industrial value, and what this was
+	  first set to - the node announces itself once a second whether or
+	  not anything is listening. On a bench where nothing else is on the
+	  wire, nothing acknowledges the frame, so the controller retries it
+	  forever: after fourteen hours it had parked at ERROR_PASSIVE with a
+	  transmit error count of 128, three transmit buffers permanently
+	  occupied, 50,055 further sends refused outright, and the
+	  transceiver driven continuously - visible as a lit TX lamp on a bus
+	  the operator had never asked it to use.
+
+	  None of that is a fault. It is what one CAN node alone on a wire
+	  does, and the panel reports it accurately. It is simply not
+	  something a diagnostic tool should start doing unprompted.
+
+	  0 means the node transmits NOTHING until asked - no heartbeat and
+	  no boot-up message. It still receives, still answers NMT, and still
+	  answers SDO, so a master that talks to it gets a reply; what it
+	  will not do is talk first. `canopen hb 1000` starts it announcing,
+	  and `canopen reset` then sends the boot-up a scanner waits for.
 
 	  This is object 0x1017, so a CANopen master can write it over SDO,
 	  and a reset puts it back to this value - which is what reset

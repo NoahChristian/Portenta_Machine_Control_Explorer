@@ -361,8 +361,23 @@ static void fillRail(void)
 {
 	const bool up = gSnap.rail.sensed && gSnap.rail.present;
 
-	PUT(vRail24, up ? "led green on" : "led green");
-	PUT(vRail12, up ? "led amber on" : "led amber");
+	/*
+	 * THREE STATES, NOT TWO. The rail is inferred from the encoder
+	 * pull-ups, so an encoder wired to J10 drives those pins and the
+	 * inference is VOID - which is not the same as the rail being off.
+	 *
+	 * Measured 2026-11-24: with an encoder on ENC1 A and B, five of six
+	 * pins read high, `present` went false and the lamp went dark while
+	 * the board was being fed 24 V perfectly well. The note beside it
+	 * already said "24V unknown"; the lamp contradicted it, and a lamp
+	 * wins against a caption. Hollow for unknown.
+	 */
+	const bool blind = gSnap.rail.sensed && gSnap.rail.wired;
+
+	PUT(vRail24, up ? "led green on" : (blind ? "led green unknown"
+						  : "led green"));
+	PUT(vRail12, up ? "led amber on" : (blind ? "led amber unknown"
+						  : "led amber"));
 
 	if (!gSnap.rail.sensed) {
 		PUT(vRailNote, "24V/12V not sensed - encoder pins unreadable");

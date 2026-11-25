@@ -15,8 +15,8 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "a9b90ef5"
-#define PAGE_INDEX_BYTES 108363
+#define PAGE_INDEX_BUILD "afe8c150"
+#define PAGE_INDEX_BYTES 109144
 #define PAGE_INDEX_DYNAMIC 1
 
 static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
@@ -172,6 +172,14 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
                                                filter:drop-shadow(0 0 3px #f5c35c); }
   .led.green { fill:#123a1c; } .led.green.on { fill:#38d16a;
                                                filter:drop-shadow(0 0 3px #38d16a); }
+  /* A THIRD STATE, BECAUSE DARK IS A CLAIM. The only 24 V sense this board
+     has is the encoder pull-ups, and an encoder wired to J10 drives those
+     pins itself - so the inference is void, not negative. Rendering the lamp
+     dark said "24 V is off" beside a note saying "24 V unknown", and the
+     board was being fed 24 V at the time. Hollow: visibly not lit, visibly
+     not the same as off. */
+  .led.unknown { fill:#1b2026; stroke:#6b7682; stroke-width:1.2;
+                 stroke-dasharray:2 1.6; }
   /* Bus traffic lamps. `.act` blinks for a window after a byte moved, rather
      than tracking individual bytes - a lamp cannot show 19200 baud and a 2 s
      page render could not sample it anyway. */
@@ -2300,7 +2308,11 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
           '<b class="' + (co.state === 5 ? 'ok' : '') + '">' +
           (sts[co.state] || ('state ' + co.state)) + '</b>' +
           ' &middot; heartbeat ' +
-          (co.hbMs ? co.hbMs + ' ms' : '<span class="warn">off</span>') +
+          /* NOT A WARNING. Silent is the default since 2026-11-25 - the node
+             answers but does not talk first - so coloring it like a fault
+             would make every board look broken out of the box. */
+          (co.hbMs ? co.hbMs + ' ms'
+                   : '<span class="dim">off &mdash; silent until asked</span>') +
           ' &middot; ids 0x' + (0x700 + co.node).toString(16) +
           ' / 0x' + (0x600 + co.node).toString(16) +
           '<br><span class="dim">sent ' + co.boots + ' boot-up, ' + co.hb +

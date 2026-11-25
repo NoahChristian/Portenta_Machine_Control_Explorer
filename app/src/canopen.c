@@ -496,8 +496,19 @@ static void co_thread_fn(void *a, void *b, void *c)
 	 * the thing a scanner is waiting for. Sent from the thread rather
 	 * than from init so the only code that transmits on this node's
 	 * identifiers is this thread.
+	 *
+	 * NOT SENT WHEN THE HEARTBEAT IS OFF, because a lone frame on a wire
+	 * with nobody to acknowledge it is not harmless: it occupies a
+	 * transmit buffer forever and parks the controller at ERROR_PASSIVE
+	 * retransmitting, which lights the transceiver on a bus the operator
+	 * never asked this board to drive. With the heartbeat at 0 the node
+	 * is silent until spoken to - it still receives, still answers NMT
+	 * and still answers SDO. `canopen reset` sends the boot-up when a
+	 * scanner is actually there to hear it.
 	 */
-	co_send_bootup();
+	if (atomic_get(&co_hb_ms) != 0) {
+		co_send_bootup();
+	}
 	next_hb = k_uptime_get() + (int64_t)atomic_get(&co_hb_ms);
 
 	for (;;) {

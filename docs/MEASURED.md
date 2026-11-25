@@ -3401,6 +3401,69 @@ legal transitions, just fewer of them, so `illegal` stays at zero. Only
 index-to-index distance against the line count catches it, which is why the Z
 pulse is recorded and never allowed to rewrite the position.
 
+## Two things the panel said that were not true (2026-11-25, 0.12.0+142)
+
+Both reported by the operator looking at the hardware rather than at the
+panel, which is the only way either would have been found.
+
+### The 24 V lamp was dark while the board was being fed 24 V
+
+The only 24 V sense on this board is the encoder pull-ups - there is no rail
+monitor - so `pmc_rail_read()` reads the six encoder pins and calls the rail
+present when all six are high. An encoder was wired to ENC1 the day before.
+It drives those pins itself:
+
+```
+rail24Inferred: {'sensed': True, 'present': False, 'encoderWired': True, 'highs': 5}
+enc levels    : [(1, 1, 1), (1, 0, 1)]
+```
+
+Five of six. `present` went false, and the lamp went dark.
+
+**The code already knew.** `struct pmc_rail` has carried a `wired` flag whose
+comment reads "mixed: an encoder is connected, inference void", and the note
+under the lamp already read *"24V unknown - 5 of 6 encoder pins high, so
+something is wired to J10"*. The lamp contradicted the caption beside it, and
+a lamp wins against a caption every time.
+
+So the lamp has three states now, not two: lit, dark, and **hollow** - a
+dashed outline for "cannot tell". Dark is a claim that the rail is off, and
+this board is not entitled to make it while anything is wired to J10.
+
+Worth stating plainly: **this is not a fixable measurement.** With an encoder
+on those pins the inference is void in both directions - a stationary encoder
+resting with every line high would read as a healthy rail with the supply
+disconnected. A real 24 V sense would need a divider onto a spare analog
+input.
+
+### CAN was transmitting on a bus nobody had asked it to use
+
+The TX lamp was lit and the controller sat at ERROR_PASSIVE. Nothing had
+requested a transmission:
+
+```
+can  state=ERROR_PASSIVE txErr=128 txOk=0 txQueued=3 txReject=50055 txPin=toggling rx=0
+canopen  node 5, hbMs 1000, boots 1, hb 50057
+```
+
+50,057 heartbeats over about fourteen hours, one a second, from the CANopen
+node added on 2026-11-20 with `CONFIG_PMC_CANOPEN_HEARTBEAT_MS` defaulting to
+1000. Alone on a wire nothing acknowledges a frame, so the controller retried
+the first one forever: three transmit buffers permanently occupied, every
+later send refused outright - that is where the 50,055 rejections came from -
+and the transceiver driven continuously, which is the lit lamp.
+
+**None of that is a fault**, and the panel reported every part of it
+correctly. It is what one CAN node alone on a wire does. It is simply not
+something a diagnostic tool should begin doing unprompted on somebody's
+bench.
+
+The default is now **0 - silent until spoken to**. The node still receives,
+still answers NMT and still answers SDO; it no longer talks first. The
+boot-up message is suppressed along with the heartbeat, because one
+unacknowledged frame parks the controller exactly as a thousand of them do.
+`canopen hb 1000` restores the announcing behavior for a real bus.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it
