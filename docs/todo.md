@@ -357,6 +357,15 @@ Small, specific, and none of it blocked on hardware.
   radio's own `rxDrops` counter is already in `/state.json` for exactly this
   argument — the next time an upload stalls, read it before reasoning about
   anything else.
+- **`Find-PmcPort` can hang forever, and its own ceiling does not help.**
+  `MaxMs` bounds the READ loop; `SerialPort.Open()` happens before any timer
+  starts. Found 2026-11-24: the sweep had to be killed after five minutes on a
+  machine carrying three other USB serial devices, one of which would not
+  open. Everything the live-lock work bought is bypassed by a port that never
+  opens. The fix is to bound the open as well - open on a runspace or job with
+  a deadline, or skip ports whose `VID_` is not this board's before opening
+  them at all. The second is cheaper and also stops the sweep sending `mdnsname`
+  to somebody else's hardware.
 - **Two copies of `Invoke-ZShell`, and they have drifted.** `pmcshell.ps1`
   exists because "two would drift", and `ota.ps1` still carries its own: the
   shared one bounds the read with a flat `MaxMs = 20000`, `ota.ps1`'s computes

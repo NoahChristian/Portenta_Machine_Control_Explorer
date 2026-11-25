@@ -3184,6 +3184,143 @@ address took an upload successfully earlier the same day, with Ethernet down
 rather than up - and a guess about asymmetric routing is recorded here as a
 guess, not a finding.
 
+## The fallback that could not run (2026-11-24, 0.12.0+137)
+
+The board served nothing for an hour. It had been up four days, the Ethernet
+cable had been unplugged, and **the radio never took over** - which is the one
+thing this firmware's network policy exists to do.
+
+### What the board said, in the order it was asked
+
+```
+uptime     3d 20:42:44
+image      0.12.0+137  slot0, confirmed
+```
+
+So **nothing had restarted.** The carrier runs on 24 V and the USB cable is
+only the console; unplugging it and plugging it back in changed nothing. This
+was a running system that had lost its network days into the run, not a boot
+that went wrong.
+
+```
+health
+  network           FAIL no interface is up
+  uptime ok   expanders ok   analog switches ok   panel ok
+```
+
+```
+net iface
+  Interface eth0 (Ethernet) [1]   Interface is down.
+  Interface wlan0 (WiFi)    [2]   Interface is down.
+
+net iface up 1
+  Cannot take interface 1 up (-120)
+```
+
+`-120` is `-EALREADY`: both interfaces were administratively UP with no
+carrier. For the cable that is expected with it unplugged. For the radio it is
+not.
+
+```
+ethreset
+  the MAC initialized normally - refusing to reset a peripheral its driver owns
+```
+
+That guard earned its place here: it ruled out the LAN8742A strap fault
+recorded above without a reset, by reporting what happened at boot four days
+earlier.
+
+### The radio and the stack disagreed, and the disagreement was load-bearing
+
+```
+wifi cred auto_connect
+  <err> infineon_airoc_wifi: Already connected
+  <err> net_wifi_mgmt: Connection request failed (-120)
+```
+
+**The driver believed it was associated while `wlan0` was down.** Every
+reconnect attempt was therefore refused as redundant. One `wifi disconnect`
+typed by hand cleared it, and the firmware's own re-arm reconnected and took a
+lease in eight seconds:
+
+```
+<wrn> pmc_net: WiFi disconnected; re-arming auto-connect
+<inf> pmc_net: auto-connecting to a stored network
+<inf> net_dhcpv4: Received: <the WiFi address>
+<inf> pmc_net: default interface -> wlan0 (radio)
+```
+
+### The deeper fault: nothing was retrying at all
+
+The obvious reading is that the retry ran every 60 s and was refused every
+time. **It did not run at all**, and the log is the evidence - in an hour of
+being stuck it carried nothing but a failing NTP query every thirty seconds.
+Not one `auto-connect request failed` line.
+
+`net_start()` returns early when the interface is up and does **not**
+reschedule itself, so after a successful join the work item is stopped. The
+only thing that ever starts it again is a WiFi **disconnect event**. That
+covers the access point going away. It does not cover the interface going down
+with the association still held, because no disconnect is raised for that.
+
+Reproduced deliberately, which is what turned this from a story into a test:
+
+```
+net iface down 2     <- takes the interface down under a live association
+...45 seconds...     <- nothing. No retry, no warning, no recovery.
+```
+
+Then the same command on the fixed image, which is the control:
+
+```
+00:01:33  Connection request failed (-115)   auto-connecting to a stored network
+00:01:38  Connection request failed (-115)   auto-connecting to a stored network
+00:01:48  Connection request failed (-115)   auto-connecting to a stored network
+00:02:08  Connection request failed (-115)   auto-connecting to a stored network
+```
+
+Retries at 5, 10, 20 and 40 s where there had been none at all.
+
+**AND THE REPRODUCTION IS NOT THE BENCH FAULT, which has to be said plainly.**
+`-115` is `-ENETDOWN`: `net iface down 2` takes the interface ADMINISTRATIVELY
+down, and the WiFi layer refuses to connect on it. The bench fault was
+administratively UP with no carrier and a stale association, which is what
+returned `-EALREADY`. So this test proves the supervisor - the half that
+decides whether anything retries at all - and does **not** exercise the
+disconnect branch.
+
+That branch rests on the bench observation instead: the refusal was seen, a
+manual `wifi disconnect` cleared it, and the code now does automatically what
+that command did by hand. Calling it verified would be claiming a control that
+was never run.
+
+### Both halves fixed
+
+- **`net_start()`**: `-EALREADY` now forces a `WIFI_DISCONNECT` instead of
+  logging and waiting. The disconnect event re-arms the retry, and the attempt
+  after it finds the radio idle.
+- **`link_poll()`**: arms `net_start_work` whenever the WiFi interface is down
+  and no retry is already pending. That poll already runs every 2 s and
+  already looks at every link, so it closes the gap for every cause - including
+  the ones that raise no event.
+
+**The `-EALREADY` branch cannot abort a connect that is merely in progress**,
+which is the obvious way this fix could go wrong. The AIROC driver returns
+`-EALREADY` from exactly one place, under `if (data->is_sta_connected)`, a flag
+set only once a join has COMPLETED; a request made while one is in flight
+blocks on the driver's semaphore and returns `-EAGAIN`.
+
+### Two smaller things the same hour produced
+
+- **The old Ethernet address answered HTTP as a different device.** A 524-byte
+  single-page-app shell, not this panel. The lease had expired and the router
+  had reassigned it. An address that pings is not the board, and this is why
+  the tools ask the board what it is rather than trusting a number.
+- **`Find-PmcPort` hung and had to be killed.** Its ceiling bounds the READ,
+  not `SerialPort.Open()`, and this machine has three other USB serial devices
+  on it. A foreign port that does not open leaves the sweep stuck before any
+  timer starts.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it

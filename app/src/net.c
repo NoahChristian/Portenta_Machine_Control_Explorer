@@ -149,7 +149,62 @@ static void net_start(struct k_work *work)
 	 */
 	const int rc = net_mgmt(NET_REQUEST_WIFI_CONNECT_STORED, iface, NULL, 0);
 
-	if (rc != 0) {
+	if (rc == -EALREADY) {
+		/*
+		 * THE RADIO SAYS IT IS ASSOCIATED AND THE INTERFACE IS DOWN.
+		 * The check at the top of this function already established
+		 * that the interface is down, so reaching here means the
+		 * driver and the network stack disagree, and no number of
+		 * connect requests will settle it - the driver refuses each
+		 * one as redundant.
+		 *
+		 * MEASURED 2026-11-24, and it cost an afternoon. The Ethernet
+		 * cable was pulled after the board had been up four days; it
+		 * runs on 24 V, so nothing restarted. wlan0 went down while
+		 * the AIROC driver kept its association, and every retry from
+		 * here was refused:
+		 *
+		 *     <err> infineon_airoc_wifi: Already connected
+		 *     <err> net_wifi_mgmt: Connection request failed (-120)
+		 *
+		 * The board then served nothing at all, on a bench where the
+		 * access point was up and its own console was answering. It
+		 * advertises Ethernet with the radio as fallback, and the
+		 * fallback could not run. A `wifi disconnect` typed by hand
+		 * cleared it, after which THIS code reconnected and took a
+		 * DHCP lease in eight seconds.
+		 *
+		 * So the disconnect belongs here. wifi_event() re-arms the
+		 * retry on the disconnect it raises, and the attempt after
+		 * that finds the radio idle and succeeds.
+		 *
+		 * AND IT CANNOT ABORT A CONNECT THAT IS MERELY IN PROGRESS,
+		 * which is the obvious way a fix like this goes wrong. The
+		 * AIROC driver returns -EALREADY from exactly one place, under
+		 * `if (data->is_sta_connected)` - a flag set only once a join
+		 * has COMPLETED. A request made while one is still in flight
+		 * blocks on the driver's semaphore and comes back -EAGAIN,
+		 * which lands in the branch below and only logs.
+		 */
+		LOG_WRN("radio reports already connected while the interface "
+			"is down - forcing a disconnect to break the deadlock");
+		(void)net_mgmt(NET_REQUEST_WIFI_DISCONNECT, iface, NULL, 0);
+	} else if (rc == -ENETDOWN) {
+		/*
+		 * ADMINISTRATIVELY DOWN, which in this firmware only a person
+		 * can cause: nothing in app/src/ calls net_if_down(). The
+		 * retry is left running in case that changes, and the message
+		 * says what would change it - the bare errno sends the reader
+		 * looking for a radio fault that is not there.
+		 *
+		 * This is also what `net iface down 2` produces, so it is the
+		 * state a bench reproduction lands in rather than the
+		 * -EALREADY one above.
+		 */
+		LOG_WRN("the WiFi interface is administratively down - "
+			"`net iface up 2` brings it back; retrying in %u ms",
+			s_retry_ms);
+	} else if (rc != 0) {
 		LOG_WRN("auto-connect request failed (%d); retrying in %u ms",
 			rc, s_retry_ms);
 	} else {
@@ -323,6 +378,35 @@ again:
 	thru_sample();
 	pmc_net_pick_default();
 	pmc_enc_sample();
+
+	/*
+	 * SUPERVISE THE JOIN, because the retry work item stops itself.
+	 *
+	 * net_start() returns early once the interface is up and does NOT
+	 * reschedule, so after a successful join the only thing that ever
+	 * starts it again is a WiFi disconnect EVENT. That covers the AP
+	 * going away. It does not cover the interface going down with the
+	 * association still held by the driver, because no disconnect is
+	 * raised for that - and then nothing retries at all, ever.
+	 *
+	 * MEASURED 2026-11-24, twice over. First on the bench: the board ran
+	 * four days, the cable was pulled, and it sat with eth0 and wlan0
+	 * both down and NOTHING in the log but a failing NTP query every
+	 * thirty seconds - no retry warnings, because no retry was armed.
+	 * Then deliberately: `net iface down 2` leaves the radio associated,
+	 * and 45 seconds later nothing had tried to bring it back.
+	 *
+	 * This poll already runs every 2 s and already looks at every link,
+	 * so it is where the gap is cheapest to close. Arming the work item
+	 * is all that happens here; net_start() decides what to do, and the
+	 * -EALREADY branch in it handles the case where the driver still
+	 * believes it is connected.
+	 */
+	if (iface != NULL && !net_if_is_up(iface) &&
+	    !k_work_delayable_is_pending(&net_start_work)) {
+		k_work_reschedule(&net_start_work, K_NO_WAIT);
+	}
+
 	k_work_reschedule(&link_poll_work, K_MSEC(LINK_POLL_MS));
 }
 
