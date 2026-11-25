@@ -48,7 +48,7 @@ Write-Host ""
 Write-Host "watching http://$Target/enc.json   (ctrl-c to stop)" -ForegroundColor Cyan
 Write-Host ""
 Write-Host ("{0,-6} {1,12} {2,10}  {3} {4} {5}  {6,7} {7,9} {8,8}" -f
-            'ch', 'count', 'counts/s', 'A', 'B', 'I', 'index', 'per rev',
+            'ch', 'count', 'counts/s', 'A', 'B', 'Z', 'index', 'per rev',
             'illegal') -ForegroundColor DarkGray
 
 $last = @{}
@@ -77,13 +77,13 @@ while ($true) {
         # One line per CHANGE, not per poll: an encoder that is not turning
         # would otherwise fill the window with the same row forever, and the
         # thing worth seeing here is movement.
-        $sig = "$($e.count)|$($e.rate)|$($e.a)$($e.b)$($e.i)|$($e.idx)|$($e.per)|$($e.err)"
+        $sig = "$($e.count)|$($e.rate)|$($e.a)$($e.b)$($e.z)|$($e.idx)|$($e.per)|$($e.err)"
         if ($last[$name] -eq $sig) { continue }
         $last[$name] = $sig
 
         $color = if ($e.err -gt 0) { 'Red' } else { 'Gray' }
         Write-Host ("{0,-6} {1,12} {2,10}  {3} {4} {5}  {6,7} {7,9} {8,8}" -f
-                    $name, $e.count, $e.rate, $e.a, $e.b, $e.i, $e.idx,
+                    $name, $e.count, $e.rate, $e.a, $e.b, $e.z, $e.idx,
                     $(if ($e.per) { $e.per } else { '-' }), $e.err) `
                    -ForegroundColor $color
     }

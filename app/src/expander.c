@@ -156,8 +156,8 @@ void pmc_io_read(struct pmc_io_state *out)
 #define ENC_SPEC(n) GPIO_DT_SPEC_GET(DT_NODELABEL(n), gpios)
 
 static const struct gpio_dt_spec enc[] = {
-	ENC_SPEC(enc0a), ENC_SPEC(enc0b), ENC_SPEC(enc0i),
-	ENC_SPEC(enc1a), ENC_SPEC(enc1b), ENC_SPEC(enc1i),
+	ENC_SPEC(enc0a), ENC_SPEC(enc0b), ENC_SPEC(enc0z),
+	ENC_SPEC(enc1a), ENC_SPEC(enc1b), ENC_SPEC(enc1z),
 };
 
 void pmc_rail_read(struct pmc_rail *out)

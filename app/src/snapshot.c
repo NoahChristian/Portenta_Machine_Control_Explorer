@@ -605,10 +605,10 @@ size_t pmc_snapshot_json(const struct pmc_snapshot *s, char *out, size_t cap)
 
 		n += snprintk(out + n, cap - n,
 			      "%s{\"ok\":%s,\"count\":%d,\"rate\":%d,"
-			      "\"a\":%u,\"b\":%u,\"i\":%u,\"idx\":%u,"
+			      "\"a\":%u,\"b\":%u,\"z\":%u,\"idx\":%u,"
 			      "\"per\":%d,\"err\":%u}",
 			      i ? "," : "", e->ready ? "true" : "false",
-			      e->count, e->rate, e->a, e->b, e->i,
+			      e->count, e->rate, e->a, e->b, e->z,
 			      e->index_hits, e->per_index, e->errors);
 	}
 	n += snprintk(out + n, cap - n, "],");

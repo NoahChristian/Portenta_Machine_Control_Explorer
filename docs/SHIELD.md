@@ -337,10 +337,10 @@ B and I channels with it.
 		compatible = "gpio-keys";
 		enc0a: enc0a { gpios = <&gpioj 8  GPIO_ACTIVE_HIGH>; label = "ENC0 A"; };
 		enc0b: enc0b { gpios = <&gpioh 12 GPIO_ACTIVE_HIGH>; label = "ENC0 B"; };
-		enc0i: enc0i { gpios = <&gpioh 11 GPIO_ACTIVE_HIGH>; label = "ENC0 I"; };
+		enc0z: enc0z { gpios = <&gpioh 11 GPIO_ACTIVE_HIGH>; label = "ENC0 Z"; };
 		enc1a: enc1a { gpios = <&gpioc 13 GPIO_ACTIVE_HIGH>; label = "ENC1 A"; };
 		enc1b: enc1b { gpios = <&gpioi 7  GPIO_ACTIVE_HIGH>; label = "ENC1 B"; };
-		enc1i: enc1i { gpios = <&gpioj 10 GPIO_ACTIVE_HIGH>; label = "ENC1 I"; };
+		enc1z: enc1z { gpios = <&gpioj 10 GPIO_ACTIVE_HIGH>; label = "ENC1 Z"; };
 	};
 };
 ```

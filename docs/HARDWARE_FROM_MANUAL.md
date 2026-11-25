@@ -130,7 +130,11 @@ manual, so it lives in [todo.md](todo.md) rather than here.
 
 ## Other
 
-- 2 encoders on J10, A/B/I
+- 2 encoders on J10, A/B/I — the manual's own label. **This project calls the
+  third line Z**, which is the usual name for an incremental encoder's index
+  or zero-marker pulse; the panel, `/enc.json` and the shield's devicetree
+  nodes all say Z. The letter is the only difference, and the manual's wording
+  is kept here because this page records what the manual says.
 - CAN and RS-232/422/485 on J5
 - Ethernet on J13, RJ45 with onboard transformer
 - WiFi and BLE through the Portenta H7, antenna on the **SMA** connector J14 —

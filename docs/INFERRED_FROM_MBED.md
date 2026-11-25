@@ -105,6 +105,13 @@ RTC    INT PB_9
 USB    PWR PB_14  FLAG PB_15
 ```
 
+The encoder index line is transcribed as `I` because that is what the library
+calls it. **This project calls it Z** — the usual name for an incremental
+encoder's index or zero-marker pulse — in the shield's devicetree nodes, the
+shell, `/enc.json` and the panel. Same pin, same pulse, different letter; the
+library's own name is kept here because this page records what the library
+believes.
+
 Eight control GPIOs on RS485 is worth noting: the transceiver's direction,
 termination, slew and protocol mode are all software-selected.
 

@@ -15,7 +15,7 @@ thing to edit, and its text previews in a browser as it stands.
 
 #include <HtmlTplPort.h>
 
-#define PAGE_INDEX_BUILD "6601bd31"
+#define PAGE_INDEX_BUILD "a9b90ef5"
 #define PAGE_INDEX_BYTES 108363
 #define PAGE_INDEX_DYNAMIC 1
 
@@ -802,7 +802,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
 <div class="ctl">
   <table class="dtab" id="enctab">
     <thead><tr><th>ch</th><th>count</th><th>counts/s</th><th>A</th><th>B</th>
-      <th>I</th><th>index</th><th>per rev</th><th>illegal</th><th></th></tr></thead>
+      <th>Z</th><th>index</th><th>per rev</th><th>illegal</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
   <p class="legend" style="margin:.6rem 0 0">
@@ -2208,7 +2208,7 @@ static const char PAGE_INDEX[] PROGMEM = R"HTMLTPL(<!doctype html>
       r[1].textContent = e.count;
       r[2].textContent = e.rate;
       /* The three lines, colored like every other live level on this page. */
-      var lv = [e.a, e.b, e.i];
+      var lv = [e.a, e.b, e.z];
       for (var p = 0; p < 3; p++) {
         r[3 + p].textContent = lv[p];
         r[3 + p].className = lv[p] ? 'lvl1' : 'lvl0';

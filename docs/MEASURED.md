@@ -3348,7 +3348,7 @@ section may be cited as evidence.
 
 | TBD | what to connect | what settles it |
 |---|---|---|
-| **Any count at all.** Both channels are armed and read their lines; no shaft has ever turned. Every number reported so far is zero. | an incremental encoder on ENC0 (A PJ8, B PH12, I PH11) | `tools/encmon.ps1` while turning by hand: count follows both directions and returns to the same value after a there-and-back turn |
+| **Any count at all.** Both channels are armed and read their lines; no shaft has ever turned. Every number reported so far is zero. | an incremental encoder on ENC0 (A PJ8, B PH12, Z PH11) | `tools/encmon.ps1` while turning by hand: count follows both directions and returns to the same value after a there-and-back turn |
 | **Counts per revolution.** The 4x claim is arithmetic, not observation. | the same encoder, one full turn | `per rev` equals 4x the encoder's line count, every revolution. A SHORT one means counts were lost - and a clean `illegal` count is not evidence against that |
 | **Where software decoding stops keeping up.** `PMC_ENC_MAX_EDGES_HINT` is 200000 and is an order-of-magnitude guess, not a measurement. | an encoder that can be driven fast | the rpm at which `per rev` first comes up short |
 | **The channel map at the connector.** Which terminal is A and which is B is `[MBED]`, read out of another program's header. | one encoder, moved between terminals | turning the shaft one way counts up, not down, and moving a lead changes the channel it affects |

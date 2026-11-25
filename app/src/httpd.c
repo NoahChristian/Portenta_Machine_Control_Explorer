@@ -481,11 +481,11 @@ static int enc_handler(struct http_client_ctx *client,
 		used += (size_t)snprintk(body + used, sizeof(body) - used,
 					 "%s{\"ok\":%s,\"count\":%d,"
 					 "\"rate\":%d,\"a\":%u,\"b\":%u,"
-					 "\"i\":%u,\"idx\":%u,\"per\":%d,"
+					 "\"z\":%u,\"idx\":%u,\"per\":%d,"
 					 "\"err\":%u}",
 					 n ? "," : "",
 					 e.ready ? "true" : "false",
-					 e.count, e.rate, e.a, e.b, e.i,
+					 e.count, e.rate, e.a, e.b, e.z,
 					 e.index_hits, e.per_index, e.errors);
 	}
 	used += (size_t)snprintk(body + used, sizeof(body) - used, "]}");

@@ -68,7 +68,7 @@ struct pmc_enc_chan {
 				* once, which means an edge was missed or a
 				* line is bouncing                          */
 	int32_t  rate;         /* counts per second, over the sample window */
-	uint8_t  a, b, i;      /* the three lines as they read right now    */
+	uint8_t  a, b, z;      /* the three lines as they read right now    */
 	bool     ready;        /* the pins configured and interrupts armed  */
 };
 

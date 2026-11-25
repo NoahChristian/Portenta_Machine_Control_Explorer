@@ -43,16 +43,16 @@ static const int8_t qtab[16] = {
 };
 
 struct enc_hw {
-	struct gpio_dt_spec a, b, i;
+	struct gpio_dt_spec a, b, z;
 	const char *name;
 };
 
 #define ENC_SPEC(node) GPIO_DT_SPEC_GET(DT_NODELABEL(node), gpios)
 
 static const struct enc_hw hw[PMC_ENC_COUNT] = {
-	{ .a = ENC_SPEC(enc0a), .b = ENC_SPEC(enc0b), .i = ENC_SPEC(enc0i),
+	{ .a = ENC_SPEC(enc0a), .b = ENC_SPEC(enc0b), .z = ENC_SPEC(enc0z),
 	  .name = "ENC0" },
-	{ .a = ENC_SPEC(enc1a), .b = ENC_SPEC(enc1b), .i = ENC_SPEC(enc1i),
+	{ .a = ENC_SPEC(enc1a), .b = ENC_SPEC(enc1b), .z = ENC_SPEC(enc1z),
 	  .name = "ENC1" },
 };
 
@@ -92,7 +92,7 @@ struct enc_state {
 	 */
 	struct gpio_callback cb_a;
 	struct gpio_callback cb_b;
-	struct gpio_callback cb_i;
+	struct gpio_callback cb_z;
 };
 
 static struct enc_state st[PMC_ENC_COUNT];
@@ -153,10 +153,10 @@ static void b_isr(const struct device *port, struct gpio_callback *cb,
 	ab_step((size_t)(CONTAINER_OF(cb, struct enc_state, cb_b) - st));
 }
 
-static void i_isr(const struct device *port, struct gpio_callback *cb,
+static void z_isr(const struct device *port, struct gpio_callback *cb,
 		  gpio_port_pins_t pins)
 {
-	struct enc_state *s = CONTAINER_OF(cb, struct enc_state, cb_i);
+	struct enc_state *s = CONTAINER_OF(cb, struct enc_state, cb_z);
 	const int32_t c = (int32_t)atomic_get(&s->count);
 
 	ARG_UNUSED(port);
@@ -183,14 +183,14 @@ static int setup_chan(size_t n)
 	int rc;
 
 	if (!gpio_is_ready_dt(&h->a) || !gpio_is_ready_dt(&h->b) ||
-	    !gpio_is_ready_dt(&h->i)) {
+	    !gpio_is_ready_dt(&h->z)) {
 		LOG_ERR("%s: a GPIO port is not ready", h->name);
 		return -ENODEV;
 	}
 
 	rc = gpio_pin_configure_dt(&h->a, GPIO_INPUT);
 	rc |= gpio_pin_configure_dt(&h->b, GPIO_INPUT);
-	rc |= gpio_pin_configure_dt(&h->i, GPIO_INPUT);
+	rc |= gpio_pin_configure_dt(&h->z, GPIO_INPUT);
 	if (rc != 0) {
 		LOG_ERR("%s: configure failed (%d)", h->name, rc);
 		return -EIO;
@@ -203,7 +203,7 @@ static int setup_chan(size_t n)
 	 */
 	rc = gpio_pin_interrupt_configure_dt(&h->a, GPIO_INT_EDGE_BOTH);
 	rc |= gpio_pin_interrupt_configure_dt(&h->b, GPIO_INT_EDGE_BOTH);
-	rc |= gpio_pin_interrupt_configure_dt(&h->i, GPIO_INT_EDGE_RISING);
+	rc |= gpio_pin_interrupt_configure_dt(&h->z, GPIO_INT_EDGE_RISING);
 	if (rc != 0) {
 		LOG_ERR("%s: interrupt configure failed (%d) - see the EXTI "
 			"note in enc.c", h->name, rc);
@@ -235,8 +235,8 @@ static int setup_chan(size_t n)
 		return -EIO;
 	}
 
-	gpio_init_callback(&s->cb_i, i_isr, BIT(h->i.pin));
-	rc = gpio_add_callback(h->i.port, &s->cb_i);
+	gpio_init_callback(&s->cb_z, z_isr, BIT(h->z.pin));
+	rc = gpio_add_callback(h->z.port, &s->cb_z);
 	if (rc != 0) {
 		LOG_ERR("%s: index callback failed (%d)", h->name, rc);
 		return -EIO;
@@ -321,7 +321,7 @@ void pmc_enc_read(uint8_t n, struct pmc_enc_chan *out)
 	out->rate = s->rate;
 	out->a = gpio_pin_get_dt(&h->a) ? 1U : 0U;
 	out->b = gpio_pin_get_dt(&h->b) ? 1U : 0U;
-	out->i = gpio_pin_get_dt(&h->i) ? 1U : 0U;
+	out->z = gpio_pin_get_dt(&h->z) ? 1U : 0U;
 }
 
 bool pmc_enc_zero(uint8_t n, char *detail, size_t cap)
@@ -376,8 +376,8 @@ static int cmd_enc(const struct shell *sh, size_t argc, char **argv)
 			shell_print(sh, "ENC%u  not armed", n);
 			continue;
 		}
-		shell_print(sh, "ENC%u  count %-10d rate %-8d A%u B%u I%u",
-			    n, c.count, c.rate, c.a, c.b, c.i);
+		shell_print(sh, "ENC%u  count %-10d rate %-8d A%u B%u Z%u",
+			    n, c.count, c.rate, c.a, c.b, c.z);
 		shell_print(sh, "      index %u hits, last at %d, %d counts "
 				"between the last two",
 			    c.index_hits, c.at_index, c.per_index);
