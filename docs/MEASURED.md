@@ -3535,6 +3535,59 @@ section may be cited as evidence.
 | **The DO channel map.** `[LIB]`, never checked against this hardware. | 24 V on J6 pin 1 and a lamp | `dowalk` lights each in turn; the LED that moves is the one it names |
 | **The PDIO read map**, and whether 24 V on terminal 04 really appears at index 2. Observed once and unexplained - see the reported/read-back discrepancy above. | 24 V moved one terminal at a time | the index that lights for each terminal, all twelve |
 
+### The 24 V indicator rests on an assumption
+
+The firmware calls the 24 V supply present when all six encoder inputs read
+high. **Why they read high has never been established**, and the negative case
+has never been tested - nobody has read those pins with the supply
+disconnected.
+
+What is known: no pull-up is configured anywhere. The shield's devicetree sets
+no bias flag on any of the six nodes, and both readers - `enc.c` and
+`expander.c` - configure them as a plain `GPIO_INPUT`. So the MCU's internal
+pull-ups are off and whatever holds those pins up is on the carrier. The
+datasheet extract in HARDWARE_FROM_MANUAL.md says only "2 encoders on J10" and
+describes no input circuit.
+
+| TBD | what to connect | what settles it |
+|---|---|---|
+| **Whether the encoder inputs read high because of 24 V at all.** If their bias comes from the logic rail instead, they read high with the supply off and the indicator can never say no - a lamp that is always green is not a measurement. | nothing to connect: REMOVE 24 V from J4 and run the board from USB, which it does | the six levels in `/state.json` with the supply off. All still high means the inference is void and the lamp should go, not just dim |
+| **What the bias actually is.** A meter on an encoder input against ground, supply on and off, says whether it is pulled to 24 V, to a divided rail, or to logic. | a meter on J10 | the voltage, which also settles whether these inputs are 24 V-tolerant as industrial encoder inputs normally are |
+
+Until that first row is done, "24V inferred" is an inference about an
+unexplained observation rather than a measurement, which is why the panel says
+*inferred* and why the lamp now has a third state for cannot-tell.
+
+**And the cannot-tell state was itself unreliable, which was observed within
+the hour.** The "something is wired to J10" test was a MIXED reading - some
+pins high, some low - which is a property of where a shaft is resting rather
+than of whether a cable is plugged in. The encoder on ENC1 read five of six
+while its shaft sat with B low, and the lamp went hollow, correctly. The shaft
+later came to rest with both lines high:
+
+```
+rail: {'sensed': True, 'present': True, 'encoderWired': False, 'highs': 6}
+enc : [(1, 1, 1), (1, 1, 1)]
+```
+
+All six high, so the panel went back to asserting 24 V PRESENT with the same
+encoder still attached. A quadrature encoder spends a quarter of its positions
+with both lines high, so the indicator was flipping between "cannot tell" and
+"present" on shaft position alone.
+
+It latches now: once a mixed reading has been seen, the inference stays void
+until reset, and turning an encoder at all produces one immediately. It still
+cannot catch an encoder plugged in, never turned, and resting all-high from
+boot - nothing readable from these pins can, which is the argument for a real
+rail sense rather than a better heuristic.
+
+**The 12 V lamp was worse and is now honest.** It followed the same flag as
+24 V - same inference, different color - so an amber lamp asserted a rail no
+code had ever looked at, and one the datasheet extract does not mention
+exists. It is drawn permanently hollow now: the carrier has a physical 12 V
+indicator and this drawing reproduces it, but reproducing a lamp is not
+reading one.
+
 ### Temperature
 
 Nothing in this file is a temperature reading. The family is swept, the mux

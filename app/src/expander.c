@@ -160,6 +160,9 @@ static const struct gpio_dt_spec enc[] = {
 	ENC_SPEC(enc1a), ENC_SPEC(enc1b), ENC_SPEC(enc1z),
 };
 
+/* Latched for the life of the boot - see pmc_rail_read(). */
+static bool s_enc_wired_seen;
+
 void pmc_rail_read(struct pmc_rail *out)
 {
 	unsigned int high = 0;
@@ -188,8 +191,34 @@ void pmc_rail_read(struct pmc_rail *out)
 		return;  /* sensed stays false: say nothing rather than guess */
 	}
 
+	/*
+	 * "SOMETHING IS WIRED" LATCHES, because a mixed reading is a property
+	 * of where a shaft happens to be resting, not of whether a cable is
+	 * plugged in.
+	 *
+	 * OBSERVED 2026-11-25, having been written up as hypothetical an hour
+	 * earlier. An encoder on ENC1 read five of six high while its shaft
+	 * sat with B low, so the rail went "unknown" - correct. The shaft
+	 * later came to rest with both lines high, all six read high, and the
+	 * panel went back to asserting 24 V PRESENT with the same encoder
+	 * still attached. A quadrature encoder spends a quarter of its
+	 * positions with both lines high, so the indicator was flipping
+	 * between "cannot tell" and "present" on shaft position.
+	 *
+	 * Once a mixed reading has been seen, the inference stays void until
+	 * reset. Turning an encoder at all produces one almost immediately.
+	 *
+	 * IT STILL CANNOT CATCH an encoder that is plugged in, never turned,
+	 * and resting all-high from boot. Nothing readable from these pins
+	 * can - which is the argument for a real rail sense rather than a
+	 * better heuristic.
+	 */
+	if (high != 0U && high != ARRAY_SIZE(enc)) {
+		s_enc_wired_seen = true;
+	}
+
 	out->sensed = true;
 	out->highs = (uint8_t)high;
-	out->present = (high == ARRAY_SIZE(enc));
-	out->wired = (high != 0U && high != ARRAY_SIZE(enc));
+	out->wired = s_enc_wired_seen;
+	out->present = (high == ARRAY_SIZE(enc)) && !s_enc_wired_seen;
 }

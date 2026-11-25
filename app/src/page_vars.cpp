@@ -408,20 +408,30 @@ static void fillRail(void)
 
 	PUT(vRail24, up ? "led green on" : (blind ? "led green unknown"
 						  : "led green"));
-	PUT(vRail12, up ? "led amber on" : (blind ? "led amber unknown"
-						  : "led amber"));
+
+	/*
+	 * 12 V IS NEVER LIT, because nothing on this board senses it.
+	 *
+	 * It used to follow the 24 V inference exactly - same flag, different
+	 * color - which made an amber lamp assert a rail no code had ever
+	 * looked at. The carrier has a physical 12 V indicator and this
+	 * drawing reproduces it, but reproducing a lamp is not reading one.
+	 * docs/HARDWARE_FROM_MANUAL.md does not mention a 12 V rail at all,
+	 * so there is not even a documented thing to infer from.
+	 */
+	PUT(vRail12, "led amber unknown");
 
 	if (!gSnap.rail.sensed) {
-		PUT(vRailNote, "24V/12V not sensed - encoder pins unreadable");
+		PUT(vRailNote, "24V not sensed - encoder pins unreadable; 12V never is");
 	} else if (gSnap.rail.wired) {
 		(void)snprintk(vRailNote, sizeof(vRailNote),
 			       "24V unknown - %u of 6 encoder pins high, so "
 			       "something is wired to J10",
 			       (unsigned)gSnap.rail.highs);
 	} else if (up) {
-		PUT(vRailNote, "24V inferred present from the encoder pull-ups");
+		PUT(vRailNote, "24V inferred: all six encoder inputs read high");
 	} else {
-		PUT(vRailNote, "24V inferred ABSENT - all encoder pulls are low");
+		PUT(vRailNote, "24V inferred ABSENT - encoder inputs read low");
 	}
 }
 

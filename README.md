@@ -43,7 +43,7 @@ Working on hardware:
 | Discovery | `portentaexplorer.local` |
 | Reads | 8 digital in, 12 programmable digital I/O, 3 analog in updating every 2 s |
 | Writes | 8 digital out (level and pulse), 12 PDIO, 3 analog out — token-gated |
-| Supply | 24 V presence inferred from the encoder pull-ups; 3V3 and 12 V indicated |
+| Supply | 24 V *inferred* from all six encoder inputs reading high — why they read high is unestablished and the negative case is untested, so the lamp has a cannot-tell state and [MEASURED.md](docs/MEASURED.md) carries the measurement that would settle it. 3V3 is lit because running code proves it; 12 V is sensed by nothing and says so |
 | Clock | PCF8563 set from NTP, carried through power-off by the on-board supercap |
 | Serial | RS485 proven end to end into its own jumpered pair, Modbus RTU frames built with the CRC computed; RS232 and all eight control lines driven from the panel |
 | Temperature | Three channels across two converters sharing one bus and one mux, read as a rotation rather than a snapshot, with the converter's own fault word rendered |

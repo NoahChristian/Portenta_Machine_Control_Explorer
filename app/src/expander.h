@@ -65,9 +65,29 @@ int pmc_io_raw(bool din_expander, uint32_t *word);
  * inference does not apply and the panel must say so rather than show a rail
  * state it cannot justify.
  */
+/*
+ * THE 24 V INFERENCE, AND THE PART OF IT THAT IS NOT ESTABLISHED.
+ *
+ * All six encoder inputs read high with nothing plugged into J10, and the
+ * firmware takes that to mean the 24 V supply is up. What has never been
+ * shown is WHY they read high. No pull-up is configured anywhere - the
+ * devicetree sets no bias and both readers use a plain GPIO_INPUT - so
+ * whatever holds them up is on the carrier, and nothing in the datasheet
+ * extract describes that circuit.
+ *
+ * **The negative case has never been tested.** Nobody has read these pins
+ * with the 24 V supply disconnected. If their bias comes from the logic rail
+ * rather than from 24 V, they read high either way and `present` is true
+ * always - an indicator that cannot say no. One measurement settles it and it
+ * is in the TBD list.
+ *
+ * Until then this is an inference resting on an assumption, which is why the
+ * panel says "inferred" rather than "present" and why the lamp has a third
+ * state for cannot-tell.
+ */
 struct pmc_rail {
 	bool    sensed;   /* the pins could be read at all */
-	bool    present;  /* all six high: 24 V is up */
+	bool    present;  /* all six high - SEE ABOVE before trusting it */
 	bool    wired;    /* mixed: an encoder is connected, inference void */
 	uint8_t highs;    /* how many of the six read high */
 };
