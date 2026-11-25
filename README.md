@@ -47,7 +47,7 @@ Working on hardware:
 | Clock | PCF8563 set from NTP, carried through power-off by the on-board supercap |
 | Serial | RS485 proven end to end into its own jumpered pair, Modbus RTU frames built with the CRC computed; RS232 and all eight control lines driven from the panel |
 | Temperature | Three channels across two converters sharing one bus and one mux, read as a rotation rather than a snapshot, with the converter's own fault word rendered |
-| Encoders | Both channels armed and decoded in software, counting edges, rate, index pulses and illegal transitions |
+| Encoders | Both channels armed and decoded in software, 4x, counting edges, rate, Z index pulses and illegal transitions. ENC1 confirmed against a real encoder turned by hand; ENC0 not yet |
 | CAN | FDCAN1 at 500 kbit/s, a 32-frame receive window with a cursor, a repeating transmitter, and a minimal CANopen node with its own self-test — all of it proven in internal loopback, which touches nothing past the MCU |
 | Panel | Rendered on the board from `web/index.html`, with a drawing of the carrier whose terminals carry live state |
 
@@ -59,15 +59,22 @@ reads low with no fault flag, which means the `24V IN` terminal is unfed
 rather than that anything failed. An analog output reports the value it set,
 and says the volts-per-count is derived rather than measured.
 
-**What is left is hardware, not code.** Every family above is built and
-served; what none of them has had is something on the other end of the
-terminal. No probe has been connected to a temperature channel, CAN has never
-received a frame off a wire — one node cannot acknowledge its own frame, and
-the loopback that works is internal — and no shaft has ever turned an encoder,
-so every count they have reported is zero. Exactly one channel has been
-confirmed at the connector with a meter, which is why the rest of the board
-drawing renders dashed: the expander channel maps are transcribed, not proven
-here.
+**What is left is mostly hardware, not code.** Every family above is built and
+served, and most of them have still never had anything on the other end of the
+terminal. No probe has been connected to a temperature channel, and CAN has
+never received a frame off a wire — one node cannot acknowledge its own frame,
+and the loopback that works is internal. Exactly one channel has been confirmed
+at the connector with a meter, which is why the rest of the board drawing
+renders dashed: the expander channel maps are transcribed, not proven here.
+
+**The encoders are the exception, as of 2026-11-24.** An encoder was turned by
+hand on ENC1 — ground, A and B — and the count follows the movement in both
+directions and returns to the same value after a there-and-back turn. ENC0 has
+still never counted, the Z index line has never been connected on either
+channel, and turning slowly reports a velocity of zero while the count keeps
+updating, which is integer truncation in a 2-second sample window rather than a
+fault. The details and what they do not settle are in
+[docs/MEASURED.md](docs/MEASURED.md).
 
 Each of those gaps names the thing to connect and the number that settles it,
 in

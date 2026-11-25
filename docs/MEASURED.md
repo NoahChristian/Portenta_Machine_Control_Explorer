@@ -3321,6 +3321,86 @@ blocks on the driver's semaphore and returns `-EAGAIN`.
   on it. A foreign port that does not open leaves the sweep stuck before any
   timer starts.
 
+## The encoders count, and it was ENC1 (2026-11-24, 0.12.0+141)
+
+The first time a shaft has turned one of these. Every encoder number in this
+file before today was zero because nothing was connected.
+
+An incremental encoder was wired to **ENC1** - ground, ENC1 A and ENC1 B. Z
+was not connected.
+
+**There is no command block in this entry, and that is not an omission.** The
+stimulus was a hand on the shaft. This file's convention is to paste the
+command that produced a reading; a physical movement has none, and writing one
+would dress up a hand turn as something reproducible from a console.
+
+What the panel and `tools/encmon.ps1` showed while it turned:
+
+- **The count follows the movement, both directions.**
+- **Turning there and back returns the count to the same value.** That is the
+  one that matters: a reversal that lands on the original number shows nothing
+  was lost across the direction change, which is where a software decoder with
+  a wrong state table drops counts.
+- **Turning slowly reported a velocity of ZERO while the count kept
+  updating.**
+
+### The zero velocity is arithmetic, not a fault
+
+`pmc_enc_sample()` computes
+
+```
+rate = (counts_moved * 1000) / dt_ms       (integer)
+```
+
+from `link_poll`, every 2 s. With `dt` around 2000 ms, a single count gives
+`(1 * 1000) / 2000`, which truncates to **0**. So anything slower than about
+two counts per poll - very roughly 1 count/s - reads as zero velocity while
+`count` itself stays exact.
+
+**At low speed the counter is the trustworthy number and the rate is not.**
+The rate is also a 2-second average, so it lags a hand that starts and stops.
+Left as it is: a fractional rate would need either a wider sample window,
+which lags more, or fixed-point, which puts a false precision on a figure
+whose input is a 2-second poll.
+
+### What this does NOT settle, listed so the gap stays visible
+
+- **ENC0 is still untested.** One channel counting says nothing about the
+  other: they are different pins on different ports, and ENC1 A is the PC13
+  that carries no alternate function at all on this package.
+- **Z was not connected**, so index hits, `per rev` and the whole
+  lost-count check remain unexercised.
+- **Counts per revolution** - no full revolution was turned, and the
+  encoder's line count was not established, so there is nothing to compare 4x
+  against.
+- **Which terminal is A and which is B.** Swapping them inverts the sign, and
+  the direction was not checked against a known sense of rotation. A
+  there-and-back test passes either way round.
+
+### Where software decoding stops keeping up - DERIVED, NOT MEASURED
+
+Still unmeasured, and the figures below are arithmetic from the interrupt
+path rather than an observation. Per edge the processor takes an exception,
+walks the port's callback list, calls `gpio_pin_get_dt()` twice through the
+driver API, does a table lookup and an atomic add - on the order of 250 to 400
+cycles, so roughly 0.6 to 0.9 us at 480 MHz.
+
+| question | figure |
+|---|---|
+| absolute ceiling, processor doing nothing else | ~1.1-1.6 M edges/s |
+| with encoder interrupts held to about 20% of the processor | ~220-330 k edges/s |
+| `PMC_ENC_MAX_EDGES_HINT`, the documented working figure | 200 k edges/s |
+
+An edge IS a count at 4x, so 200 k counts/s is 3000 rpm on a 1000-line
+encoder, 6000 on a 500-line, about 30,000 on a 100-line. The middle row is the
+one to plan against, because this processor is also running the network stack,
+the panel and a temperature sweep.
+
+Past that point **counts are lost silently** - the state machine still sees
+legal transitions, just fewer of them, so `illegal` stays at zero. Only
+index-to-index distance against the line count catches it, which is why the Z
+pulse is recorded and never allowed to rewrite the position.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it
@@ -3348,10 +3428,11 @@ section may be cited as evidence.
 
 | TBD | what to connect | what settles it |
 |---|---|---|
-| **Any count at all.** Both channels are armed and read their lines; no shaft has ever turned. Every number reported so far is zero. | an incremental encoder on ENC0 (A PJ8, B PH12, Z PH11) | `tools/encmon.ps1` while turning by hand: count follows both directions and returns to the same value after a there-and-back turn |
-| **Counts per revolution.** The 4x claim is arithmetic, not observation. | the same encoder, one full turn | `per rev` equals 4x the encoder's line count, every revolution. A SHORT one means counts were lost - and a clean `illegal` count is not evidence against that |
+| **ENC0 has still never counted.** ENC1 has - see the dated capture above - and that says nothing about this one: different pins, different ports. | an incremental encoder on ENC0 (A PJ8, B PH12, Z PH11) | `tools/encmon.ps1` while turning by hand: count follows both directions and returns to the same value after a there-and-back turn, as ENC1 did |
+| **Anything the Z line does.** It has never been connected on either channel, so `idx`, `per rev` and the lost-count check are all unexercised. | the Z output of the same encoder, on ENC0 Z PH11 or ENC1 Z PJ10 | `idx` rises once per revolution, and `per rev` stops reading 0 |
+| **Counts per revolution.** The 4x claim is arithmetic, not observation. ENC1 was turned by hand but never through a full revolution, and that encoder's line count was not established. | the same encoder, one full turn, with Z connected and the line count known | `per rev` equals 4x the line count, every revolution. A SHORT one means counts were lost - and a clean `illegal` count is not evidence against that |
 | **Where software decoding stops keeping up.** `PMC_ENC_MAX_EDGES_HINT` is 200000 and is an order-of-magnitude guess, not a measurement. | an encoder that can be driven fast | the rpm at which `per rev` first comes up short |
-| **The channel map at the connector.** Which terminal is A and which is B is `[MBED]`, read out of another program's header. | one encoder, moved between terminals | turning the shaft one way counts up, not down, and moving a lead changes the channel it affects |
+| **The channel map at the connector.** Which terminal is A and which is B is `[MBED]`, read out of another program's header. The ENC1 test does not settle it: swapping A and B only inverts the sign, and a there-and-back turn passes either way round. | one encoder, moved between terminals | turning the shaft one way counts UP, not down, and moving a lead changes the channel it affects |
 
 ### Digital outputs
 
