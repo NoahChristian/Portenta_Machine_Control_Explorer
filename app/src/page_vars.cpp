@@ -230,9 +230,41 @@ static void fillBusLamps(void)
 	PUT(vTx485Cls, tx ? "led red act" : "led red");
 	PUT(vRx485Cls, rx ? "led green act" : "led green");
 
-	PUT(vTxCanCls, "led red");
-	PUT(vRxCanCls, "led green");
-	PUT(vCanNote, "CAN lamps dark: no CAN driver in this image");
+	/*
+	 * THE CAN LAMPS WERE HARDCODED DARK, with a note reading "no CAN
+	 * driver in this image". That was true when it was written and has
+	 * been false since CAN landed on 2026-11-18 - the panel has had a
+	 * whole CAN section underneath this caption since then, and the
+	 * caption still said the driver did not exist. Found 2026-11-25 by
+	 * looking at the hardware rather than the page.
+	 *
+	 * TX IS THE PIN, NOT A COUNTER. pmc_can_state_read() samples PH13
+	 * directly, so this lamp means "the transmitter is driving the
+	 * transceiver right now" - which is the thing a lit lamp on a bench
+	 * should mean. A lone node retransmitting an unacknowledged frame
+	 * lights it continuously, and the note below says so rather than
+	 * leaving a lit lamp unexplained.
+	 */
+	const bool canrx = (gSnap.n_can_log > 0 &&
+			    (k_uptime_get() - gSnap.can_log[0].stamp) <
+				    LAMP_WINDOW_MS);
+	const bool cantx = gSnap.can.present && gSnap.can.started &&
+			   gSnap.can.tx_pin_toggling;
+
+	PUT(vTxCanCls, cantx ? "led red act" : "led red");
+	PUT(vRxCanCls, canrx ? "led green act" : "led green");
+
+	if (!gSnap.can.present) {
+		PUT(vCanNote, "no CAN controller in this build");
+	} else if (!gSnap.can.started) {
+		PUT(vCanNote, "CAN controller stopped");
+	} else if (gSnap.can.loopback) {
+		PUT(vCanNote, "CAN internal loopback - TX pin stays recessive");
+	} else if (cantx && gSnap.can.bus_state == 2) {
+		PUT(vCanNote, "CAN TX lit, ERROR_PASSIVE: nobody acknowledged");
+	} else {
+		PUT(vCanNote, "CAN TX lit while the pin is driven, RX on a frame");
+	}
 }
 
 /*

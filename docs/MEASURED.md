@@ -3464,6 +3464,37 @@ boot-up message is suppressed along with the heartbeat, because one
 unacknowledged frame parks the controller exactly as a thousand of them do.
 `canopen hb 1000` restores the announcing behavior for a real bus.
 
+### And the CAN lamps were hardcoded dark
+
+Found while fixing the two above, by looking at the board instead of the page.
+The carrier's CAN TX and RX indicators on the panel drawing were:
+
+```c
+PUT(vTxCanCls, "led red");
+PUT(vRxCanCls, "led green");
+PUT(vCanNote, "CAN lamps dark: no CAN driver in this image");
+```
+
+Unconditional. True the day it was written, and false since CAN landed on
+2026-11-18 - by which point the panel had grown a whole CAN section directly
+underneath that caption, with live bus state, a frame window and send
+controls, while the caption above it said the driver did not exist.
+
+Both lamps are now driven: **TX from the sampled state of the PH13 pin**, so a
+lit lamp means the transmitter is driving the transceiver at that instant
+rather than that a counter moved, and RX from the newest frame in the receive
+ring being younger than the 3 s lamp window. The caption says which of the
+four situations applies - no controller, stopped, internal loopback, or a lit
+TX with the controller at ERROR_PASSIVE because nothing acknowledged the
+frame.
+
+**This is the third stale claim in two days that no gate could catch**, after
+the README's "not built yet" and the terminal map's "nothing here is
+measured". All three were sentences that were true when written. `docscan.py`
+checks links and paths; nothing checks whether a caption still describes the
+firmware under it, and the entry in docs/todo.md on keeping the documents
+honest says plainly that nothing can.
+
 ## TBD - measurements this board is wired for and has not taken
 
 Everything below is **built, served and waiting on hardware**. None of it
